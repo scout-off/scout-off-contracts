@@ -322,4 +322,25 @@ mod tests {
         // second call should panic with AlreadyRegistered
         client.register_player(&wallet, &vitals, &hashes);
     }
+
+    #[test]
+    #[should_panic(expected = "ContractPaused")]
+    fn test_update_profile_when_paused() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let vitals = dummy_vitals(&env);
+        let hashes: soroban_sdk::Vec<String> = vec![&env, String::from_str(&env, "QmTest123")];
+
+        let player_id = client.register_player(&wallet, &vitals, &hashes);
+
+        // Pause the contract
+        client.pause_contract();
+
+        // Attempting to update profile while paused should panic with ContractPaused
+        let new_hashes: soroban_sdk::Vec<String> = vec![&env, String::from_str(&env, "QmUpdated")];
+        client.update_profile(&player_id, &new_hashes);
+    }
 }
