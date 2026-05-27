@@ -5,7 +5,7 @@ mod types;
 use errors::VerificationError;
 use types::{DataKey, Milestone, Validator};
 
-use soroban_sdk::{contract, contractimpl, Address, Env, String};
+use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
 
 // Generated client for the progress contract — used for cross-contract calls.
 // The progress contract must be deployed and its address registered via
@@ -75,6 +75,19 @@ impl VerificationContract {
         env.storage()
             .persistent()
             .set(&DataKey::Validator(wallet.clone()), &validator);
+
+        // Append to index (capped at 100)
+        let mut index: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ValidatorIndex)
+            .unwrap_or_else(|| Vec::new(&env));
+        if (index.len() as u32) < 100 {
+            index.push_back(wallet.clone());
+            env.storage()
+                .persistent()
+                .set(&DataKey::ValidatorIndex, &index);
+        }
 
         events::validator_registered(&env, &wallet);
         Ok(())
@@ -220,6 +233,26 @@ impl VerificationContract {
             .persistent()
             .get(&DataKey::Validator(wallet))
             .ok_or(VerificationError::ValidatorNotFound)
+    }
+
+    /// Returns all registered validators (active and revoked), capped at 100.
+    pub fn get_validators(env: Env) -> Vec<Validator> {
+        let index: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ValidatorIndex)
+            .unwrap_or_else(|| Vec::new(&env));
+        let mut result: Vec<Validator> = Vec::new(&env);
+        for wallet in index.iter() {
+            if let Some(v) = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Validator(wallet))
+            {
+                result.push_back(v);
+            }
+        }
+        result
     }
 
     pub fn is_active_validator(env: Env, wallet: Address) -> bool {
@@ -406,5 +439,28 @@ mod tests {
             &String::from_str(&env, "Some milestone"),
             &String::from_str(&env, "QmEvidence"),
         );
+    }
+
+    #[test]
+    fn test_get_validators_returns_all_including_revoked() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let v1 = Address::generate(&env);
+        let v2 = Address::generate(&env);
+        let v3 = Address::generate(&env);
+        client.register_validator(&v1, &String::from_str(&env, "Coach A"));
+        client.register_validator(&v2, &String::from_str(&env, "Coach B"));
+        client.register_validator(&v3, &String::from_str(&env, "Coach C"));
+
+        // Revoke one — it must still appear in get_validators
+        client.revoke_validator(&v2);
+
+        let validators = client.get_validators();
+        assert_eq!(validators.len(), 3);
+
+        // v2 is at index 1; confirm it is present but inactive
+        assert!(!validators.get(1).unwrap().active);
     }
 }
