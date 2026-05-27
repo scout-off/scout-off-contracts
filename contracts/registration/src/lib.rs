@@ -7,6 +7,10 @@ use types::{DataKey, PlayerProfile, PlayerVitals, ProgressLevel, ScoutProfile};
 
 use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
 
+const MIN_PLAYER_AGE: u32 = 10;
+const MAX_PLAYER_AGE: u32 = 60;
+const MAX_IPFS_HASHES: u32 = 10;
+
 #[contract]
 pub struct RegistrationContract;
 
@@ -21,12 +25,16 @@ impl RegistrationContract {
         if env.storage().instance().has(&DataKey::Initialized) {
             return Err(ScoutChainError::AlreadyInitialized);
         }
+        if admin == Address::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF") {
+            return Err(ScoutChainError::InvalidInput);
+        }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Initialized, &true);
         env.storage().instance().set(&DataKey::Paused, &false);
         env.storage().instance().set(&DataKey::PlayerCounter, &0u64);
         env.storage().instance().set(&DataKey::ScoutCounter, &0u64);
+        events::contract_initialized(&env, &admin);
         Ok(())
     }
 
@@ -65,6 +73,15 @@ impl RegistrationContract {
             .has(&DataKey::PlayerByWallet(wallet.clone()))
         {
             return Err(ScoutChainError::AlreadyRegistered);
+        }
+
+        if vitals.age < MIN_PLAYER_AGE || vitals.age > MAX_PLAYER_AGE {
+            return Err(ScoutChainError::InvalidInput);
+        }
+
+        let hashes_len = ipfs_hashes.len();
+        if hashes_len == 0 || hashes_len > MAX_IPFS_HASHES {
+            return Err(ScoutChainError::InvalidInput);
         }
 
         let player_id = Self::next_player_id(&env);
@@ -262,7 +279,7 @@ impl RegistrationContract {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, vec, Env, String};
+    use soroban_sdk::{testutils::{Address as _, Events as _}, vec, Env, String};
 
     fn setup() -> (Env, RegistrationContractClient<'static>) {
         let env = Env::default();
@@ -321,5 +338,132 @@ mod tests {
         client.register_player(&wallet, &vitals, &hashes);
         // second call should panic with AlreadyRegistered
         client.register_player(&wallet, &vitals, &hashes);
+    }
+
+    // --- Issue #2: zero-address admin ---
+
+    #[test]
+    #[should_panic]
+    fn test_initialize_zero_address_fails() {
+        let (env, client) = setup();
+        let zero = Address::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
+        client.initialize(&zero);
+    }
+
+    #[test]
+    fn test_initialize_valid_address_succeeds() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        assert!(client.health());
+    }
+
+    // --- Issue #3: contract_initialized event ---
+
+    #[test]
+    fn test_initialize_emits_contract_initialized_event() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        let events = env.events().all();
+        assert!(!events.events().is_empty());
+    }
+
+    // --- Issue #4: age validation ---
+
+    #[test]
+    #[should_panic]
+    fn test_register_player_age_too_low_fails() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        let wallet = Address::generate(&env);
+        let mut vitals = dummy_vitals(&env);
+        vitals.age = 0;
+        let hashes: soroban_sdk::Vec<String> = vec![&env, String::from_str(&env, "QmTest")];
+        client.register_player(&wallet, &vitals, &hashes);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_register_player_age_too_high_fails() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        let wallet = Address::generate(&env);
+        let mut vitals = dummy_vitals(&env);
+        vitals.age = 300;
+        let hashes: soroban_sdk::Vec<String> = vec![&env, String::from_str(&env, "QmTest")];
+        client.register_player(&wallet, &vitals, &hashes);
+    }
+
+    #[test]
+    fn test_register_player_age_18_succeeds() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        let wallet = Address::generate(&env);
+        let vitals = dummy_vitals(&env); // age = 18
+        let hashes: soroban_sdk::Vec<String> = vec![&env, String::from_str(&env, "QmTest")];
+        let id = client.register_player(&wallet, &vitals, &hashes);
+        assert_eq!(id, 1);
+    }
+
+    // --- Issue #5: ipfs_hashes validation ---
+
+    #[test]
+    #[should_panic]
+    fn test_register_player_empty_ipfs_hashes_fails() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        let wallet = Address::generate(&env);
+        let vitals = dummy_vitals(&env);
+        let hashes: soroban_sdk::Vec<String> = vec![&env];
+        client.register_player(&wallet, &vitals, &hashes);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_register_player_too_many_ipfs_hashes_fails() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        let wallet = Address::generate(&env);
+        let vitals = dummy_vitals(&env);
+        let h = String::from_str(&env, "QmTest");
+        let hashes: soroban_sdk::Vec<String> = vec![
+            &env, h.clone(), h.clone(), h.clone(), h.clone(), h.clone(),
+            h.clone(), h.clone(), h.clone(), h.clone(), h.clone(), h.clone(),
+        ];
+        client.register_player(&wallet, &vitals, &hashes);
+    }
+
+    #[test]
+    fn test_register_player_one_ipfs_hash_succeeds() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        let wallet = Address::generate(&env);
+        let vitals = dummy_vitals(&env);
+        let hashes: soroban_sdk::Vec<String> = vec![&env, String::from_str(&env, "QmTest")];
+        let id = client.register_player(&wallet, &vitals, &hashes);
+        assert_eq!(id, 1);
+    }
+
+    #[test]
+    fn test_register_player_ten_ipfs_hashes_succeeds() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        let wallet = Address::generate(&env);
+        let vitals = dummy_vitals(&env);
+        let h = String::from_str(&env, "QmTest");
+        let hashes: soroban_sdk::Vec<String> = vec![
+            &env, h.clone(), h.clone(), h.clone(), h.clone(), h.clone(),
+            h.clone(), h.clone(), h.clone(), h.clone(), h.clone(),
+        ];
+        let id = client.register_player(&wallet, &vitals, &hashes);
+        assert_eq!(id, 1);
     }
 }
