@@ -338,6 +338,28 @@ mod tests {
     }
 
     #[test]
+    fn test_get_milestone_returns_correct_data() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let validator = Address::generate(&env);
+        client.register_validator(&validator, &String::from_str(&env, "UEFA B License"));
+
+        let description = String::from_str(&env, "Scored 5 goals in Local Cup");
+        let evidence_hash = String::from_str(&env, "QmEvidence123");
+        let player_id: u64 = 42;
+
+        let idx = client.approve_milestone(&validator, &player_id, &description, &evidence_hash);
+
+        let milestone = client.get_milestone(&player_id, &idx);
+        assert_eq!(milestone.player_id, player_id);
+        assert_eq!(milestone.validator, validator);
+        assert_eq!(milestone.description, description);
+        assert_eq!(milestone.evidence_hash, evidence_hash);
+    }
+
+    #[test]
     fn test_revoke_validator() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
