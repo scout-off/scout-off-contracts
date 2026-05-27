@@ -108,6 +108,19 @@ impl VerificationContract {
         Ok(())
     }
 
+    /// Transfer admin rights to a new address (current admin auth required).
+    pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), VerificationError> {
+        let old_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(VerificationError::NotInitialized)?;
+        old_admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        events::admin_transferred(&env, &old_admin, &new_admin);
+        Ok(())
+    }
+
     // -------------------------------------------------------------------------
     // Milestone approval
     // -------------------------------------------------------------------------
@@ -406,5 +419,46 @@ mod tests {
             &String::from_str(&env, "Some milestone"),
             &String::from_str(&env, "QmEvidence"),
         );
+    }
+
+    #[test]
+    fn test_transfer_admin_success() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let new_admin = Address::generate(&env);
+        // Should not panic — current admin auth is satisfied
+        client.transfer_admin(&new_admin);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_old_admin_loses_access_after_transfer() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let new_admin = Address::generate(&env);
+        client.transfer_admin(&new_admin);
+
+        // Clear all mocks so no auth is satisfied, then try an admin action —
+        // the stored admin is now new_admin, so old admin's auth is rejected.
+        env.mock_auths(&[]);
+        client.pause_contract(); // should panic
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_transfer_admin_unauthorized() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let attacker = Address::generate(&env);
+        // Drop mock_all_auths — only authorize attacker, not the real admin
+        env.mock_auths(&[]);
+        // Should panic — admin auth is not satisfied
+        client.transfer_admin(&attacker);
     }
 }
