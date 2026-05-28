@@ -17,6 +17,7 @@ Handles player and scout on-chain identity.
 | `get_player(player_id)` | — | Read player profile |
 | `get_player_by_wallet(wallet)` | — | Lookup player by wallet |
 | `get_scout(scout_id)` | — | Read scout profile |
+| `transfer_admin(new_admin)` | current admin | Transfer admin ownership to a new address |
 | `pause_contract()` / `unpause_contract()` | admin | Circuit breaker |
 | `health()` | — | Returns true if initialized |
 
@@ -81,6 +82,29 @@ Handles scout subscriptions, pay-to-contact, and trial offer logging.
 
 ---
 
+## PlayerVitals Fields
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `age` | `u32` | Yes | — |
+| `position` | `String` | Yes | ≤ 64 bytes |
+| `region` | `String` | Yes | ≤ 64 bytes |
+| `nationality` | `String` | Yes | ≤ 64 bytes |
+| `height_cm` | `Option<u32>` | No | If provided: 100–250 (inclusive) |
+| `weight_kg` | `Option<u32>` | No | If provided: 30–200 (inclusive) |
+
+Both physical-attribute fields are optional. Existing registrations that omit them remain valid. Out-of-range values return `InvalidInput`.
+
+---
+
+## Paused Behaviour
+
+When a contract is paused via `pause_contract()`, all state-mutating functions (`register_player`, `update_profile`, `register_scout`, and admin operations) return `ContractPaused` and abort immediately.
+
+Read-only query functions (`get_player`, `get_player_by_wallet`, `get_scout`, `health`) intentionally skip the paused check. Data reads must remain available regardless of pause state so that off-chain indexers, frontends, and other contracts can always query player and scout information without interruption.
+
+---
+
 ## Progress Levels
 
 | Integer | Enum | Trigger |
@@ -99,6 +123,7 @@ Handles scout subscriptions, pay-to-contact, and trial offer logging.
 | `player_registered` | registration | New player profile created |
 | `scout_registered` | registration | New scout profile created |
 | `profile_updated` | registration | Player updates IPFS content hashes |
+| `admin_transferred` | registration | Admin ownership transferred to a new address |
 | `milestone_approved` | verification | Validator confirms a player achievement |
 | `progress_updated` | progress | Player advances to a new level |
 | `scout_subscribed` | scout_access | Scout purchases a subscription |

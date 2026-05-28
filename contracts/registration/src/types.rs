@@ -22,6 +22,10 @@ pub struct PlayerVitals {
     pub position: String,
     pub region: String,
     pub nationality: String,
+    /// Height in centimetres. If provided must be in [100, 250].
+    pub height_cm: Option<u32>,
+    /// Weight in kilograms. If provided must be in [30, 200].
+    pub weight_kg: Option<u32>,
 }
 
 /// Full on-chain player profile

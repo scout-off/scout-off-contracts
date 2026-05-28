@@ -20,3 +20,10 @@ pub fn profile_updated(env: &Env, player_id: u64) {
         player_id,
     );
 }
+
+pub fn admin_transferred(env: &Env, old_admin: &Address, new_admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "admin_transferred"), old_admin.clone()),
+        new_admin.clone(),
+    );
+}

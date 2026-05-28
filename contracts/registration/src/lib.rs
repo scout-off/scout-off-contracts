@@ -46,6 +46,18 @@ impl RegistrationContract {
         Ok(())
     }
 
+    pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), ScoutChainError> {
+        let old_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(ScoutChainError::NotInitialized)?;
+        old_admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        events::admin_transferred(&env, &old_admin, &new_admin);
+        Ok(())
+    }
+
     // -------------------------------------------------------------------------
     // Player registration
     // -------------------------------------------------------------------------
@@ -77,6 +89,17 @@ impl RegistrationContract {
             || vitals.nationality.len() > MAX_STRING_LEN
         {
             return Err(ScoutChainError::InvalidInput);
+        }
+
+        if let Some(h) = vitals.height_cm {
+            if !(100..=250).contains(&h) {
+                return Err(ScoutChainError::InvalidInput);
+            }
+        }
+        if let Some(w) = vitals.weight_kg {
+            if !(30..=200).contains(&w) {
+                return Err(ScoutChainError::InvalidInput);
+            }
         }
 
         // Validate ipfs_hashes: non-empty and at most MAX_IPFS_HASHES
@@ -178,10 +201,12 @@ impl RegistrationContract {
     // Queries
     // -------------------------------------------------------------------------
 
+    // NOTE: read-only — intentionally skips paused check
     pub fn get_player(env: Env, player_id: u64) -> Result<PlayerProfile, ScoutChainError> {
         Self::load_player(&env, player_id)
     }
 
+    // NOTE: read-only — intentionally skips paused check
     pub fn get_player_by_wallet(
         env: Env,
         wallet: Address,
@@ -194,6 +219,7 @@ impl RegistrationContract {
         Self::load_player(&env, player_id)
     }
 
+    // NOTE: read-only — intentionally skips paused check
     pub fn get_scout(env: Env, scout_id: u64) -> Result<ScoutProfile, ScoutChainError> {
         env.storage()
             .persistent()
@@ -201,6 +227,7 @@ impl RegistrationContract {
             .ok_or(ScoutChainError::ScoutNotFound)
     }
 
+    // NOTE: read-only — intentionally skips paused check
     pub fn health(env: Env) -> bool {
         env.storage()
             .instance()
@@ -302,6 +329,8 @@ mod tests {
             position: String::from_str(env, "Forward"),
             region: String::from_str(env, "West Africa"),
             nationality: String::from_str(env, "Ghana"),
+            height_cm: None,
+            weight_kg: None,
         }
     }
 
@@ -365,6 +394,8 @@ mod tests {
             position: long,
             region: String::from_str(&env, "West Africa"),
             nationality: String::from_str(&env, "Ghana"),
+            height_cm: None,
+            weight_kg: None,
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
         client.register_player(&wallet, &vitals, &hashes);
@@ -383,6 +414,8 @@ mod tests {
             position: exactly_64,
             region: String::from_str(&env, "West Africa"),
             nationality: String::from_str(&env, "Ghana"),
+            height_cm: None,
+            weight_kg: None,
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
         let id = client.register_player(&wallet, &vitals, &hashes);
@@ -403,6 +436,8 @@ mod tests {
             position: String::from_str(&env, "Forward"),
             region: long,
             nationality: String::from_str(&env, "Ghana"),
+            height_cm: None,
+            weight_kg: None,
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
         client.register_player(&wallet, &vitals, &hashes);
@@ -422,6 +457,8 @@ mod tests {
             position: String::from_str(&env, "Forward"),
             region: String::from_str(&env, "West Africa"),
             nationality: long,
+            height_cm: None,
+            weight_kg: None,
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
         client.register_player(&wallet, &vitals, &hashes);
