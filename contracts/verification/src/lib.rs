@@ -20,6 +20,9 @@ use types::{DataKey, Milestone, Validator};
 
 use soroban_sdk::{contract, contractimpl, Address, Env, String};
 
+const INSTANCE_TTL_MIN: u32 = 100;
+const INSTANCE_TTL_MAX: u32 = 500;
+
 // Generated client for the progress contract — used for cross-contract calls.
 // The progress contract must be deployed and its address registered via
 // `set_progress_contract` before `approve_milestone` can advance levels.
@@ -46,6 +49,9 @@ impl VerificationContract {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Initialized, &true);
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Ok(())
     }
 
@@ -59,6 +65,9 @@ impl VerificationContract {
         env.storage()
             .instance()
             .set(&DataKey::ProgressContract, &progress_contract);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Ok(())
     }
 
@@ -112,12 +121,18 @@ impl VerificationContract {
     pub fn pause_contract(env: Env) -> Result<(), VerificationError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &true);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Ok(())
     }
 
     pub fn unpause_contract(env: Env) -> Result<(), VerificationError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Ok(())
     }
 
@@ -189,6 +204,10 @@ impl VerificationContract {
             .set(&val_key, &(val_count.checked_add(1).expect("overflow")));
 
         events::milestone_approved(&env, player_id, &validator_wallet);
+
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
 
         // Cross-contract call: advance the player's progress level.
         // This is a best-effort call — if the progress contract is not set
@@ -515,5 +534,38 @@ mod tests {
             &String::from_str(&env, "overflow test"),
             &String::from_str(&env, "QmHash"),
         );
+    }
+
+    #[test]
+    fn test_instance_ttl_extended_after_ledger_advancement() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        // Verify contract is initialized
+        assert!(client.health());
+
+        // Advance ledger by 600 blocks (more than INSTANCE_TTL_MAX)
+        env.ledger().with_mut(|l| {
+            l.sequence += 600;
+        });
+
+        // Contract should still be functional because TTL was extended
+        let validator = Address::generate(&env);
+        client.register_validator(&validator, &String::from_str(&env, "Coach"));
+
+        let idx = client.approve_milestone(
+            &validator,
+            &1u64,
+            &String::from_str(&env, "Test milestone"),
+            &String::from_str(&env, "QmEvidence"),
+        );
+        assert_eq!(idx, 1);
+
+        // Verify pause/unpause still works
+        client.pause_contract();
+        assert!(client.health());
+        client.unpause_contract();
+        assert!(client.health());
     }
 }

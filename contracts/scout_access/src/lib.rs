@@ -7,6 +7,9 @@ use types::{DataKey, FeeConfig, Subscription, SubscriptionTier, TrialOffer};
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env, String};
 
+const INSTANCE_TTL_MIN: u32 = 100;
+const INSTANCE_TTL_MAX: u32 = 500;
+
 #[contract]
 pub struct ScoutAccessContract;
 
@@ -32,12 +35,18 @@ impl ScoutAccessContract {
         env.storage().instance().set(&DataKey::Initialized, &true);
         env.storage().instance().set(&DataKey::Paused, &false);
         env.storage().instance().set(&DataKey::AccumulatedFees, &0i128);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Ok(())
     }
 
     pub fn update_fee_config(env: Env, fee_config: FeeConfig) -> Result<(), ScoutAccessError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::FeeConfig, &fee_config);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Ok(())
     }
 
@@ -55,6 +64,9 @@ impl ScoutAccessContract {
         let contract_addr = env.current_contract_address();
         token::Client::new(&env, &xlm).transfer(&contract_addr, &to, &fees);
         env.storage().instance().set(&DataKey::AccumulatedFees, &0i128);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         events::fees_withdrawn(&env, &to, fees);
         Ok(fees)
     }
@@ -62,12 +74,18 @@ impl ScoutAccessContract {
     pub fn pause_contract(env: Env) -> Result<(), ScoutAccessError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &true);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Ok(())
     }
 
     pub fn unpause_contract(env: Env) -> Result<(), ScoutAccessError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Ok(())
     }
 
@@ -110,6 +128,10 @@ impl ScoutAccessContract {
             .persistent()
             .set(&DataKey::Subscription(scout.clone()), &sub);
 
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
+
         events::scout_subscribed(&env, &scout, &tier);
         Ok(())
     }
@@ -145,6 +167,9 @@ impl ScoutAccessContract {
         Self::accumulate_fee(&env, config.contact_fee_stroops);
 
         env.storage().persistent().set(&contact_key, &true);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         events::player_contacted(&env, player_id, &scout);
         Ok(())
     }
@@ -188,6 +213,10 @@ impl ScoutAccessContract {
             .persistent()
             .set(&DataKey::TrialOffer(player_id, next_index), &offer);
         env.storage().persistent().set(&counter_key, &next_index);
+
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
 
         events::trial_offer_logged(&env, player_id, &scout);
         Ok(next_index)
@@ -474,5 +503,38 @@ mod tests {
 
         // Should panic with SubscriptionExpired
         client.pay_to_contact(&scout, &1u64);
+    }
+
+    #[test]
+    fn test_instance_ttl_extended_after_ledger_advancement() {
+        let (env, admin, xlm, contract_id, client) = setup();
+        let scout = Address::generate(&env);
+        mint_token(&env, &xlm, &admin, &scout, 100_000_000);
+
+        // Verify contract is initialized
+        assert!(client.health());
+
+        // Advance ledger by 600 blocks (more than INSTANCE_TTL_MAX)
+        env.ledger().with_mut(|l| {
+            l.sequence += 600;
+        });
+
+        // Contract should still be functional because TTL was extended
+        client.subscribe(&scout, &SubscriptionTier::Elite);
+        assert!(client.health());
+
+        // Verify pause/unpause still works
+        client.pause_contract();
+        assert!(client.health());
+        client.unpause_contract();
+        assert!(client.health());
+
+        // Verify trial offer logging still works
+        let idx = client.log_trial_offer(
+            &scout,
+            &1u64,
+            &String::from_str(&env, "QmTrialDetails"),
+        );
+        assert_eq!(idx, 1);
     }
 }
