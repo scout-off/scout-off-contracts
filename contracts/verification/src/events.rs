@@ -20,3 +20,10 @@ pub fn validator_revoked(env: &Env, wallet: &Address) {
         wallet.clone(),
     );
 }
+
+pub fn validator_credentials_updated(env: &Env, wallet: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "validator_credentials_updated"),),
+        wallet.clone(),
+    );
+}

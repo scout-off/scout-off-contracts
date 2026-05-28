@@ -118,6 +118,37 @@ impl VerificationContract {
         Ok(())
     }
 
+    /// Update a validator's credentials (admin only).
+    /// Allows validators to reflect credential upgrades on-chain.
+    pub fn update_validator_credentials(
+        env: Env,
+        wallet: Address,
+        new_credentials: String,
+    ) -> Result<(), VerificationError> {
+        Self::require_admin(&env)?;
+
+        // Validate credentials length ≤ 256 bytes
+        if new_credentials.len() > 256 {
+            return Err(VerificationError::InvalidInput);
+        }
+
+        // Get existing validator
+        let mut validator: Validator = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Validator(wallet.clone()))
+            .ok_or(VerificationError::ValidatorNotFound)?;
+
+        // Update credentials
+        validator.credentials = new_credentials;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Validator(wallet.clone()), &validator);
+
+        events::validator_credentials_updated(&env, &wallet);
+        Ok(())
+    }
+
     pub fn pause_contract(env: Env) -> Result<(), VerificationError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &true);
@@ -567,5 +598,123 @@ mod tests {
         assert!(client.health());
         client.unpause_contract();
         assert!(client.health());
+    }
+
+    #[test]
+    fn test_update_validator_credentials_success() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let validator = Address::generate(&env);
+        let initial_creds = String::from_str(&env, "UEFA B License");
+        client.register_validator(&validator, &initial_creds);
+
+        // Verify initial credentials
+        let v1 = client.get_validator(&validator);
+        assert_eq!(v1.credentials, initial_creds);
+
+        // Update credentials
+        let new_creds = String::from_str(&env, "UEFA A License");
+        client.update_validator_credentials(&validator, &new_creds);
+
+        // Verify credentials were updated
+        let v2 = client.get_validator(&validator);
+        assert_eq!(v2.credentials, new_creds);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_update_validator_credentials_unauthorized() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let validator = Address::generate(&env);
+        client.register_validator(&validator, &String::from_str(&env, "Coach"));
+
+        // Clear mocks — non-admin auth
+        env.mock_auths(&[]);
+
+        // Should panic — not admin
+        client.update_validator_credentials(&validator, &String::from_str(&env, "New Creds"));
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_update_validator_credentials_not_found() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let unknown_validator = Address::generate(&env);
+
+        // Should panic — validator not registered
+        client.update_validator_credentials(
+            &unknown_validator,
+            &String::from_str(&env, "New Creds"),
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_update_validator_credentials_too_long() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let validator = Address::generate(&env);
+        client.register_validator(&validator, &String::from_str(&env, "Coach"));
+
+        // Create credentials string longer than 256 bytes
+        let long_creds = String::from_str(&env, &"A".repeat(257));
+
+        // Should panic — credentials too long
+        client.update_validator_credentials(&validator, &long_creds);
+    }
+
+    #[test]
+    fn test_update_validator_credentials_max_length() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let validator = Address::generate(&env);
+        client.register_validator(&validator, &String::from_str(&env, "Coach"));
+
+        // Create credentials string exactly 256 bytes
+        let max_creds = String::from_str(&env, &"A".repeat(256));
+
+        // Should succeed
+        client.update_validator_credentials(&validator, &max_creds);
+
+        // Verify credentials were updated
+        let v = client.get_validator(&validator);
+        assert_eq!(v.credentials, max_creds);
+    }
+
+    #[test]
+    fn test_update_validator_credentials_preserves_other_fields() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let validator = Address::generate(&env);
+        let initial_creds = String::from_str(&env, "UEFA B License");
+        client.register_validator(&validator, &initial_creds);
+
+        let v1 = client.get_validator(&validator);
+        let initial_registered_at = v1.registered_at;
+        let initial_active = v1.active;
+
+        // Update credentials
+        let new_creds = String::from_str(&env, "UEFA A License");
+        client.update_validator_credentials(&validator, &new_creds);
+
+        // Verify other fields are preserved
+        let v2 = client.get_validator(&validator);
+        assert_eq!(v2.registered_at, initial_registered_at);
+        assert_eq!(v2.active, initial_active);
+        assert_eq!(v2.wallet, validator);
     }
 }
