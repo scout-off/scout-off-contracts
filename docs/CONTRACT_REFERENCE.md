@@ -82,6 +82,14 @@ Handles scout subscriptions, pay-to-contact, and trial offer logging.
 
 ---
 
+## Paused Behaviour
+
+When a contract is paused via `pause_contract()`, all state-mutating functions (`register_player`, `update_profile`, `register_scout`, and admin operations) return `ContractPaused` and abort immediately.
+
+Read-only query functions (`get_player`, `get_player_by_wallet`, `get_scout`, `health`) intentionally skip the paused check. Data reads must remain available regardless of pause state so that off-chain indexers, frontends, and other contracts can always query player and scout information without interruption.
+
+---
+
 ## Progress Levels
 
 | Integer | Enum | Trigger |

@@ -190,10 +190,12 @@ impl RegistrationContract {
     // Queries
     // -------------------------------------------------------------------------
 
+    // NOTE: read-only — intentionally skips paused check
     pub fn get_player(env: Env, player_id: u64) -> Result<PlayerProfile, ScoutChainError> {
         Self::load_player(&env, player_id)
     }
 
+    // NOTE: read-only — intentionally skips paused check
     pub fn get_player_by_wallet(
         env: Env,
         wallet: Address,
@@ -206,6 +208,7 @@ impl RegistrationContract {
         Self::load_player(&env, player_id)
     }
 
+    // NOTE: read-only — intentionally skips paused check
     pub fn get_scout(env: Env, scout_id: u64) -> Result<ScoutProfile, ScoutChainError> {
         env.storage()
             .persistent()
@@ -213,6 +216,7 @@ impl RegistrationContract {
             .ok_or(ScoutChainError::ScoutNotFound)
     }
 
+    // NOTE: read-only — intentionally skips paused check
     pub fn health(env: Env) -> bool {
         env.storage()
             .instance()
