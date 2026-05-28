@@ -553,4 +553,18 @@ mod tests {
         let unknown = Address::generate(&env);
         client.get_player_by_wallet(&unknown);
     }
+
+    // -------------------------------------------------------------------------
+    // Issue #20: get_scout returns ScoutNotFound for unknown scout_id
+    // -------------------------------------------------------------------------
+
+    #[test]
+    #[should_panic]
+    fn test_get_scout_not_found() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        client.get_scout(&999u64);
+    }
 }
