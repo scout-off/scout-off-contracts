@@ -29,13 +29,17 @@ impl ProgressContract {
 
     pub fn pause_contract(env: Env) -> Result<(), ProgressError> {
         Self::require_admin(&env)?;
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).ok_or(ProgressError::NotInitialized)?;
         env.storage().instance().set(&DataKey::Paused, &true);
+        events::contract_paused(&env, &admin);
         Ok(())
     }
 
     pub fn unpause_contract(env: Env) -> Result<(), ProgressError> {
         Self::require_admin(&env)?;
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).ok_or(ProgressError::NotInitialized)?;
         env.storage().instance().set(&DataKey::Paused, &false);
+        events::contract_unpaused(&env, &admin);
         Ok(())
     }
 
@@ -306,6 +310,42 @@ mod tests {
             result,
             Err(Ok(ProgressError::HistoryEntryNotFound))
         );
+    }
+
+    #[test]
+    fn test_pause_emits_contract_paused_event() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        client.pause_contract();
+
+        let events = env.events().all();
+        // Find an event whose first topic is the "contract_paused" symbol
+        let found = events.iter().any(|(_, topics, _)| {
+            topics.len() == 1
+                && topics.get_unchecked(0)
+                    == soroban_sdk::Val::from(Symbol::new(&env, "contract_paused"))
+        });
+        assert!(found, "contract_paused event not emitted");
+    }
+
+    #[test]
+    fn test_unpause_emits_contract_unpaused_event() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        client.pause_contract();
+        client.unpause_contract();
+
+        let events = env.events().all();
+        let found = events.iter().any(|(_, topics, _)| {
+            topics.len() == 1
+                && topics.get_unchecked(0)
+                    == soroban_sdk::Val::from(Symbol::new(&env, "contract_unpaused"))
+        });
+        assert!(found, "contract_unpaused event not emitted");
     }
 
     #[test]
