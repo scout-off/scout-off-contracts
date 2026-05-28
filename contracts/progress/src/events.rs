@@ -1,6 +1,20 @@
 use soroban_sdk::{Address, Env, Symbol};
 use crate::types::ProgressLevel;
 
+pub fn contract_paused(env: &Env, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "contract_paused"),),
+        (admin.clone(),),
+    );
+}
+
+pub fn contract_unpaused(env: &Env, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "contract_unpaused"),),
+        (admin.clone(),),
+    );
+}
+
 pub fn admin_transferred(env: &Env, old_admin: &Address, new_admin: &Address) {
     env.events().publish(
         (Symbol::new(env, "admin_transferred"),),

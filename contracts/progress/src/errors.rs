@@ -11,4 +11,5 @@ pub enum ProgressError {
     InvalidProgressTransition = 5,
     AlreadyAtMaxLevel = 6,
     PlayerNotFound = 7,
+    HistoryEntryNotFound = 10,
 }
