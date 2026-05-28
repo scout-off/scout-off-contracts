@@ -129,7 +129,7 @@ impl ProgressContract {
         env.storage()
             .persistent()
             .get(&DataKey::HistoryEntry(player_id, index))
-            .ok_or(ProgressError::PlayerNotFound)
+            .ok_or(ProgressError::HistoryEntryNotFound)
     }
 
     pub fn health(env: Env) -> bool {
@@ -263,6 +263,49 @@ mod tests {
         // Clear all mocks — no auth satisfied, so admin check fails
         env.mock_auths(&[]);
         client.transfer_admin(&Address::generate(&env));
+    }
+
+    #[test]
+    fn test_advance_level_blocked_when_paused() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        // Pause the contract
+        client.pause_contract();
+
+        let validator = Address::generate(&env);
+        let player_id = 1u64;
+
+        // advance_level should be blocked with ContractPaused
+        let result = client.try_advance_level(&validator, &player_id, &1u32);
+        assert_eq!(result, Err(Ok(ProgressError::ContractPaused)));
+    }
+
+    #[test]
+    fn test_get_level_unverified_for_new_player() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        // A player that has never had advance_level called should be Unverified
+        let player_id = 42u64;
+        assert_eq!(client.get_level(&player_id), ProgressLevel::Unverified);
+    }
+
+    #[test]
+    fn test_get_history_entry_out_of_range_returns_history_entry_not_found() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let player_id = 99u64;
+        // No advances made — index 1 does not exist
+        let result = client.try_get_history_entry(&player_id, &1u32);
+        assert_eq!(
+            result,
+            Err(Ok(ProgressError::HistoryEntryNotFound))
+        );
     }
 
     #[test]
