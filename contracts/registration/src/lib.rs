@@ -538,4 +538,19 @@ mod tests {
         let scout_id = client.register_scout(&wallet, &exactly_128);
         assert_eq!(scout_id, 1);
     }
+
+    // -------------------------------------------------------------------------
+    // Issue #19: get_player_by_wallet returns PlayerNotFound for unknown wallet
+    // -------------------------------------------------------------------------
+
+    #[test]
+    #[should_panic]
+    fn test_get_player_by_wallet_not_found() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let unknown = Address::generate(&env);
+        client.get_player_by_wallet(&unknown);
+    }
 }
