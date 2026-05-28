@@ -388,6 +388,26 @@ mod tests {
     }
 
     #[test]
+    fn test_set_progress_contract_stores_address() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let progress_contract = Address::generate(&env);
+        client.set_progress_contract(&progress_contract);
+
+        // Verify the address is stored correctly in instance storage
+        env.as_contract(&client.address, || {
+            let stored_address: Address = env
+                .storage()
+                .instance()
+                .get(&DataKey::ProgressContract)
+                .expect("ProgressContract address not found in storage");
+            assert_eq!(stored_address, progress_contract);
+        });
+    }
+
+    #[test]
     fn test_register_and_approve() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
