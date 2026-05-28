@@ -46,6 +46,18 @@ impl RegistrationContract {
         Ok(())
     }
 
+    pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), ScoutChainError> {
+        let old_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(ScoutChainError::NotInitialized)?;
+        old_admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        events::admin_transferred(&env, &old_admin, &new_admin);
+        Ok(())
+    }
+
     // -------------------------------------------------------------------------
     // Player registration
     // -------------------------------------------------------------------------
