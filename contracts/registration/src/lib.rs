@@ -567,4 +567,37 @@ mod tests {
 
         client.get_scout(&999u64);
     }
+
+    // -------------------------------------------------------------------------
+    // Issue #21: pause_contract blocks register_player
+    // -------------------------------------------------------------------------
+
+    #[test]
+    #[should_panic]
+    fn test_register_player_blocked_when_paused() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        client.pause_contract();
+
+        let wallet = Address::generate(&env);
+        let vitals = dummy_vitals(&env);
+        let hashes = vec![&env, String::from_str(&env, "QmTest")];
+        client.register_player(&wallet, &vitals, &hashes);
+    }
+
+    #[test]
+    fn test_register_player_succeeds_after_unpause() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        client.pause_contract();
+        client.unpause_contract();
+
+        let wallet = Address::generate(&env);
+        let vitals = dummy_vitals(&env);
+        let hashes = vec![&env, String::from_str(&env, "QmTest")];
+        let id = client.register_player(&wallet, &vitals, &hashes);
+        assert_eq!(id, 1);
+    }
 }
