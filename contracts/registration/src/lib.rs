@@ -9,6 +9,7 @@ use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
 
 const MAX_STRING_LEN: u32 = 64;
 const MAX_REGION_LEN: u32 = 128;
+const MAX_ORG_LEN: u32 = 128;
 const MAX_IPFS_HASHES: u32 = 10;
 
 #[contract]
@@ -138,6 +139,7 @@ impl RegistrationContract {
         env: Env,
         wallet: Address,
         region: String,
+        organization: String,
     ) -> Result<u64, ScoutChainError> {
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
@@ -155,11 +157,16 @@ impl RegistrationContract {
             return Err(ScoutChainError::InvalidInput);
         }
 
+        if organization.len() > MAX_ORG_LEN {
+            return Err(ScoutChainError::InvalidInput);
+        }
+
         let scout_id = Self::next_scout_id(&env);
         let profile = ScoutProfile {
             scout_id,
             wallet: wallet.clone(),
             region,
+            organization: organization.clone(),
             registered_at: env.ledger().timestamp(),
         };
 
@@ -170,7 +177,7 @@ impl RegistrationContract {
             .persistent()
             .set(&DataKey::ScoutByWallet(wallet.clone()), &scout_id);
 
-        events::scout_registered(&env, scout_id, &wallet);
+        events::scout_registered(&env, scout_id, &wallet, &organization);
         Ok(scout_id)
     }
 
@@ -524,7 +531,8 @@ mod tests {
 
         let wallet = Address::generate(&env);
         let long_region = String::from_str(&env, &"A".repeat(129));
-        client.register_scout(&wallet, &long_region);
+        let org = String::from_str(&env, "FC Test");
+        client.register_scout(&wallet, &long_region, &org);
     }
 
     #[test]
@@ -535,8 +543,41 @@ mod tests {
 
         let wallet = Address::generate(&env);
         let exactly_128 = String::from_str(&env, &"A".repeat(128));
-        let scout_id = client.register_scout(&wallet, &exactly_128);
+        let org = String::from_str(&env, "FC Test");
+        let scout_id = client.register_scout(&wallet, &exactly_128, &org);
         assert_eq!(scout_id, 1);
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #18: organization field validation
+    // -------------------------------------------------------------------------
+
+    #[test]
+    #[should_panic]
+    fn test_register_scout_organization_too_long() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let region = String::from_str(&env, "West Africa");
+        let long_org = String::from_str(&env, &"A".repeat(129));
+        client.register_scout(&wallet, &region, &long_org);
+    }
+
+    #[test]
+    fn test_register_scout_organization_stored() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let region = String::from_str(&env, "West Africa");
+        let org = String::from_str(&env, "Elite FC");
+        let scout_id = client.register_scout(&wallet, &region, &org);
+
+        let profile = client.get_scout(&scout_id);
+        assert_eq!(profile.organization, org);
     }
 
     // -------------------------------------------------------------------------

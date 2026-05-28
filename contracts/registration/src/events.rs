@@ -1,4 +1,4 @@
-use soroban_sdk::{Address, Env, Symbol};
+use soroban_sdk::{Address, Env, String, Symbol};
 
 pub fn player_registered(env: &Env, player_id: u64, wallet: &Address) {
     env.events().publish(
@@ -7,10 +7,10 @@ pub fn player_registered(env: &Env, player_id: u64, wallet: &Address) {
     );
 }
 
-pub fn scout_registered(env: &Env, scout_id: u64, wallet: &Address) {
+pub fn scout_registered(env: &Env, scout_id: u64, wallet: &Address, organization: &String) {
     env.events().publish(
         (Symbol::new(env, "scout_registered"), wallet.clone()),
-        scout_id,
+        (scout_id, organization.clone()),
     );
 }
 
