@@ -81,6 +81,21 @@ Handles scout subscriptions, pay-to-contact, and trial offer logging.
 
 ---
 
+## Progress Errors
+
+| Code | Variant | Meaning |
+|------|---------|---------|
+| 1 | `AlreadyInitialized` | `initialize` called more than once |
+| 2 | `NotInitialized` | Contract not yet initialized |
+| 3 | `ContractPaused` | Write operation attempted while paused |
+| 4 | `Unauthorized` | Caller lacks required permission |
+| 5 | `InvalidProgressTransition` | Level transition is not allowed |
+| 6 | `AlreadyAtMaxLevel` | Player is already at `EliteTier` |
+| 7 | `PlayerNotFound` | No record exists for the given player ID |
+| 10 | `HistoryEntryNotFound` | History index is out of range for the player |
+
+---
+
 ## Progress Levels
 
 | Integer | Enum | Trigger |
