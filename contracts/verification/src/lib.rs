@@ -473,6 +473,18 @@ mod tests {
 
     #[test]
     #[should_panic]
+    fn test_revoke_nonexistent_validator_fails() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let unknown_validator = Address::generate(&env);
+        // Should panic — validator not registered
+        client.revoke_validator(&unknown_validator);
+    }
+
+    #[test]
+    #[should_panic]
     fn test_revoked_validator_cannot_approve() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
