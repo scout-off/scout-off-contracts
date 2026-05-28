@@ -266,6 +266,17 @@ mod tests {
     }
 
     #[test]
+    fn test_get_level_unverified_for_new_player() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        // A player that has never had advance_level called should be Unverified
+        let player_id = 42u64;
+        assert_eq!(client.get_level(&player_id), ProgressLevel::Unverified);
+    }
+
+    #[test]
     #[should_panic]
     fn test_old_admin_loses_access_after_transfer() {
         let (env, client) = setup();
