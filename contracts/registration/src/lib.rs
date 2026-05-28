@@ -91,6 +91,17 @@ impl RegistrationContract {
             return Err(ScoutChainError::InvalidInput);
         }
 
+        if let Some(h) = vitals.height_cm {
+            if !(100..=250).contains(&h) {
+                return Err(ScoutChainError::InvalidInput);
+            }
+        }
+        if let Some(w) = vitals.weight_kg {
+            if !(30..=200).contains(&w) {
+                return Err(ScoutChainError::InvalidInput);
+            }
+        }
+
         // Validate ipfs_hashes: non-empty and at most MAX_IPFS_HASHES
         if ipfs_hashes.is_empty() || ipfs_hashes.len() > MAX_IPFS_HASHES {
             return Err(ScoutChainError::InvalidInput);
@@ -318,6 +329,8 @@ mod tests {
             position: String::from_str(env, "Forward"),
             region: String::from_str(env, "West Africa"),
             nationality: String::from_str(env, "Ghana"),
+            height_cm: None,
+            weight_kg: None,
         }
     }
 
@@ -381,6 +394,8 @@ mod tests {
             position: long,
             region: String::from_str(&env, "West Africa"),
             nationality: String::from_str(&env, "Ghana"),
+            height_cm: None,
+            weight_kg: None,
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
         client.register_player(&wallet, &vitals, &hashes);
@@ -399,6 +414,8 @@ mod tests {
             position: exactly_64,
             region: String::from_str(&env, "West Africa"),
             nationality: String::from_str(&env, "Ghana"),
+            height_cm: None,
+            weight_kg: None,
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
         let id = client.register_player(&wallet, &vitals, &hashes);
@@ -419,6 +436,8 @@ mod tests {
             position: String::from_str(&env, "Forward"),
             region: long,
             nationality: String::from_str(&env, "Ghana"),
+            height_cm: None,
+            weight_kg: None,
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
         client.register_player(&wallet, &vitals, &hashes);
@@ -438,6 +457,8 @@ mod tests {
             position: String::from_str(&env, "Forward"),
             region: String::from_str(&env, "West Africa"),
             nationality: long,
+            height_cm: None,
+            weight_kg: None,
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
         client.register_player(&wallet, &vitals, &hashes);
