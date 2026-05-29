@@ -20,3 +20,17 @@ pub fn profile_updated(env: &Env, player_id: u64) {
         player_id,
     );
 }
+
+pub fn contract_paused(env: &Env, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "contract_paused"),),
+        admin.clone(),
+    );
+}
+
+pub fn contract_unpaused(env: &Env, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "contract_unpaused"),),
+        admin.clone(),
+    );
+}

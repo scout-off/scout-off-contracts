@@ -11,6 +11,12 @@ const MAX_STRING_LEN: u32 = 64;
 const MAX_REGION_LEN: u32 = 128;
 const MAX_IPFS_HASHES: u32 = 10;
 
+const INSTANCE_TTL_MIN: u32 = 100;
+const INSTANCE_TTL_MAX: u32 = 500;
+
+const PERSISTENT_TTL_MIN: u32 = 500;
+const PERSISTENT_TTL_MAX: u32 = 2000;
+
 #[contract]
 pub struct RegistrationContract;
 
@@ -22,6 +28,9 @@ impl RegistrationContract {
 
     /// One-time contract initialisation. Must be called before any other function.
     pub fn initialize(env: Env, admin: Address) -> Result<(), ScoutChainError> {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         if env.storage().instance().has(&DataKey::Initialized) {
             return Err(ScoutChainError::AlreadyInitialized);
         }
@@ -35,14 +44,22 @@ impl RegistrationContract {
     }
 
     pub fn pause_contract(env: Env) -> Result<(), ScoutChainError> {
-        Self::require_admin(&env)?;
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
+        let admin = Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &true);
+        events::contract_paused(&env, &admin);
         Ok(())
     }
 
     pub fn unpause_contract(env: Env) -> Result<(), ScoutChainError> {
-        Self::require_admin(&env)?;
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
+        let admin = Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
+        events::contract_unpaused(&env, &admin);
         Ok(())
     }
 
@@ -58,6 +75,9 @@ impl RegistrationContract {
         vitals: PlayerVitals,
         ipfs_hashes: Vec<String>,
     ) -> Result<u64, ScoutChainError> {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
         wallet.require_auth();
@@ -114,6 +134,9 @@ impl RegistrationContract {
         player_id: u64,
         ipfs_hashes: Vec<String>,
     ) -> Result<(), ScoutChainError> {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Self::require_not_paused(&env)?;
         let mut profile = Self::load_player(&env, player_id)?;
         profile.wallet.require_auth();
@@ -139,6 +162,9 @@ impl RegistrationContract {
         wallet: Address,
         region: String,
     ) -> Result<u64, ScoutChainError> {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
         wallet.require_auth();
@@ -179,6 +205,9 @@ impl RegistrationContract {
     // -------------------------------------------------------------------------
 
     pub fn get_player(env: Env, player_id: u64) -> Result<PlayerProfile, ScoutChainError> {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Self::load_player(&env, player_id)
     }
 
@@ -186,22 +215,51 @@ impl RegistrationContract {
         env: Env,
         wallet: Address,
     ) -> Result<PlayerProfile, ScoutChainError> {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
+        let index_key = DataKey::PlayerByWallet(wallet);
         let player_id: u64 = env
             .storage()
             .persistent()
-            .get(&DataKey::PlayerByWallet(wallet))
+            .get(&index_key)
             .ok_or(ScoutChainError::PlayerNotFound)?;
+        env.storage()
+            .persistent()
+            .extend_ttl(&index_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
         Self::load_player(&env, player_id)
     }
 
     pub fn get_scout(env: Env, scout_id: u64) -> Result<ScoutProfile, ScoutChainError> {
         env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
+        Self::load_scout(&env, scout_id)
+    }
+
+    pub fn get_scout_by_wallet(
+        env: Env,
+        wallet: Address,
+    ) -> Result<ScoutProfile, ScoutChainError> {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
+        let index_key = DataKey::ScoutByWallet(wallet);
+        let scout_id: u64 = env
+            .storage()
             .persistent()
-            .get(&DataKey::Scout(scout_id))
-            .ok_or(ScoutChainError::ScoutNotFound)
+            .get(&index_key)
+            .ok_or(ScoutChainError::ScoutNotFound)?;
+        env.storage()
+            .persistent()
+            .extend_ttl(&index_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+        Self::load_scout(&env, scout_id)
     }
 
     pub fn health(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         env.storage()
             .instance()
             .get::<DataKey, bool>(&DataKey::Initialized)
@@ -236,21 +294,42 @@ impl RegistrationContract {
         Ok(())
     }
 
-    fn require_admin(env: &Env) -> Result<(), ScoutChainError> {
+    fn require_admin(env: &Env) -> Result<Address, ScoutChainError> {
         let admin: Address = env
             .storage()
             .instance()
             .get(&DataKey::Admin)
             .ok_or(ScoutChainError::NotInitialized)?;
         admin.require_auth();
-        Ok(())
+        Ok(admin)
     }
 
     fn load_player(env: &Env, player_id: u64) -> Result<PlayerProfile, ScoutChainError> {
-        env.storage()
+        let profile: PlayerProfile = env
+            .storage()
             .persistent()
             .get(&DataKey::Player(player_id))
-            .ok_or(ScoutChainError::PlayerNotFound)
+            .ok_or(ScoutChainError::PlayerNotFound)?;
+        env.storage().persistent().extend_ttl(
+            &DataKey::Player(player_id),
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
+        Ok(profile)
+    }
+
+    fn load_scout(env: &Env, scout_id: u64) -> Result<ScoutProfile, ScoutChainError> {
+        let profile: ScoutProfile = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Scout(scout_id))
+            .ok_or(ScoutChainError::ScoutNotFound)?;
+        env.storage().persistent().extend_ttl(
+            &DataKey::Scout(scout_id),
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
+        Ok(profile)
     }
 
     fn next_player_id(env: &Env) -> u64 {
@@ -537,5 +616,108 @@ mod tests {
         let exactly_128 = String::from_str(&env, &"A".repeat(128));
         let scout_id = client.register_scout(&wallet, &exactly_128);
         assert_eq!(scout_id, 1);
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #11: PlayerCounter sequential IDs (no reset)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_three_player_ids_are_sequential() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let hashes = vec![&env, String::from_str(&env, "QmHash")];
+
+        let w1 = Address::generate(&env);
+        let id1 = client.register_player(&w1, &dummy_vitals(&env), &hashes);
+
+        let w2 = Address::generate(&env);
+        let id2 = client.register_player(&w2, &dummy_vitals(&env), &hashes);
+
+        let w3 = Address::generate(&env);
+        let id3 = client.register_player(&w3, &dummy_vitals(&env), &hashes);
+
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+        assert_eq!(id3, 3);
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #10: get_scout_by_wallet
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_get_scout_by_wallet_registered() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let region = String::from_str(&env, "East Africa");
+        let scout_id = client.register_scout(&wallet, &region);
+
+        let profile = client.get_scout_by_wallet(&wallet);
+        assert_eq!(profile.scout_id, scout_id);
+        assert_eq!(profile.wallet, wallet);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_get_scout_by_wallet_unregistered() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let unknown = Address::generate(&env);
+        client.get_scout_by_wallet(&unknown);
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #13: pause/unpause events
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_pause_emits_contract_paused_event() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        client.pause_contract();
+
+        let events = env.events().all();
+        let found = events.iter().any(|e| {
+            let topics: soroban_sdk::Vec<soroban_sdk::Val> = e.0;
+            if topics.len() == 1 {
+                if let Ok(sym) = soroban_sdk::Symbol::try_from(topics.get(0).unwrap()) {
+                    return sym == soroban_sdk::Symbol::new(&env, "contract_paused");
+                }
+            }
+            false
+        });
+        assert!(found, "contract_paused event not found");
+    }
+
+    #[test]
+    fn test_unpause_emits_contract_unpaused_event() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        client.pause_contract();
+        client.unpause_contract();
+
+        let events = env.events().all();
+        let found = events.iter().any(|e| {
+            let topics: soroban_sdk::Vec<soroban_sdk::Val> = e.0;
+            if topics.len() == 1 {
+                if let Ok(sym) = soroban_sdk::Symbol::try_from(topics.get(0).unwrap()) {
+                    return sym == soroban_sdk::Symbol::new(&env, "contract_unpaused");
+                }
+            }
+            false
+        });
+        assert!(found, "contract_unpaused event not found");
     }
 }

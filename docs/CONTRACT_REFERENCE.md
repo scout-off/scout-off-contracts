@@ -17,6 +17,7 @@ Handles player and scout on-chain identity.
 | `get_player(player_id)` | — | Read player profile |
 | `get_player_by_wallet(wallet)` | — | Lookup player by wallet |
 | `get_scout(scout_id)` | — | Read scout profile |
+| `get_scout_by_wallet(wallet)` | — | Lookup scout by wallet |
 | `pause_contract()` / `unpause_contract()` | admin | Circuit breaker |
 | `health()` | — | Returns true if initialized |
 
@@ -99,6 +100,8 @@ Handles scout subscriptions, pay-to-contact, and trial offer logging.
 | `player_registered` | registration | New player profile created |
 | `scout_registered` | registration | New scout profile created |
 | `profile_updated` | registration | Player updates IPFS content hashes |
+| `contract_paused` | registration | Admin pauses the contract |
+| `contract_unpaused` | registration | Admin unpauses the contract |
 | `milestone_approved` | verification | Validator confirms a player achievement |
 | `progress_updated` | progress | Player advances to a new level |
 | `scout_subscribed` | scout_access | Scout purchases a subscription |
