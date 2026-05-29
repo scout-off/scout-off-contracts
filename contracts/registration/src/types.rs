@@ -33,6 +33,7 @@ pub struct ScoutProfile {
     pub scout_id: u64,
     pub wallet: Address,
     pub region: String,
+    pub organization: String,
     pub registered_at: u64,
 }
 
