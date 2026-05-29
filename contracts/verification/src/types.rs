@@ -10,6 +10,8 @@ pub struct Milestone {
     /// IPFS/Arweave CID of supporting evidence (video clip, stat sheet, etc.)
     pub evidence_hash: String,
     pub approved_at: u64,
+    /// Stellar ledger sequence at time of approval for tamper-proof auditability
+    pub ledger_sequence: u32,
 }
 
 /// Validator entry in the trusted registry
@@ -36,4 +38,6 @@ pub enum DataKey {
     Milestone(u64, u32),
     /// registration contract address (cross-contract calls)
     RegistrationContract,
+    /// milestone count per validator wallet
+    ValidatorMilestoneCount(Address),
 }

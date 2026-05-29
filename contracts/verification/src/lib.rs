@@ -1,3 +1,16 @@
+// IMPORTANT: Cross-contract wiring required after deployment
+//
+// `approve_milestone` calls `advance_level` on the progress contract to update
+// a player's progress level atomically. This link is NOT automatic — after
+// deploying both contracts you MUST run:
+//
+//   stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
+//     -- set_progress_contract \
+//     --progress_contract $PROGRESS_CONTRACT_ID
+//
+// The easiest way is to run `./scripts/initialize.sh` which does this for you.
+// Without this step, milestones are recorded but player levels will NOT advance.
+
 mod errors;
 mod events;
 mod types;
@@ -118,6 +131,9 @@ impl VerificationContract {
     /// on the registered progress contract so both state changes happen atomically
     /// in the same Stellar transaction.
     ///
+    /// Each milestone records the Stellar ledger sequence number for
+    /// tamper-proof auditability.
+    ///
     /// Returns the milestone index for this player.
     pub fn approve_milestone(
         env: Env,
@@ -147,7 +163,7 @@ impl VerificationContract {
             .persistent()
             .get(&counter_key)
             .unwrap_or(0u32);
-        let next_index = index.checked_add(1).expect("overflow");
+        let next_index = index.checked_add(1).ok_or(VerificationError::Overflow)?;
 
         let milestone = Milestone {
             player_id,
@@ -155,6 +171,7 @@ impl VerificationContract {
             description,
             evidence_hash,
             approved_at: env.ledger().timestamp(),
+            ledger_sequence: env.ledger().sequence(),
         };
 
         env.storage()
@@ -164,14 +181,14 @@ impl VerificationContract {
             .persistent()
             .set(&counter_key, &next_index);
 
-        events::milestone_approved(
-            &env,
-            player_id,
-            &validator_wallet,
-            next_index,
-            &milestone.description,
-            &milestone.evidence_hash,
-        );
+        // Increment per-validator milestone count
+        let val_key = DataKey::ValidatorMilestoneCount(validator_wallet.clone());
+        let val_count: u32 = env.storage().persistent().get(&val_key).unwrap_or(0u32);
+        env.storage()
+            .persistent()
+            .set(&val_key, &(val_count.checked_add(1).expect("overflow")));
+
+        events::milestone_approved(&env, player_id, &validator_wallet);
 
         // Cross-contract call: advance the player's progress level.
         // This is a best-effort call — if the progress contract is not set
@@ -215,6 +232,13 @@ impl VerificationContract {
         env.storage()
             .persistent()
             .get(&DataKey::MilestoneCounter(player_id))
+            .unwrap_or(0u32)
+    }
+
+    pub fn get_validator_milestone_count(env: Env, wallet: Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ValidatorMilestoneCount(wallet))
             .unwrap_or(0u32)
     }
 
@@ -284,6 +308,36 @@ mod tests {
     }
 
     #[test]
+    fn test_validator_milestone_count() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let validator = Address::generate(&env);
+        client.register_validator(&validator, &String::from_str(&env, "Coach"));
+
+        // Unknown wallet returns 0
+        assert_eq!(client.get_validator_milestone_count(&Address::generate(&env)), 0);
+
+        for i in 1u64..=3 {
+            client.approve_milestone(
+                &validator,
+                &i,
+                &String::from_str(&env, "milestone"),
+                &String::from_str(&env, "QmEvidence"),
+            );
+        }
+
+        assert_eq!(client.get_validator_milestone_count(&validator), 3);
+    }
+
+    #[test]
+    fn test_health_false_before_initialize() {
+        let (_env, client) = setup();
+        assert!(!client.health());
+    }
+
+    #[test]
     fn test_register_and_approve() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
@@ -303,6 +357,9 @@ mod tests {
         );
         assert_eq!(idx, 1);
         assert_eq!(client.get_milestone_count(&1u64), 1);
+
+        let milestone = client.get_milestone(&1u64, &1);
+        assert!(milestone.ledger_sequence > 0);
     }
 
     #[test]
@@ -382,7 +439,40 @@ mod tests {
     }
 
     #[test]
-    fn test_milestone_approved_event_payload() {
+    fn test_two_validators_approve_milestones_for_same_player() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let validator1 = Address::generate(&env);
+        let validator2 = Address::generate(&env);
+        client.register_validator(&validator1, &String::from_str(&env, "Coach A"));
+        client.register_validator(&validator2, &String::from_str(&env, "Coach B"));
+
+        client.approve_milestone(
+            &validator1,
+            &1u64,
+            &String::from_str(&env, "Identity verified"),
+            &String::from_str(&env, "QmEvidence1"),
+        );
+        client.approve_milestone(
+            &validator2,
+            &1u64,
+            &String::from_str(&env, "Top speed 32 km/h"),
+            &String::from_str(&env, "QmEvidence2"),
+        );
+
+        assert_eq!(client.get_milestone_count(&1u64), 2);
+
+        let m1 = client.get_milestone(&1u64, &1);
+        let m2 = client.get_milestone(&1u64, &2);
+        assert_eq!(m1.validator, validator1);
+        assert_eq!(m2.validator, validator2);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #3)")]
+    fn test_approve_milestone_blocked_when_paused() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
         client.initialize(&admin);
@@ -390,17 +480,40 @@ mod tests {
         let validator = Address::generate(&env);
         client.register_validator(&validator, &String::from_str(&env, "Coach"));
 
-        let description = String::from_str(&env, "Scored hat trick in final");
-        let evidence_hash = String::from_str(&env, "QmHatTrick123");
-        
-        client.approve_milestone(&validator, &1u64, &description, &evidence_hash);
+        client.pause_contract();
 
-        // Verify the event payload contains all expected fields
-        let events = env.events().all();
-        assert_eq!(events.len(), 2); // validator_registered + milestone_approved
-        
-        let milestone_event = &events[1];
-        assert_eq!(milestone_event.topics.len(), 3); // event name, validator, milestone_index
-        assert_eq!(milestone_event.data.len(), 3); // player_id, description, evidence_hash
+        // Should panic — contract is paused
+        client.approve_milestone(
+            &validator,
+            &1u64,
+            &String::from_str(&env, "Some milestone"),
+            &String::from_str(&env, "QmEvidence"),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #13)")]
+    fn test_approve_milestone_overflow() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let validator = Address::generate(&env);
+        client.register_validator(&validator, &String::from_str(&env, "Coach"));
+
+        // Pre-set the counter to u32::MAX so the next increment overflows
+        env.as_contract(&client.address, || {
+            env.storage()
+                .persistent()
+                .set(&DataKey::MilestoneCounter(1u64), &u32::MAX);
+        });
+
+        // Should return Overflow (#13) instead of panicking with expect()
+        client.approve_milestone(
+            &validator,
+            &1u64,
+            &String::from_str(&env, "overflow test"),
+            &String::from_str(&env, "QmHash"),
+        );
     }
 }

@@ -7,6 +7,10 @@ use types::{DataKey, PlayerProfile, PlayerVitals, ProgressLevel, ScoutProfile};
 
 use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
 
+const MAX_STRING_LEN: u32 = 64;
+const MAX_REGION_LEN: u32 = 128;
+const MAX_IPFS_HASHES: u32 = 10;
+
 #[contract]
 pub struct RegistrationContract;
 
@@ -67,6 +71,19 @@ impl RegistrationContract {
             return Err(ScoutChainError::AlreadyRegistered);
         }
 
+        // Validate vitals string lengths
+        if vitals.position.len() > MAX_STRING_LEN
+            || vitals.region.len() > MAX_STRING_LEN
+            || vitals.nationality.len() > MAX_STRING_LEN
+        {
+            return Err(ScoutChainError::InvalidInput);
+        }
+
+        // Validate ipfs_hashes: non-empty and at most MAX_IPFS_HASHES
+        if ipfs_hashes.is_empty() || ipfs_hashes.len() > MAX_IPFS_HASHES {
+            return Err(ScoutChainError::InvalidInput);
+        }
+
         let player_id = Self::next_player_id(&env);
         let now = env.ledger().timestamp();
 
@@ -100,6 +117,9 @@ impl RegistrationContract {
         Self::require_not_paused(&env)?;
         let mut profile = Self::load_player(&env, player_id)?;
         profile.wallet.require_auth();
+        if ipfs_hashes.is_empty() || ipfs_hashes.len() > MAX_IPFS_HASHES {
+            return Err(ScoutChainError::InvalidInput);
+        }
         profile.ipfs_hashes = ipfs_hashes;
         profile.updated_at = env.ledger().timestamp();
         env.storage()
@@ -129,6 +149,10 @@ impl RegistrationContract {
             .has(&DataKey::ScoutByWallet(wallet.clone()))
         {
             return Err(ScoutChainError::AlreadyRegistered);
+        }
+
+        if region.len() > MAX_REGION_LEN {
+            return Err(ScoutChainError::InvalidInput);
         }
 
         let scout_id = Self::next_scout_id(&env);
@@ -321,5 +345,197 @@ mod tests {
         client.register_player(&wallet, &vitals, &hashes);
         // second call should panic with AlreadyRegistered
         client.register_player(&wallet, &vitals, &hashes);
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #6: position / region / nationality length validation
+    // -------------------------------------------------------------------------
+
+    #[test]
+    #[should_panic]
+    fn test_register_player_position_too_long() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let long = String::from_str(&env, &"A".repeat(65));
+        let vitals = PlayerVitals {
+            age: 20,
+            position: long,
+            region: String::from_str(&env, "West Africa"),
+            nationality: String::from_str(&env, "Ghana"),
+        };
+        let hashes = vec![&env, String::from_str(&env, "QmTest")];
+        client.register_player(&wallet, &vitals, &hashes);
+    }
+
+    #[test]
+    fn test_register_player_position_max_len_ok() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let exactly_64 = String::from_str(&env, &"A".repeat(64));
+        let vitals = PlayerVitals {
+            age: 20,
+            position: exactly_64,
+            region: String::from_str(&env, "West Africa"),
+            nationality: String::from_str(&env, "Ghana"),
+        };
+        let hashes = vec![&env, String::from_str(&env, "QmTest")];
+        let id = client.register_player(&wallet, &vitals, &hashes);
+        assert_eq!(id, 1);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_register_player_region_too_long() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let long = String::from_str(&env, &"A".repeat(65));
+        let vitals = PlayerVitals {
+            age: 20,
+            position: String::from_str(&env, "Forward"),
+            region: long,
+            nationality: String::from_str(&env, "Ghana"),
+        };
+        let hashes = vec![&env, String::from_str(&env, "QmTest")];
+        client.register_player(&wallet, &vitals, &hashes);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_register_player_nationality_too_long() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let long = String::from_str(&env, &"A".repeat(65));
+        let vitals = PlayerVitals {
+            age: 20,
+            position: String::from_str(&env, "Forward"),
+            region: String::from_str(&env, "West Africa"),
+            nationality: long,
+        };
+        let hashes = vec![&env, String::from_str(&env, "QmTest")];
+        client.register_player(&wallet, &vitals, &hashes);
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #6 + #7: ipfs_hashes validation in register_player and update_profile
+    // -------------------------------------------------------------------------
+
+    #[test]
+    #[should_panic]
+    fn test_register_player_empty_hashes_fails() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let vitals = dummy_vitals(&env);
+        let hashes: soroban_sdk::Vec<String> = vec![&env];
+        client.register_player(&wallet, &vitals, &hashes);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_register_player_too_many_hashes_fails() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let vitals = dummy_vitals(&env);
+        let h = String::from_str(&env, "QmHash");
+        let hashes = vec![&env, h.clone(), h.clone(), h.clone(), h.clone(), h.clone(),
+                          h.clone(), h.clone(), h.clone(), h.clone(), h.clone(), h.clone()];
+        client.register_player(&wallet, &vitals, &hashes);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_update_profile_empty_hashes_fails() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let vitals = dummy_vitals(&env);
+        let hashes = vec![&env, String::from_str(&env, "QmTest")];
+        let player_id = client.register_player(&wallet, &vitals, &hashes);
+
+        let empty: soroban_sdk::Vec<String> = vec![&env];
+        client.update_profile(&player_id, &empty);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_update_profile_too_many_hashes_fails() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let vitals = dummy_vitals(&env);
+        let hashes = vec![&env, String::from_str(&env, "QmTest")];
+        let player_id = client.register_player(&wallet, &vitals, &hashes);
+
+        let h = String::from_str(&env, "QmHash");
+        let too_many = vec![&env, h.clone(), h.clone(), h.clone(), h.clone(), h.clone(),
+                            h.clone(), h.clone(), h.clone(), h.clone(), h.clone(), h.clone()];
+        client.update_profile(&player_id, &too_many);
+    }
+
+    #[test]
+    fn test_update_profile_valid_hashes_persisted() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let vitals = dummy_vitals(&env);
+        let hashes = vec![&env, String::from_str(&env, "QmOld")];
+        let player_id = client.register_player(&wallet, &vitals, &hashes);
+
+        let new_hashes = vec![&env, String::from_str(&env, "QmNew1"), String::from_str(&env, "QmNew2")];
+        client.update_profile(&player_id, &new_hashes);
+
+        let profile = client.get_player(&player_id);
+        assert_eq!(profile.ipfs_hashes.len(), 2);
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #9: register_scout region length validation
+    // -------------------------------------------------------------------------
+
+    #[test]
+    #[should_panic]
+    fn test_register_scout_region_too_long() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let long_region = String::from_str(&env, &"A".repeat(129));
+        client.register_scout(&wallet, &long_region);
+    }
+
+    #[test]
+    fn test_register_scout_region_max_len_ok() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let exactly_128 = String::from_str(&env, &"A".repeat(128));
+        let scout_id = client.register_scout(&wallet, &exactly_128);
+        assert_eq!(scout_id, 1);
     }
 }

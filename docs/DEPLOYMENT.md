@@ -63,3 +63,22 @@ psql $DATABASE_URL -f migrations/001_initial_schema.sql
 - [ ] Run `./scripts/initialize.sh mainnet`
 - [ ] Verify all contract IDs in `.env.contracts`
 - [ ] Regenerate bindings: `./scripts/generate-bindings.sh mainnet`
+
+## Common Mistakes
+
+**Milestones approved but player levels don't advance**
+You skipped the cross-contract wiring step. `approve_milestone` calls `advance_level` on the progress contract, but only if the link has been set. Fix it by running:
+
+```bash
+./scripts/initialize.sh testnet
+```
+
+Or manually:
+
+```bash
+stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
+  -- set_progress_contract \
+  --progress_contract $PROGRESS_CONTRACT_ID
+```
+
+This must be done once after every fresh deployment.

@@ -1,4 +1,4 @@
-use soroban_sdk::{Address, Env, Symbol, symbol_short};
+use soroban_sdk::{Address, Env, Symbol};
 
 pub fn player_registered(env: &Env, player_id: u64, wallet: &Address) {
     env.events().publish(
@@ -16,7 +16,7 @@ pub fn scout_registered(env: &Env, scout_id: u64, wallet: &Address) {
 
 pub fn profile_updated(env: &Env, player_id: u64) {
     env.events().publish(
-        (symbol_short!("prof_upd"),),
+        (Symbol::new(env, "profile_updated"),),
         player_id,
     );
 }

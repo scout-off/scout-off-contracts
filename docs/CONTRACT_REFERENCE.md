@@ -32,7 +32,7 @@ Manages the trusted validator registry and milestone approvals.
 | `set_progress_contract(progress_contract)` | admin | Wire cross-contract link |
 | `register_validator(wallet, credentials)` | admin | Add trusted validator |
 | `revoke_validator(wallet)` | admin | Deactivate validator |
-| `approve_milestone(validator_wallet, player_id, description, evidence_hash)` | validator | Record milestone + cross-call progress.advance_level |
+| `approve_milestone(validator_wallet, player_id, description, evidence_hash)` | validator | Record milestone (with ledger_sequence for audit) + cross-call progress.advance_level |
 | `get_milestone(player_id, index)` | — | Read a specific milestone |
 | `get_milestone_count(player_id)` | — | Total milestones for a player |
 | `get_validator(wallet)` | — | Read validator record |
@@ -98,3 +98,18 @@ Handles scout subscriptions, pay-to-contact, and trial offer logging.
 | 2 | `PerformanceMilestones` | Validator approves performance milestone |
 | 3 | `EliteTier` | Scout logs trial offer |
 
+---
+
+## Events
+
+| Event | Contract | Emitted When |
+|-------|----------|-------------|
+| `player_registered` | registration | New player profile created |
+| `scout_registered` | registration | New scout profile created |
+| `profile_updated` | registration | Player updates IPFS content hashes |
+| `milestone_approved` | verification | Validator confirms a player achievement |
+| `progress_updated` | progress | Player advances to a new level |
+| `scout_subscribed` | scout_access | Scout purchases a subscription |
+| `player_contacted` | scout_access | Scout pays to unlock player contact |
+| `trial_offer_logged` | scout_access | Scout records a trial offer |
+| `fees_withdrawn` | scout_access | Admin withdraws accumulated fees |

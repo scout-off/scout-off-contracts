@@ -39,6 +39,19 @@ impl ProgressContract {
         Ok(())
     }
 
+    /// Transfer admin rights to a new address (current admin auth required).
+    pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), ProgressError> {
+        let old_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(ProgressError::NotInitialized)?;
+        old_admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        events::admin_transferred(&env, &old_admin, &new_admin);
+        Ok(())
+    }
+
     // -------------------------------------------------------------------------
     // Progress updates
     // -------------------------------------------------------------------------
@@ -227,5 +240,43 @@ mod tests {
         client.advance_level(&validator, &player_id, &3u32);
         // This should panic — already at EliteTier
         client.advance_level(&validator, &player_id, &4u32);
+    }
+
+    #[test]
+    fn test_transfer_admin_success() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let new_admin = Address::generate(&env);
+        // Should not panic — current admin auth is satisfied
+        client.transfer_admin(&new_admin);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_transfer_admin_unauthorized() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        // Clear all mocks — no auth satisfied, so admin check fails
+        env.mock_auths(&[]);
+        client.transfer_admin(&Address::generate(&env));
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_old_admin_loses_access_after_transfer() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let new_admin = Address::generate(&env);
+        client.transfer_admin(&new_admin);
+
+        // Clear mocks — old admin auth no longer stored, so pause must fail
+        env.mock_auths(&[]);
+        client.pause_contract();
     }
 }
