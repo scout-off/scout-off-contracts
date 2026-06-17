@@ -18,3 +18,9 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Kiro IDE
+.kiro/
+
+# Pull-request drafts
+pr-*.md

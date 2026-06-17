@@ -524,6 +524,28 @@ Frontend and backend dependencies live in their respective repos (`scoutchain-fr
 |------|-------|-------------|--------------|------------|
 | 1 | AlreadyInitialized | Contract already initialized | Calling `initialize` twice | No action needed; contract is ready |
 | 2 | NotInitialized | Contract not initialized | Operations before setup | Admin must call `initialize` first |
+| 3 | ContractPaused | Contract is paused | Emergency circuit breaker active | Monitor official channels; wait for admin to unpause |
+| 4 | Unauthorized | Caller is not authorized | Wrong account for admin operation | Confirm you are using the correct Stellar account |
+| 5 | InsufficientFee | Payment amount below required fee | Underpaying contact fee | Check current fee via `get_fee_config` |
+| 6 | ScoutNotSubscribed | Scout has no active subscription | Accessing talent pool without subscription | Call `subscribe` with valid tier and fee |
+| 7 | SubscriptionExpired | Scout subscription has expired | Trying to access features after expiry | Renew subscription |
+| 8 | AlreadyContacted | Scout already contacted player | Duplicate contact attempt | N/A |
+| 9 | InvalidTier | Provided tier is invalid | Unknown subscription tier | Check valid tiers |
+| 10 | Overflow | Arithmetic overflow in fee calculation | Extremely large XLM amount | Use amounts within safe i128 range |
+| 11 | TrialOfferNotFound | Trial offer record not found | Invalid index or player ID | Verify offer details |
+| 14 | ProgressCallFailed | Cross-contract call to progress failed | Contract interaction error | Verify progress contract status |
+| 15 | NoFeesToWithdraw | No accumulated fees to withdraw | Withdrawing from empty balance | Ensure fees have been accumulated |
+| 16 | AdminTransferred | Admin successfully transferred | Admin key rotation | N/A |
+
+Wait, I need to match the actual variants and values in `errors.rs` to the table in `README.md`.
+Let me re-read the `README.md`'s error table and `errors.rs`.
+Actually, looking at `errors.rs`, I have `AlreadyInitialized = 1`, `NotInitialized = 2`, etc.
+The table in `README.md` seems to be an *aggregated* table for all contracts, not just `scout_access`.
+The table currently has:
+| Code | Error | Description | Common Cause | Resolution |
+|------|-------|-------------|--------------|------------|
+| 1 | AlreadyInitialized | Contract already initialized | Calling `initialize` twice | No action needed; contract is ready |
+| 2 | NotInitialized | Contract not initialized | Operations before setup | Admin must call `initialize` first |
 | 3 | PlayerNotFound | Player ID does not exist | Invalid player_id | Verify the player_id from registration transaction |
 | 4 | ValidatorNotAuthorized | Caller is not a registered validator | Unregistered account approving milestone | Admin must register the validator first |
 | 5 | InvalidProgressTransition | Level transition is not allowed | Skipping levels or going backwards | Follow the valid transition table |
@@ -533,6 +555,23 @@ Frontend and backend dependencies live in their respective repos (`scoutchain-fr
 | 9 | ContractPaused | Contract is paused | Emergency circuit breaker active | Monitor official channels; wait for admin to unpause |
 | 10 | Unauthorized | Caller is not authorized | Wrong account for admin operation | Confirm you are using the correct Stellar account |
 | 11 | Overflow | Arithmetic overflow in fee calculation | Extremely large XLM amount | Use amounts within safe i128 range |
+
+I need to add the missing ones from `ScoutAccessError`.
+`AlreadyInitialized` (1) - already there.
+`NotInitialized` (2) - already there.
+`ContractPaused` (3) - already there.
+`Unauthorized` (4) - already there.
+`InsufficientFee` (5) - already there.
+`ScoutNotSubscribed` (6) - already there.
+`SubscriptionExpired` (7) - missing.
+`AlreadyContacted` (8) - missing.
+`InvalidTier` (9) - missing.
+`Overflow` (10) - already there.
+`TrialOfferNotFound` (11) - missing.
+`ProgressCallFailed` (14) - missing.
+`NoFeesToWithdraw` (15) - missing.
+`AdminTransferred` (16) - missing.
+
 
 ## Events
 
