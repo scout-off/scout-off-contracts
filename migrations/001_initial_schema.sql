@@ -126,5 +126,18 @@ CREATE TABLE IF NOT EXISTS indexer_cursor (
     CHECK (id = 1)
 );
 
+-- Seed the single cursor row so indexers can SELECT it on first startup.
 INSERT INTO indexer_cursor (id, last_ledger) VALUES (1, 0)
 ON CONFLICT (id) DO NOTHING;
+
+-- Idempotently advance or reset the event cursor.
+-- To replay events from genesis after rebuilding derived tables, run:
+--   SELECT upsert_indexer_cursor(0);
+CREATE OR REPLACE FUNCTION upsert_indexer_cursor(p_last_ledger BIGINT)
+RETURNS VOID AS $$
+    INSERT INTO indexer_cursor (id, last_ledger, updated_at)
+    VALUES (1, p_last_ledger, NOW())
+    ON CONFLICT (id) DO UPDATE
+    SET last_ledger = EXCLUDED.last_ledger,
+        updated_at = EXCLUDED.updated_at;
+$$ LANGUAGE SQL;

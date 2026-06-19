@@ -54,6 +54,21 @@ Copy `migrations/001_initial_schema.sql` to your backend repo and run it against
 psql $DATABASE_URL -f migrations/001_initial_schema.sql
 ```
 
+The migration seeds the single `indexer_cursor` row at ledger `0`, so an indexer
+can read its checkpoint immediately after the schema is created. Indexer workers
+should update the checkpoint through the idempotent helper:
+
+```sql
+SELECT upsert_indexer_cursor(<last_processed_ledger>);
+```
+
+To replay Horizon events from genesis after rebuilding derived tables or wiping
+the database, reset the cursor before restarting the indexer:
+
+```sql
+SELECT upsert_indexer_cursor(0);
+```
+
 ## Mainnet checklist
 
 - [ ] Audit all four contracts
