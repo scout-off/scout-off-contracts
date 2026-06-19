@@ -104,6 +104,75 @@ check_contract "progress"      "$REPO_ROOT/contracts/progress/src/lib.rs"
 check_contract "scout_access"  "$REPO_ROOT/contracts/scout_access/src/lib.rs"
 
 echo ""
+echo "=== CONTRACT_REFERENCE.md error-code check ==="
+python3 - "$REPO_ROOT" "$DOCS_FILE" <<'PYEOF' || FAIL=1
+import re
+import sys
+from pathlib import Path
+
+repo = Path(sys.argv[1])
+docs_file = Path(sys.argv[2])
+
+contracts = {
+    "ScoutChainError": repo / "contracts/registration/src/errors.rs",
+    "VerificationError": repo / "contracts/verification/src/errors.rs",
+    "ProgressError": repo / "contracts/progress/src/errors.rs",
+    "ScoutAccessError": repo / "contracts/scout_access/src/errors.rs",
+}
+
+
+def parse_enum(path: Path, enum_name: str) -> dict[int, str]:
+    src = path.read_text()
+    match = re.search(rf"pub enum {enum_name}\s*\{{(?P<body>.*?)\n\}}", src, re.S)
+    if not match:
+        raise SystemExit(f"missing enum {enum_name} in {path}")
+
+    values: dict[int, str] = {}
+    for variant, code in re.findall(r"\b([A-Za-z][A-Za-z0-9_]*)\s*=\s*(\d+)\s*,", match.group("body")):
+        values[int(code)] = variant
+    return values
+
+
+def parse_doc_table(doc: str, enum_name: str) -> dict[int, str]:
+    match = re.search(
+        rf"### `{enum_name}`.*?\n(?P<section>.*?)(?:\n### |\n---|\Z)",
+        doc,
+        re.S,
+    )
+    if not match:
+        raise SystemExit(f"missing docs section for {enum_name}")
+
+    values: dict[int, str] = {}
+    for code, variant in re.findall(r"^\|\s*(\d+)\s*\|\s*`([^`]+)`\s*\|", match.group("section"), re.M):
+        values[int(code)] = variant
+    return values
+
+
+doc = docs_file.read_text()
+failed = False
+for enum_name, path in contracts.items():
+    expected = parse_enum(path, enum_name)
+    actual = parse_doc_table(doc, enum_name)
+    if actual != expected:
+        failed = True
+        print(f"  MISMATCH: {enum_name}")
+        missing = expected.keys() - actual.keys()
+        extra = actual.keys() - expected.keys()
+        changed = {code for code in expected.keys() & actual.keys() if expected[code] != actual[code]}
+        for code in sorted(missing):
+            print(f"    missing {code} = {expected[code]}")
+        for code in sorted(extra):
+            print(f"    extra {code} = {actual[code]}")
+        for code in sorted(changed):
+            print(f"    {code}: docs={actual[code]} source={expected[code]}")
+    else:
+        print(f"  OK: {enum_name}")
+
+if failed:
+    raise SystemExit(1)
+PYEOF
+
+echo ""
 if [[ $FAIL -ne 0 ]]; then
   echo "FAIL: One or more public functions are not documented in docs/CONTRACT_REFERENCE.md"
   echo "      Add an entry for each missing function and re-run this script."

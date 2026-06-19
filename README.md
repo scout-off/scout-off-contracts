@@ -520,57 +520,80 @@ Frontend and backend dependencies live in their respective repos (`scoutchain-fr
 
 ## Error Codes
 
-| Code | Error | Description | Common Cause | Resolution |
-|------|-------|-------------|--------------|------------|
-| 1 | AlreadyInitialized | Contract already initialized | Calling `initialize` twice | No action needed; contract is ready |
-| 2 | NotInitialized | Contract not initialized | Operations before setup | Admin must call `initialize` first |
-| 3 | ContractPaused | Contract is paused | Emergency circuit breaker active | Monitor official channels; wait for admin to unpause |
-| 4 | Unauthorized | Caller is not authorized | Wrong account for admin operation | Confirm you are using the correct Stellar account |
-| 5 | InsufficientFee | Payment amount below required fee | Underpaying contact fee | Check current fee via `get_fee_config` |
-| 6 | ScoutNotSubscribed | Scout has no active subscription | Accessing talent pool without subscription | Call `subscribe` with valid tier and fee |
-| 7 | SubscriptionExpired | Scout subscription has expired | Trying to access features after expiry | Renew subscription |
-| 8 | AlreadyContacted | Scout already contacted player | Duplicate contact attempt | N/A |
-| 9 | InvalidTier | Provided tier is invalid | Unknown subscription tier | Check valid tiers |
-| 10 | Overflow | Arithmetic overflow in fee calculation | Extremely large XLM amount | Use amounts within safe i128 range |
-| 11 | TrialOfferNotFound | Trial offer record not found | Invalid index or player ID | Verify offer details |
-| 14 | ProgressCallFailed | Cross-contract call to progress failed | Contract interaction error | Verify progress contract status |
-| 15 | NoFeesToWithdraw | No accumulated fees to withdraw | Withdrawing from empty balance | Ensure fees have been accumulated |
-| 16 | AdminTransferred | Admin successfully transferred | Admin key rotation | N/A |
+Error codes are scoped per contract. The same numeric code can mean different
+variants in different contracts, so clients should decode errors using the
+contract that returned them. `docs/CONTRACT_REFERENCE.md` contains the full
+reference and is checked against the Rust enum sources by `scripts/check-docs.sh`.
 
-Wait, I need to match the actual variants and values in `errors.rs` to the table in `README.md`.
-Let me re-read the `README.md`'s error table and `errors.rs`.
-Actually, looking at `errors.rs`, I have `AlreadyInitialized = 1`, `NotInitialized = 2`, etc.
-The table in `README.md` seems to be an *aggregated* table for all contracts, not just `scout_access`.
-The table currently has:
-| Code | Error | Description | Common Cause | Resolution |
-|------|-------|-------------|--------------|------------|
-| 1 | AlreadyInitialized | Contract already initialized | Calling `initialize` twice | No action needed; contract is ready |
-| 2 | NotInitialized | Contract not initialized | Operations before setup | Admin must call `initialize` first |
-| 3 | PlayerNotFound | Player ID does not exist | Invalid player_id | Verify the player_id from registration transaction |
-| 4 | ValidatorNotAuthorized | Caller is not a registered validator | Unregistered account approving milestone | Admin must register the validator first |
-| 5 | InvalidProgressTransition | Level transition is not allowed | Skipping levels or going backwards | Follow the valid transition table |
-| 6 | ScoutNotSubscribed | Scout has no active subscription | Accessing talent pool without subscription | Call `subscribe` with valid tier and fee |
-| 7 | InsufficientFee | Payment amount below required fee | Underpaying contact fee | Check current fee via `get_fee_config` |
-| 8 | AlreadyRegistered | Wallet already has a profile | Duplicate registration | Use existing player_id |
-| 9 | ContractPaused | Contract is paused | Emergency circuit breaker active | Monitor official channels; wait for admin to unpause |
-| 10 | Unauthorized | Caller is not authorized | Wrong account for admin operation | Confirm you are using the correct Stellar account |
-| 11 | Overflow | Arithmetic overflow in fee calculation | Extremely large XLM amount | Use amounts within safe i128 range |
+### Registration: `ScoutChainError`
 
-I need to add the missing ones from `ScoutAccessError`.
-`AlreadyInitialized` (1) - already there.
-`NotInitialized` (2) - already there.
-`ContractPaused` (3) - already there.
-`Unauthorized` (4) - already there.
-`InsufficientFee` (5) - already there.
-`ScoutNotSubscribed` (6) - already there.
-`SubscriptionExpired` (7) - missing.
-`AlreadyContacted` (8) - missing.
-`InvalidTier` (9) - missing.
-`Overflow` (10) - already there.
-`TrialOfferNotFound` (11) - missing.
-`ProgressCallFailed` (14) - missing.
-`NoFeesToWithdraw` (15) - missing.
-`AdminTransferred` (16) - missing.
+| Code | Error |
+|------|-------|
+| 1 | `AlreadyInitialized` |
+| 2 | `NotInitialized` |
+| 3 | `PlayerNotFound` |
+| 4 | `ValidatorNotAuthorized` |
+| 5 | `InvalidProgressTransition` |
+| 6 | `ScoutNotSubscribed` |
+| 7 | `InsufficientFee` |
+| 8 | `AlreadyRegistered` |
+| 9 | `ContractPaused` |
+| 10 | `Unauthorized` |
+| 11 | `Overflow` |
+| 12 | `ScoutNotFound` |
+| 13 | `InvalidInput` |
+
+### Verification: `VerificationError`
+
+| Code | Error |
+|------|-------|
+| 1 | `AlreadyInitialized` |
+| 2 | `NotInitialized` |
+| 3 | `ContractPaused` |
+| 4 | `Unauthorized` |
+| 5 | `ValidatorNotFound` |
+| 6 | `ValidatorInactive` |
+| 7 | `ValidatorAlreadyRegistered` |
+| 8 | `PlayerNotFound` |
+| 9 | `InvalidInput` |
+| 10 | `ReasonTooLong` |
+| 11 | `AlreadyConfigured` |
+| 12 | `ProgressCallFailed` |
+| 13 | `Overflow` |
+| 14 | `MilestoneNotFound` |
+
+### Progress: `ProgressError`
+
+| Code | Error |
+|------|-------|
+| 1 | `AlreadyInitialized` |
+| 2 | `NotInitialized` |
+| 3 | `ContractPaused` |
+| 4 | `Unauthorized` |
+| 5 | `InvalidProgressTransition` |
+| 6 | `AlreadyAtMaxLevel` |
+| 7 | `PlayerNotFound` |
+| 8 | `Overflow` |
+
+### Scout Access: `ScoutAccessError`
+
+| Code | Error |
+|------|-------|
+| 1 | `AlreadyInitialized` |
+| 2 | `NotInitialized` |
+| 3 | `ContractPaused` |
+| 4 | `Unauthorized` |
+| 5 | `InsufficientFee` |
+| 6 | `ScoutNotSubscribed` |
+| 7 | `SubscriptionExpired` |
+| 8 | `AlreadyContacted` |
+| 9 | `InvalidTier` |
+| 10 | `Overflow` |
+| 11 | `TrialOfferNotFound` |
+| 12 | `SubscriptionDowngradeNotAllowed` |
+| 14 | `ProgressCallFailed` |
+| 15 | `InvalidInput` |
+| 16 | `NoFeesToWithdraw` |
 
 
 ## Events
