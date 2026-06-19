@@ -37,8 +37,31 @@ jobs:
       - name: Test progress contract
         run: cargo test -p scoutchain-progress -- --nocapture
 
+      - name: Verify test snapshots are current
+        run: git diff --exit-code -- contracts/*/test_snapshots
+
       - name: Build WASM (release)
         run: cargo build --workspace --target wasm32v1-none --release
+
+      - name: Record WASM sizes
+        run: |
+          mkdir -p target/wasm-size-report
+          {
+            for f in target/wasm32v1-none/release/*.wasm; do
+              size=$(wc -c < "$f")
+              echo "$f: $size bytes"
+              [ "$size" -lt 65536 ] || {
+                echo "WASM too large: $f"
+                exit 1
+              }
+            done
+          } | tee target/wasm-size-report/wasm-sizes.txt
+
+      - name: Upload WASM size report
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-size-report
+          path: target/wasm-size-report/wasm-sizes.txt
 
   lint:
     name: Lint
@@ -54,3 +77,14 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Docs completeness check
         run: bash scripts/check-docs.sh
+
+  audit:
+    name: Security audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Run cargo audit
+        run: cargo audit

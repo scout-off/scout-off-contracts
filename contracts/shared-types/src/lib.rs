@@ -33,3 +33,25 @@ impl ProgressLevel {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ProgressLevel;
+
+    #[test]
+    fn progress_level_next_advances_until_elite_tier() {
+        assert_eq!(
+            ProgressLevel::Unverified.next(),
+            Some(ProgressLevel::VerifiedIdentity)
+        );
+        assert_eq!(
+            ProgressLevel::VerifiedIdentity.next(),
+            Some(ProgressLevel::PerformanceMilestones)
+        );
+        assert_eq!(
+            ProgressLevel::PerformanceMilestones.next(),
+            Some(ProgressLevel::EliteTier)
+        );
+        assert_eq!(ProgressLevel::EliteTier.next(), None);
+    }
+}
