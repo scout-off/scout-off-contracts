@@ -246,7 +246,7 @@ sequenceDiagram
 ## Repository Structure
 
 ```
-scoutchain-contracts/
+scout-off-contracts/
 ├── contracts/
 │   ├── registration/       # Player & scout on-chain identity
 │   ├── verification/       # Validator registry & milestone approvals
