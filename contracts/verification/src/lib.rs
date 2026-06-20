@@ -131,6 +131,16 @@ impl VerificationContract {
             return Err(VerificationError::ValidatorAlreadyRegistered);
         }
 
+        let mut validator_vector: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ValidatorVector)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        if validator_vector.len() >= 100 {
+            return Err(VerificationError::ValidatorCapacityReached);
+        }
+
         let validator = Validator {
             wallet: wallet.clone(),
             credentials,
@@ -142,17 +152,6 @@ impl VerificationContract {
             .set(&DataKey::Validator(wallet.clone()), &validator);
         events::validator_registered(&env, &wallet);
 
-        // // ------ PASTE THE TRACKING LOGIC HERE ------
-        let mut validator_vector: Vec<Address> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::ValidatorVector)
-            .unwrap_or_else(|| Vec::new(&env));
-
-        if validator_vector.len() >= 100 {
-            panic!("Maximum validator capacity of 100 reached");
-        }
-
         if !validator_vector.contains(&wallet) {
             validator_vector.push_back(wallet.clone());
         }
@@ -160,7 +159,6 @@ impl VerificationContract {
         env.storage()
             .persistent()
             .set(&DataKey::ValidatorVector, &validator_vector);
-        // // -------------------------------------------
 
         Ok(())
     }
@@ -802,6 +800,31 @@ mod tests {
         client.register_validator(&validator, &String::from_str(&env, &exactly_256));
 
         assert!(client.is_active_validator(&validator));
+    }
+
+    #[test]
+    fn test_register_validator_capacity_returns_typed_error() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let mut validators = Vec::new(&env);
+        for _ in 0..100 {
+            validators.push_back(Address::generate(&env));
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::ValidatorVector, &validators);
+
+        let overflow_validator = Address::generate(&env);
+        let result =
+            client.try_register_validator(&overflow_validator, &String::from_str(&env, "Coach"));
+
+        assert_eq!(result, Err(Ok(VerificationError::ValidatorCapacityReached)));
+        assert_eq!(
+            client.try_get_validator(&overflow_validator),
+            Err(Ok(VerificationError::ValidatorNotFound))
+        );
     }
 
     #[test]
