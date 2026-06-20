@@ -1305,6 +1305,12 @@ pub struct TrialOffer {
 
 ## Error Codes
 
+Error codes are contract-scoped, not global. Client code should resolve errors
+with `(contract, code)` and must not treat code `8`, `10`, `13`, or `15` as the
+same meaning across every contract. The machine-readable registry in
+[`docs/error-registry.json`](./error-registry.json) mirrors the Rust enums and
+is the source to use when generating frontend or TypeScript error maps.
+
 ### `ScoutChainError` (registration contract)
 
 | Code | Variant | Common Cause |
@@ -1373,6 +1379,7 @@ pub struct TrialOffer {
 | 12 | `SubscriptionDowngradeNotAllowed` | Downgrade attempted while subscription active |
 | 14 | `ProgressCallFailed` | Cross-contract `advance_level` failed |
 | 15 | `InvalidInput` | Zero or negative fee field in `FeeConfig` |
+| 16 | `NoFeesToWithdraw` | No accumulated fees are available to withdraw |
 
 ---
 

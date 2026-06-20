@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "scope": "contract-scoped",
+  "note": "Error codes are unique only within a contract. Clients should resolve errors by (contract, code), not by code alone.",
+  "contracts": {
+    "registration": {
+      "enum": "ScoutChainError",
+      "source": "contracts/registration/src/errors.rs",
+      "errors": [
+        { "code": 1, "variant": "AlreadyInitialized", "description": "initialize called more than once" },
+        { "code": 2, "variant": "NotInitialized", "description": "operation before initialize" },
+        { "code": 3, "variant": "PlayerNotFound", "description": "invalid player_id" },
+        { "code": 4, "variant": "ValidatorNotAuthorized", "description": "unregistered account approving milestone" },
+        { "code": 5, "variant": "InvalidProgressTransition", "description": "skipping or reversing a level" },
+        { "code": 6, "variant": "ScoutNotSubscribed", "description": "scout has no subscription" },
+        { "code": 7, "variant": "InsufficientFee", "description": "underpaying contact fee" },
+        { "code": 8, "variant": "AlreadyRegistered", "description": "wallet already has a profile for this role" },
+        { "code": 9, "variant": "ContractPaused", "description": "circuit breaker is active" },
+        { "code": 10, "variant": "Unauthorized", "description": "wrong account for a privileged operation" },
+        { "code": 11, "variant": "Overflow", "description": "counter or fee arithmetic overflowed" },
+        { "code": 12, "variant": "ScoutNotFound", "description": "invalid scout_id" },
+        { "code": 13, "variant": "InvalidInput", "description": "field too long, bad hash count, or empty value" }
+      ]
+    },
+    "verification": {
+      "enum": "VerificationError",
+      "source": "contracts/verification/src/errors.rs",
+      "errors": [
+        { "code": 1, "variant": "AlreadyInitialized", "description": "initialize called more than once" },
+        { "code": 2, "variant": "NotInitialized", "description": "operation before initialize" },
+        { "code": 3, "variant": "ContractPaused", "description": "circuit breaker is active" },
+        { "code": 4, "variant": "Unauthorized", "description": "wrong account for a privileged operation" },
+        { "code": 5, "variant": "ValidatorNotFound", "description": "wallet not in validator registry" },
+        { "code": 6, "variant": "ValidatorInactive", "description": "validator has been revoked" },
+        { "code": 7, "variant": "ValidatorAlreadyRegistered", "description": "wallet already registered as validator" },
+        { "code": 8, "variant": "PlayerNotFound", "description": "invalid player_id" },
+        { "code": 9, "variant": "InvalidInput", "description": "bad evidence hash or credentials too long" },
+        { "code": 10, "variant": "ReasonTooLong", "description": "revocation reason exceeds 128 bytes" },
+        { "code": 11, "variant": "AlreadyConfigured", "description": "set_progress_contract called twice" },
+        { "code": 12, "variant": "ProgressCallFailed", "description": "cross-contract advance_level failed" },
+        { "code": 13, "variant": "Overflow", "description": "milestone counter overflowed" },
+        { "code": 14, "variant": "MilestoneNotFound", "description": "index out of range" }
+      ]
+    },
+    "progress": {
+      "enum": "ProgressError",
+      "source": "contracts/progress/src/errors.rs",
+      "errors": [
+        { "code": 1, "variant": "AlreadyInitialized", "description": "initialize called more than once" },
+        { "code": 2, "variant": "NotInitialized", "description": "operation before initialize" },
+        { "code": 3, "variant": "ContractPaused", "description": "circuit breaker is active" },
+        { "code": 4, "variant": "Unauthorized", "description": "wrong account for a privileged operation" },
+        { "code": 5, "variant": "InvalidProgressTransition", "description": "level skip or reversal attempted" },
+        { "code": 6, "variant": "AlreadyAtMaxLevel", "description": "player is already at EliteTier" },
+        { "code": 7, "variant": "PlayerNotFound", "description": "history index out of range" },
+        { "code": 8, "variant": "Overflow", "description": "history counter overflowed" }
+      ]
+    },
+    "scout_access": {
+      "enum": "ScoutAccessError",
+      "source": "contracts/scout_access/src/errors.rs",
+      "errors": [
+        { "code": 1, "variant": "AlreadyInitialized", "description": "initialize called more than once" },
+        { "code": 2, "variant": "NotInitialized", "description": "operation before initialize" },
+        { "code": 3, "variant": "ContractPaused", "description": "circuit breaker is active" },
+        { "code": 4, "variant": "Unauthorized", "description": "wrong account or non-Elite tier for trial offer" },
+        { "code": 5, "variant": "InsufficientFee", "description": "underpaying contact or subscription fee" },
+        { "code": 6, "variant": "ScoutNotSubscribed", "description": "no subscription record found" },
+        { "code": 7, "variant": "SubscriptionExpired", "description": "subscription past expires_at" },
+        { "code": 8, "variant": "AlreadyContacted", "description": "duplicate pay_to_contact for same player" },
+        { "code": 9, "variant": "InvalidTier", "description": "unknown subscription tier" },
+        { "code": 10, "variant": "Overflow", "description": "fee accumulation arithmetic overflowed" },
+        { "code": 11, "variant": "TrialOfferNotFound", "description": "index out of range" },
+        { "code": 12, "variant": "SubscriptionDowngradeNotAllowed", "description": "downgrade attempted while subscription active" },
+        { "code": 14, "variant": "ProgressCallFailed", "description": "cross-contract advance_level failed" },
+        { "code": 15, "variant": "InvalidInput", "description": "zero or negative fee field in FeeConfig" },
+        { "code": 16, "variant": "NoFeesToWithdraw", "description": "no accumulated fees are available to withdraw" }
+      ]
+    }
+  }
+}
