@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "contracts/shared-types",
     "contracts/registration",
     "contracts/verification",
     "contracts/progress",
@@ -8,7 +9,8 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-soroban-sdk = { version = "25.3.1", features = ["testutils"] }
+soroban-sdk = { version = "25.3.1" }
+soroban-sdk-testutils = { version = "25.3.1", package = "soroban-sdk", features = ["testutils"] }
 
 [profile.release]
 opt-level = "z"
@@ -23,3 +25,6 @@ lto = true
 [profile.release-with-logs]
 inherits = "release"
 debug-assertions = true
+
+[patch.crates-io]
+hashbrown = { git = 'https://github.com/rust-lang/hashbrown.git', tag = 'v0.14.5' }
