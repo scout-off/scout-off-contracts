@@ -23,6 +23,9 @@ use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
 
 const MAX_CREDENTIALS_LEN: u32 = 256;
 
+const MILESTONE_TTL_THRESHOLD: u32 = 100;
+const MILESTONE_TTL_EXTEND_TO: u32 = 518_400; // ~1 year at 5s/ledger
+
 // Generated client for the progress contract — used for cross-contract calls.
 // The progress contract must be deployed and its address registered via
 // `set_progress_contract` before `approve_milestone` can advance levels.
@@ -345,7 +348,9 @@ impl VerificationContract {
         player_id: u64,
         index: u32,
     ) -> Result<Milestone, VerificationError> {
-        env.storage()
+        let key = DataKey::Milestone(player_id, index);
+        let milestone = env
+            .storage()
             .persistent()
             .get(&DataKey::Milestone(player_id, index))
             .ok_or(VerificationError::MilestoneNotFound)
