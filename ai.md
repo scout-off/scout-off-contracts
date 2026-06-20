@@ -111,7 +111,7 @@ pub fn health(env: Env) -> ContractHealth
 
 Deploy and initialize all four contracts before wiring. After `.env.contracts`
 exists and `ADMIN_ADDRESS`, `DEPLOYER_SECRET`, and `XLM_TOKEN_ADDRESS` are set,
-the current required wiring is:
+the current workspace exposes three executable cross-contract wiring calls:
 
 ```bash
 # registration trusts progress for player-level synchronization
@@ -142,6 +142,9 @@ stellar contract invoke \
 `verification.update_progress_contract(progress_contract)` is the supported
 re-wiring path after an initial verification progress address has been set.
 `registration` and `scout_access` currently expose only `set_progress_contract`.
+`progress` contains a reserved `RegistrationContract` storage key, but this
+version exposes no public `set_registration_contract` or `initialize_player`
+entrypoint, so do not generate a fourth progress-side wiring command.
 
 ## Error Codes
 
