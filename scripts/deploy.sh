@@ -11,10 +11,10 @@ if [[ -z "$DEPLOYER" ]]; then
   exit 1
 fi
 
-WASM_DIR="target/wasm32-unknown-unknown/release"
+WASM_DIR="target/wasm32v1-none/release"
 
 echo "==> Building contracts..."
-cargo build --workspace --target wasm32-unknown-unknown --release
+cargo build --workspace --target wasm32v1-none --release
 
 CONTRACTS=(registration verification progress scout_access)
 
