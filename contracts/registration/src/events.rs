@@ -34,3 +34,10 @@ pub fn scout_verified(env: &Env, scout_id: u64) {
     env.events()
         .publish((Symbol::new(env, "scout_verified"),), scout_id);
 }
+
+pub fn admin_transferred(env: &Env, old_admin: &Address, new_admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "admin_transferred"),),
+        (old_admin.clone(), new_admin.clone()),
+    );
+}
