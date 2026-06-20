@@ -52,3 +52,10 @@ pub fn progress_contract_updated(env: &Env, progress_contract: &Address) {
         progress_contract.clone(),
     );
 }
+
+pub fn validator_credentials_updated(env: &Env, wallet: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "validator_credentials_updated"),),
+        wallet.clone(),
+    );
+}

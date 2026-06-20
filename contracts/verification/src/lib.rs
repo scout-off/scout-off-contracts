@@ -23,6 +23,9 @@ use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
 
 const MAX_CREDENTIALS_LEN: u32 = 256;
 
+const INSTANCE_TTL_MIN: u32 = 100;
+const INSTANCE_TTL_MAX: u32 = 500;
+
 // Generated client for the progress contract — used for cross-contract calls.
 // The progress contract must be deployed and its address registered via
 // `set_progress_contract` before `approve_milestone` can advance levels.
@@ -72,6 +75,9 @@ impl VerificationContract {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Initialized, &true);
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         events::contract_initialized(&env, &admin);
         Ok(())
     }
@@ -92,6 +98,7 @@ impl VerificationContract {
             .set(&DataKey::ProgressContract, &progress_contract);
         env.storage()
             .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
             .set(&DataKey::ProgressContractSet, &true);
         Ok(())
     }
@@ -199,6 +206,37 @@ impl VerificationContract {
         Ok(())
     }
 
+    /// Update a validator's credentials (admin only).
+    /// Allows validators to reflect credential upgrades on-chain.
+    pub fn update_validator_credentials(
+        env: Env,
+        wallet: Address,
+        new_credentials: String,
+    ) -> Result<(), VerificationError> {
+        Self::require_admin(&env)?;
+
+        // Validate credentials length ≤ 256 bytes
+        if new_credentials.len() > 256 {
+            return Err(VerificationError::InvalidInput);
+        }
+
+        // Get existing validator
+        let mut validator: Validator = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Validator(wallet.clone()))
+            .ok_or(VerificationError::ValidatorNotFound)?;
+
+        // Update credentials
+        validator.credentials = new_credentials;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Validator(wallet.clone()), &validator);
+
+        events::validator_credentials_updated(&env, &wallet);
+        Ok(())
+    }
+
     pub fn pause_contract(env: Env) -> Result<(), VerificationError> {
         Self::require_admin(&env)?;
         let admin: Address = env
@@ -208,6 +246,9 @@ impl VerificationContract {
             .ok_or(VerificationError::NotInitialized)?;
 
         env.storage().instance().set(&DataKey::Paused, &true);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         events::contract_paused(&env, &admin);
         Ok(())
     }
@@ -221,6 +262,9 @@ impl VerificationContract {
             .ok_or(VerificationError::NotInitialized)?;
 
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         events::contract_unpaused(&env, &admin);
         Ok(())
     }
@@ -313,6 +357,10 @@ impl VerificationContract {
             &description,
             &evidence_hash,
         );
+
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
 
         // Cross-contract call: advance the player's progress level.
         // This is a best-effort call — if the progress contract is not set
@@ -702,11 +750,41 @@ mod tests {
     }
 
     #[test]
+    fn test_instance_ttl_extended_after_ledger_advancement() {
     fn test_pause_unpause_events() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
+        // Verify contract is initialized
+        assert!(client.health());
+
+        // Advance ledger by 600 blocks (more than INSTANCE_TTL_MAX)
+        env.ledger().with_mut(|l| {
+            l.sequence += 600;
+        });
+
+        // Contract should still be functional because TTL was extended
+        let validator = Address::generate(&env);
+        client.register_validator(&validator, &String::from_str(&env, "Coach"));
+
+        let idx = client.approve_milestone(
+            &validator,
+            &1u64,
+            &String::from_str(&env, "Test milestone"),
+            &String::from_str(&env, "QmEvidence"),
+        );
+        assert_eq!(idx, 1);
+
+        // Verify pause/unpause still works
+        client.pause_contract();
+        assert!(client.health());
+        client.unpause_contract();
+        assert!(client.health());
+    }
+
+    #[test]
+    fn test_update_validator_credentials_success() {
         client.pause_contract();
         let events = env.events().all();
         assert_eq!(
@@ -743,6 +821,26 @@ mod tests {
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
+        let validator = Address::generate(&env);
+        let initial_creds = String::from_str(&env, "UEFA B License");
+        client.register_validator(&validator, &initial_creds);
+
+        // Verify initial credentials
+        let v1 = client.get_validator(&validator);
+        assert_eq!(v1.credentials, initial_creds);
+
+        // Update credentials
+        let new_creds = String::from_str(&env, "UEFA A License");
+        client.update_validator_credentials(&validator, &new_creds);
+
+        // Verify credentials were updated
+        let v2 = client.get_validator(&validator);
+        assert_eq!(v2.credentials, new_creds);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_update_validator_credentials_unauthorized() {
         let unknown = Address::generate(&env);
         client.get_validator(&unknown);
     }
@@ -766,6 +864,19 @@ mod tests {
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
+        let validator = Address::generate(&env);
+        client.register_validator(&validator, &String::from_str(&env, "Coach"));
+
+        // Clear mocks — non-admin auth
+        env.mock_auths(&[]);
+
+        // Should panic — not admin
+        client.update_validator_credentials(&validator, &String::from_str(&env, "New Creds"));
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_update_validator_credentials_not_found() {
         let addr1 = Address::generate(&env);
         let addr2 = Address::generate(&env);
         client.set_progress_contract(&addr1);
@@ -784,6 +895,18 @@ mod tests {
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
+        let unknown_validator = Address::generate(&env);
+
+        // Should panic — validator not registered
+        client.update_validator_credentials(
+            &unknown_validator,
+            &String::from_str(&env, "New Creds"),
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_update_validator_credentials_too_long() {
         let validator = Address::generate(&env);
         // 257 ASCII bytes — must exceed the 256-byte limit
         let too_long = "a".repeat(257);
@@ -797,6 +920,17 @@ mod tests {
         client.initialize(&admin);
 
         let validator = Address::generate(&env);
+        client.register_validator(&validator, &String::from_str(&env, "Coach"));
+
+        // Create credentials string longer than 256 bytes
+        let long_creds = String::from_str(&env, &"A".repeat(257));
+
+        // Should panic — credentials too long
+        client.update_validator_credentials(&validator, &long_creds);
+    }
+
+    #[test]
+    fn test_update_validator_credentials_max_length() {
         // Exactly 256 ASCII bytes — must be accepted
         let exactly_256 = "a".repeat(256);
         client.register_validator(&validator, &String::from_str(&env, &exactly_256));
@@ -810,6 +944,22 @@ mod tests {
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
+        let validator = Address::generate(&env);
+        client.register_validator(&validator, &String::from_str(&env, "Coach"));
+
+        // Create credentials string exactly 256 bytes
+        let max_creds = String::from_str(&env, &"A".repeat(256));
+
+        // Should succeed
+        client.update_validator_credentials(&validator, &max_creds);
+
+        // Verify credentials were updated
+        let v = client.get_validator(&validator);
+        assert_eq!(v.credentials, max_creds);
+    }
+
+    #[test]
+    fn test_update_validator_credentials_preserves_other_fields() {
         let events = env.events().all();
         assert_eq!(
             events,
@@ -845,6 +995,23 @@ mod tests {
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
+        let validator = Address::generate(&env);
+        let initial_creds = String::from_str(&env, "UEFA B License");
+        client.register_validator(&validator, &initial_creds);
+
+        let v1 = client.get_validator(&validator);
+        let initial_registered_at = v1.registered_at;
+        let initial_active = v1.active;
+
+        // Update credentials
+        let new_creds = String::from_str(&env, "UEFA A License");
+        client.update_validator_credentials(&validator, &new_creds);
+
+        // Verify other fields are preserved
+        let v2 = client.get_validator(&validator);
+        assert_eq!(v2.registered_at, initial_registered_at);
+        assert_eq!(v2.active, initial_active);
+        assert_eq!(v2.wallet, validator);
         let v1 = Address::generate(&env);
         let v2 = Address::generate(&env);
         let v3 = Address::generate(&env);
