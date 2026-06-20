@@ -352,6 +352,7 @@ Wire the progress contract address so `approve_milestone` can call
 `advance_level` cross-contract. Must be called once after deployment.
 Returns `AlreadyConfigured` on subsequent calls — use
 `update_progress_contract` for intentional re-wiring.
+On success it emits `progress_contract_set` with the stored address.
 
 | | |
 |---|---|
@@ -369,6 +370,7 @@ stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
 
 Re-wire the progress contract address after the initial `set_progress_contract`
 call. Use when redeploying or rotating the progress contract.
+On success it emits `progress_contract_set` with the new address.
 
 | | |
 |---|---|
@@ -617,7 +619,7 @@ stellar contract invoke --id $VERIFICATION_CONTRACT_ID -- health
 | `milestone_approved` | event_name, validator_address, milestone_index (u32) | player_id (u64), description (String), evidence_hash (String) | Validator confirms a player achievement |
 | `validator_registered` | event_name | validator_address | New validator onboarded |
 | `validator_revoked` | event_name | validator_address, reason (String) | Validator deactivated |
-| `progress_contract_updated` | event_name | new_address (Address) | Progress contract re-wired |
+| `progress_contract_set` | event_name | new_address (Address) | Progress contract set or re-wired |
 | `contract_paused` | event_name | admin (Address) | Circuit breaker engaged |
 | `contract_unpaused` | event_name | admin (Address) | Circuit breaker released |
 
@@ -1390,7 +1392,7 @@ pub struct TrialOffer {
 | `milestone_approved` | verification | Validator confirms a player achievement |
 | `validator_registered` | verification | New validator onboarded |
 | `validator_revoked` | verification | Validator deactivated |
-| `progress_contract_updated` | verification | Progress contract address re-wired |
+| `progress_contract_set` | verification | Progress contract address set or re-wired |
 | `contract_paused` | verification / scout_access | Circuit breaker engaged |
 | `contract_unpaused` | verification / scout_access | Circuit breaker released |
 | `progress_updated` | progress | Player advances one level |

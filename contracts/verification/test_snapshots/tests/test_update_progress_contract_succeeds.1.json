@@ -244,7 +244,7 @@
           "v0": {
             "topics": [
               {
-                "symbol": "progress_contract_updated"
+                "symbol": "progress_contract_set"
               }
             ],
             "data": {

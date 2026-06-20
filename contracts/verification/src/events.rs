@@ -46,9 +46,9 @@ pub fn contract_initialized(env: &Env, admin: &Address) {
         .publish((Symbol::new(env, "contract_initialized"),), admin.clone());
 }
 
-pub fn progress_contract_updated(env: &Env, progress_contract: &Address) {
+pub fn progress_contract_set(env: &Env, progress_contract: &Address) {
     env.events().publish(
-        (Symbol::new(env, "progress_contract_updated"),),
+        (Symbol::new(env, "progress_contract_set"),),
         progress_contract.clone(),
     );
 }

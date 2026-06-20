@@ -31,6 +31,11 @@ chmod +x scripts/initialize.sh
 # Sets admin, fee config, and wires verification → progress cross-contract link
 ```
 
+The initializer is safe to re-run after a partial setup. If a contract is
+already initialized it is skipped, and if the verification contract already has
+a progress address, the script automatically calls `update_progress_contract`
+so the stored address is re-wired to the current `$PROGRESS_CONTRACT_ID`.
+
 ### 4. Generate TypeScript bindings
 
 ```bash
@@ -81,4 +86,15 @@ stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
   --progress_contract $PROGRESS_CONTRACT_ID
 ```
 
-This must be done once after every fresh deployment.
+Use `set_progress_contract` after a fresh deployment. If the verification
+contract already has a progress address and you need to repair or rotate it,
+use:
+
+```bash
+stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
+  -- update_progress_contract \
+  --progress_contract $PROGRESS_CONTRACT_ID
+```
+
+This must be done after every fresh deployment and can be repaired with
+`update_progress_contract` after a partial or stale deployment.
