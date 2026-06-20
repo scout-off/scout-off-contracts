@@ -47,6 +47,19 @@ impl RegistrationContract {
         Ok(())
     }
 
+    /// Transfer admin rights to a new address (current admin auth required).
+    pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), ScoutChainError> {
+        let old_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(ScoutChainError::NotInitialized)?;
+        old_admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        events::admin_transferred(&env, &old_admin, &new_admin);
+        Ok(())
+    }
+
     /// Store the progress contract address so it can call set_player_level (admin only).
     pub fn set_progress_contract(env: Env, addr: Address) -> Result<(), ScoutChainError> {
         Self::require_admin(&env)?;
@@ -504,6 +517,16 @@ mod tests {
         let admin = Address::generate(&env);
         client.initialize(&admin);
         assert!(client.health().initialized);
+    }
+
+    #[test]
+    fn test_transfer_admin_success() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let new_admin = Address::generate(&env);
+        client.transfer_admin(&new_admin);
     }
 
     #[test]

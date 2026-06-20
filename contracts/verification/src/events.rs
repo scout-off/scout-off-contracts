@@ -52,3 +52,10 @@ pub fn progress_contract_updated(env: &Env, progress_contract: &Address) {
         progress_contract.clone(),
     );
 }
+
+pub fn admin_transferred(env: &Env, old_admin: &Address, new_admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "admin_transferred"),),
+        (old_admin.clone(), new_admin.clone()),
+    );
+}

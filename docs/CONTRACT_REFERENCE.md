@@ -137,6 +137,22 @@ stellar contract invoke --id $REGISTRATION_CONTRACT_ID \
 
 ---
 
+#### `transfer_admin(new_admin: Address) -> Result<(), ScoutChainError>`
+
+Rotate the registration contract admin key without redeploying the contract.
+
+| | |
+|---|---|
+| **Auth** | Current admin must sign |
+| **Errors** | `NotInitialized` |
+
+```bash
+stellar contract invoke --id $REGISTRATION_CONTRACT_ID \
+  -- transfer_admin --new_admin $NEW_ADMIN_ADDRESS
+```
+
+---
+
 #### `set_progress_contract(addr: Address) -> Result<(), ScoutChainError>`
 
 Store the progress contract address so `set_player_level` may only be called
@@ -378,6 +394,22 @@ call. Use when redeploying or rotating the progress contract.
 ```bash
 stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
   -- update_progress_contract --progress_contract $NEW_PROGRESS_CONTRACT_ID
+```
+
+---
+
+#### `transfer_admin(new_admin: Address) -> Result<(), VerificationError>`
+
+Rotate the verification contract admin key without redeploying the contract.
+
+| | |
+|---|---|
+| **Auth** | Current admin must sign |
+| **Errors** | `NotInitialized` |
+
+```bash
+stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
+  -- transfer_admin --new_admin $NEW_ADMIN_ADDRESS
 ```
 
 ---
