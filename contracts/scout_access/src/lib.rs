@@ -167,39 +167,9 @@ impl ScoutAccessContract {
             .get(&DataKey::Admin)
             .ok_or(ScoutAccessError::NotInitialized)?;
         env.storage().instance().set(&DataKey::Paused, &false);
-        events::contract_unpaused(&env, &admin);
-        Ok(())
-    }
-
-    /// Register the progress contract address so log_trial_offer can
-    /// atomically advance the player to Level 3 (admin only).
-    pub fn set_progress_contract(env: Env, addr: Address) -> Result<(), ScoutAccessError> {
-        Self::bump_instance_ttl(&env);
-        Self::require_admin(&env)?;
         env.storage()
             .instance()
-            .set(&DataKey::ProgressContract, &addr);
-        Ok(())
-    }
-
-    /// Emergency refund: admin returns `amount` XLM (stroops) from the
-    /// contract balance to `scout`.  Use when a scout is accidentally
-    /// double-charged (e.g. by the race condition this interval guard
-    /// is designed to prevent).
-    pub fn refund_subscription(
-        env: Env,
-        scout: Address,
-        amount: i128,
-    ) -> Result<(), ScoutAccessError> {
-        Self::bump_instance_ttl(&env);
-        Self::require_admin(&env)?;
-        if amount <= 0 {
-            return Err(ScoutAccessError::InvalidInput);
-        }
-        let xlm = Self::get_token(&env);
-        let contract_addr = env.current_contract_address();
-        token::Client::new(&env, &xlm).transfer(&contract_addr, &scout, &amount);
-        events::subscription_refunded(&env, &scout, amount);
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Ok(())
     }
 
@@ -277,7 +247,11 @@ impl ScoutAccessContract {
             PERSISTENT_TTL_MAX,
         );
 
-        events::scout_subscribed(&env, &scout, &tier, fee);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
+
+        events::scout_subscribed(&env, &scout, &tier);
         Ok(())
     }
 
@@ -390,6 +364,10 @@ impl ScoutAccessContract {
                 Err(_) => return Err(ScoutAccessError::ProgressCallFailed),
             }
         }
+
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
 
         events::trial_offer_logged(&env, player_id, &scout);
         Ok(next_index)

@@ -23,6 +23,9 @@ use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
 
 const MAX_CREDENTIALS_LEN: u32 = 256;
 
+const INSTANCE_TTL_MIN: u32 = 100;
+const INSTANCE_TTL_MAX: u32 = 500;
+
 // Generated client for the progress contract — used for cross-contract calls.
 // The progress contract must be deployed and its address registered via
 // `set_progress_contract` before `approve_milestone` can advance levels.
@@ -199,6 +202,37 @@ impl VerificationContract {
         Ok(())
     }
 
+    /// Update a validator's credentials (admin only).
+    /// Allows validators to reflect credential upgrades on-chain.
+    pub fn update_validator_credentials(
+        env: Env,
+        wallet: Address,
+        new_credentials: String,
+    ) -> Result<(), VerificationError> {
+        Self::require_admin(&env)?;
+
+        // Validate credentials length ≤ 256 bytes
+        if new_credentials.len() > 256 {
+            return Err(VerificationError::InvalidInput);
+        }
+
+        // Get existing validator
+        let mut validator: Validator = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Validator(wallet.clone()))
+            .ok_or(VerificationError::ValidatorNotFound)?;
+
+        // Update credentials
+        validator.credentials = new_credentials;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Validator(wallet.clone()), &validator);
+
+        events::validator_credentials_updated(&env, &wallet);
+        Ok(())
+    }
+
     pub fn pause_contract(env: Env) -> Result<(), VerificationError> {
         Self::require_admin(&env)?;
         let admin: Address = env
@@ -313,6 +347,10 @@ impl VerificationContract {
             &description,
             &evidence_hash,
         );
+
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
 
         // Cross-contract call: advance the player's progress level.
         // This is a best-effort call — if the progress contract is not set
@@ -488,6 +526,26 @@ mod tests {
     fn test_health_false_before_initialize() {
         let (_env, client) = setup();
         assert!(!client.health().initialized);
+    }
+
+    #[test]
+    fn test_set_progress_contract_stores_address() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let progress_contract = Address::generate(&env);
+        client.set_progress_contract(&progress_contract);
+
+        // Verify the address is stored correctly in instance storage
+        env.as_contract(&client.address, || {
+            let stored_address: Address = env
+                .storage()
+                .instance()
+                .get(&DataKey::ProgressContract)
+                .expect("ProgressContract address not found in storage");
+            assert_eq!(stored_address, progress_contract);
+        });
     }
 
     #[test]
