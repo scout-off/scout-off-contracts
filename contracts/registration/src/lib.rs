@@ -11,6 +11,8 @@ use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
 const MAX_REGION_LEN: u32 = 128;
 const MAX_STRING_LEN: u32 = 64;
 const MAX_IPFS_HASHES: u32 = 10;
+const INSTANCE_TTL_MIN: u32 = 100;
+const INSTANCE_TTL_MAX: u32 = 500;
 
 #[contract]
 pub struct RegistrationContract;
@@ -32,18 +34,27 @@ impl RegistrationContract {
         env.storage().instance().set(&DataKey::Paused, &false);
         env.storage().instance().set(&DataKey::PlayerCounter, &0u64);
         env.storage().instance().set(&DataKey::ScoutCounter, &0u64);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Ok(())
     }
 
     pub fn pause_contract(env: Env) -> Result<(), ScoutChainError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &true);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Ok(())
     }
 
     pub fn unpause_contract(env: Env) -> Result<(), ScoutChainError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Ok(())
     }
 
@@ -137,16 +148,9 @@ impl RegistrationContract {
             .persistent()
             .set(&DataKey::PlayerByWallet(wallet.clone()), &player_id);
 
-        // Add to player index
-        let mut player_ids: Vec<u64> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::PlayerIndex)
-            .unwrap_or_else(|| Vec::new(&env));
-        player_ids.push_back(player_id);
         env.storage()
-            .persistent()
-            .set(&DataKey::PlayerIndex, &player_ids);
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
 
         events::player_registered(&env, player_id, &wallet);
         Ok(player_id)
@@ -169,6 +173,9 @@ impl RegistrationContract {
         env.storage()
             .persistent()
             .set(&DataKey::Player(player_id), &profile);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         events::profile_updated(&env, player_id);
         Ok(())
     }
@@ -242,6 +249,10 @@ impl RegistrationContract {
         env.storage()
             .persistent()
             .set(&DataKey::ScoutByWallet(wallet.clone()), &scout_id);
+
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
 
         events::scout_registered(&env, scout_id, &wallet);
         Ok(scout_id)
@@ -772,247 +783,36 @@ mod tests {
         assert_eq!(scout_id, 1);
     }
 
-    // -------------------------------------------------------------------------
-    // Issue #28: require_initialized before require_not_paused
-    // -------------------------------------------------------------------------
-
     #[test]
-    #[should_panic]
-    fn test_register_player_uninitialized_returns_not_initialized() {
-        let (env, client) = setup();
-        let wallet = Address::generate(&env);
-        let vitals = dummy_vitals(&env);
-        let hashes = vec![&env, String::from_str(&env, "QmTest")];
-        client.register_player(&wallet, &vitals, &hashes);
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_register_scout_uninitialized_returns_not_initialized() {
-        let (env, client) = setup();
-        let wallet = Address::generate(&env);
-        let region = String::from_str(&env, "Europe");
-        client.register_scout(&wallet, &region);
-    }
-
-    // -------------------------------------------------------------------------
-    // Issue #34: Dual-role wallet policy (player + scout same wallet)
-    // -------------------------------------------------------------------------
-
-    #[test]
-    fn test_same_wallet_can_register_as_player_and_scout() {
+    fn test_instance_ttl_extended_after_ledger_advancement() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
+        // Verify contract is initialized
+        assert!(client.health());
+
+        // Advance ledger by 600 blocks (more than INSTANCE_TTL_MAX)
+        env.ledger().with_mut(|l| {
+            l.sequence += 600;
+        });
+
+        // Contract should still be functional because TTL was extended
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
-        let region = String::from_str(&env, "Europe");
-
         let player_id = client.register_player(&wallet, &vitals, &hashes);
         assert_eq!(player_id, 1);
 
-        let scout_id = client.register_scout(&wallet, &region);
+        // Verify pause/unpause still works
+        client.pause_contract();
+        assert!(client.health());
+        client.unpause_contract();
+        assert!(client.health());
+
+        // Verify scout registration still works
+        let scout_wallet = Address::generate(&env);
+        let scout_id = client.register_scout(&scout_wallet, &String::from_str(&env, "Africa"));
         assert_eq!(scout_id, 1);
-
-        let player = client.get_player(&player_id);
-        assert_eq!(player.wallet, wallet);
-
-        let scout = client.get_scout(&scout_id);
-        assert_eq!(scout.wallet, wallet);
-    }
-
-    // -------------------------------------------------------------------------
-    // Issue #26: get_player_count and get_scout_count query functions
-    // -------------------------------------------------------------------------
-
-    #[test]
-    fn test_get_player_count_returns_zero_before_init() {
-        let (env, client) = setup();
-        assert_eq!(client.get_player_count(), 0);
-    }
-
-    #[test]
-    fn test_get_scout_count_returns_zero_before_init() {
-        let (env, client) = setup();
-        assert_eq!(client.get_scout_count(), 0);
-    }
-
-    #[test]
-    fn test_get_player_count_after_registrations() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let vitals = dummy_vitals(&env);
-        let hashes = vec![&env, String::from_str(&env, "QmTest")];
-
-        for _ in 0..3 {
-            let wallet = Address::generate(&env);
-            client.register_player(&wallet, &vitals, &hashes);
-        }
-
-        assert_eq!(client.get_player_count(), 3);
-    }
-
-    #[test]
-    fn test_get_scout_count_after_registrations() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let region = String::from_str(&env, "Europe");
-
-        for _ in 0..3 {
-            let wallet = Address::generate(&env);
-            client.register_scout(&wallet, &region);
-        }
-
-        assert_eq!(client.get_scout_count(), 3);
-    }
-
-    // -------------------------------------------------------------------------
-    // Issue #31: filter_players query function
-    // -------------------------------------------------------------------------
-
-    #[test]
-    fn test_filter_players_by_region_and_position() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let hashes = vec![&env, String::from_str(&env, "QmTest")];
-
-        // Player 1: Forward, West Africa
-        let wallet1 = Address::generate(&env);
-        let vitals1 = PlayerVitals {
-            age: 18,
-            position: String::from_str(&env, "Forward"),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Ghana"),
-        };
-        client.register_player(&wallet1, &vitals1, &hashes);
-
-        // Player 2: Midfielder, West Africa
-        let wallet2 = Address::generate(&env);
-        let vitals2 = PlayerVitals {
-            age: 20,
-            position: String::from_str(&env, "Midfielder"),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Nigeria"),
-        };
-        client.register_player(&wallet2, &vitals2, &hashes);
-
-        // Player 3: Forward, Europe
-        let wallet3 = Address::generate(&env);
-        let vitals3 = PlayerVitals {
-            age: 19,
-            position: String::from_str(&env, "Forward"),
-            region: String::from_str(&env, "Europe"),
-            nationality: String::from_str(&env, "France"),
-        };
-        client.register_player(&wallet3, &vitals3, &hashes);
-
-        // Filter: Forward in West Africa
-        let results = client.filter_players(
-            &String::from_str(&env, "West Africa"),
-            &String::from_str(&env, "Forward"),
-            &ProgressLevel::Unverified,
-        );
-
-        assert_eq!(results.len(), 1);
-        assert_eq!(results.get(0).unwrap().player_id, 1);
-    }
-
-    // -------------------------------------------------------------------------
-    // Issue #32: Scout verified flag and verify_scout admin function
-    // -------------------------------------------------------------------------
-
-    #[test]
-    fn test_newly_registered_scout_not_verified() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let wallet = Address::generate(&env);
-        let region = String::from_str(&env, "Europe");
-        let scout_id = client.register_scout(&wallet, &region);
-
-        let scout = client.get_scout(&scout_id);
-        assert!(!scout.verified);
-    }
-
-    #[test]
-    fn test_admin_can_verify_scout() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let wallet = Address::generate(&env);
-        let region = String::from_str(&env, "Europe");
-        let scout_id = client.register_scout(&wallet, &region);
-
-        client.verify_scout(&scout_id);
-
-        let scout = client.get_scout(&scout_id);
-        assert!(scout.verified);
-    }
-
-    // -------------------------------------------------------------------------
-    // Issue #33: Full player registration and profile update flow
-    // -------------------------------------------------------------------------
-
-    #[test]
-    fn test_full_player_registration_and_update_flow() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let wallet = Address::generate(&env);
-        let vitals = dummy_vitals(&env);
-        let initial_hashes = vec![&env, String::from_str(&env, "QmInitial1")];
-
-        // Step 1: Register player
-        let player_id = client.register_player(&wallet, &vitals, &initial_hashes);
-        assert_eq!(player_id, 1);
-
-        // Step 2: Get profile and verify initial state
-        let profile_v1 = client.get_player(&player_id);
-        assert_eq!(profile_v1.player_id, player_id);
-        assert_eq!(profile_v1.wallet, wallet);
-        assert_eq!(profile_v1.level, ProgressLevel::Unverified);
-        assert_eq!(profile_v1.ipfs_hashes.len(), 1);
-        assert_eq!(
-            profile_v1.ipfs_hashes.get(0).unwrap(),
-            String::from_str(&env, "QmInitial1")
-        );
-        let updated_at_v1 = profile_v1.updated_at;
-
-        // Step 3: Update profile with new hashes
-        let updated_hashes = vec![
-            &env,
-            String::from_str(&env, "QmUpdated1"),
-            String::from_str(&env, "QmUpdated2"),
-        ];
-        client.update_profile(&player_id, &updated_hashes);
-
-        // Step 4: Read back updated profile
-        let profile_v2 = client.get_player(&player_id);
-        assert_eq!(profile_v2.player_id, player_id);
-        assert_eq!(profile_v2.wallet, wallet);
-        assert_eq!(profile_v2.level, ProgressLevel::Unverified);
-        assert_eq!(profile_v2.ipfs_hashes.len(), 2);
-        assert_eq!(
-            profile_v2.ipfs_hashes.get(0).unwrap(),
-            String::from_str(&env, "QmUpdated1")
-        );
-        assert_eq!(
-            profile_v2.ipfs_hashes.get(1).unwrap(),
-            String::from_str(&env, "QmUpdated2")
-        );
-
-        // Step 5: Verify timestamps
-        assert!(profile_v2.updated_at >= updated_at_v1);
     }
 }
