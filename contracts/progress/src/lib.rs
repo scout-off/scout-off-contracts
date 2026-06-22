@@ -14,6 +14,9 @@ const INSTANCE_TTL_MAX: u32 = 500;
 const PERSISTENT_TTL_MIN: u32 = 500;
 const PERSISTENT_TTL_MAX: u32 = 2000;
 
+const INSTANCE_TTL_MIN: u32 = 100;
+const INSTANCE_TTL_MAX: u32 = 500;
+
 #[contract]
 pub struct ProgressContract;
 
@@ -32,6 +35,9 @@ impl ProgressContract {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Initialized, &true);
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Ok(())
     }
 
@@ -39,6 +45,9 @@ impl ProgressContract {
         Self::bump_instance_ttl(&env);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &true);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Ok(())
     }
 
@@ -46,6 +55,9 @@ impl ProgressContract {
         Self::bump_instance_ttl(&env);
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Ok(())
     }
 
@@ -59,6 +71,9 @@ impl ProgressContract {
             .ok_or(ProgressError::NotInitialized)?;
         old_admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         events::admin_transferred(&env, &old_admin, &new_admin);
         Ok(())
     }
@@ -135,6 +150,11 @@ impl ProgressContract {
             .persistent()
             .set(&DataKey::PlayerLevel(player_id), &new_level);
 
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
+
+        events::progress_updated(&env, player_id, &new_level, &caller);
         events::progress_updated(
             &env,
             player_id,
@@ -599,11 +619,34 @@ mod tests {
     }
 
     #[test]
+    fn test_instance_ttl_extended_after_ledger_advancement() {
     fn test_reset_player_level_success() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
+        // Verify contract is initialized
+        assert!(client.health());
+
+        // Advance ledger by 600 blocks (more than INSTANCE_TTL_MAX)
+        env.ledger().with_mut(|l| {
+            l.sequence += 600;
+        });
+
+        // Contract should still be functional because TTL was extended
+        let validator = Address::generate(&env);
+        let player_id = 1u64;
+        let level = client.advance_level(&validator, &player_id, &1u32);
+        assert_eq!(level, ProgressLevel::VerifiedIdentity);
+
+        // Verify health check still works
+        assert!(client.health());
+
+        // Verify pause/unpause still works
+        client.pause_contract();
+        assert!(client.health());
+        client.unpause_contract();
+        assert!(client.health());
         let validator = Address::generate(&env);
         let player_id = 1u64;
 

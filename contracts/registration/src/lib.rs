@@ -11,6 +11,8 @@ use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
 const MAX_REGION_LEN: u32 = 128;
 const MAX_STRING_LEN: u32 = 64;
 const MAX_IPFS_HASHES: u32 = 10;
+const INSTANCE_TTL_MIN: u32 = 100;
+const INSTANCE_TTL_MAX: u32 = 500;
 
 #[contract]
 pub struct RegistrationContract;
@@ -32,18 +34,27 @@ impl RegistrationContract {
         env.storage().instance().set(&DataKey::Paused, &false);
         env.storage().instance().set(&DataKey::PlayerCounter, &0u64);
         env.storage().instance().set(&DataKey::ScoutCounter, &0u64);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Ok(())
     }
 
     pub fn pause_contract(env: Env) -> Result<(), ScoutChainError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &true);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Ok(())
     }
 
     pub fn unpause_contract(env: Env) -> Result<(), ScoutChainError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         Ok(())
     }
 
@@ -137,6 +148,9 @@ impl RegistrationContract {
             .persistent()
             .set(&DataKey::PlayerByWallet(wallet.clone()), &player_id);
 
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         // Add to player index
         let mut player_ids: Vec<u64> = env
             .storage()
@@ -169,6 +183,9 @@ impl RegistrationContract {
         env.storage()
             .persistent()
             .set(&DataKey::Player(player_id), &profile);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
         events::profile_updated(&env, player_id);
         Ok(())
     }
@@ -242,6 +259,10 @@ impl RegistrationContract {
         env.storage()
             .persistent()
             .set(&DataKey::ScoutByWallet(wallet.clone()), &scout_id);
+
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_MIN, INSTANCE_TTL_MAX);
 
         events::scout_registered(&env, scout_id, &wallet);
         Ok(scout_id)
@@ -772,6 +793,39 @@ mod tests {
         assert_eq!(scout_id, 1);
     }
 
+    #[test]
+    fn test_instance_ttl_extended_after_ledger_advancement() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        // Verify contract is initialized
+        assert!(client.health());
+
+        // Advance ledger by 600 blocks (more than INSTANCE_TTL_MAX)
+        env.ledger().with_mut(|l| {
+            l.sequence += 600;
+        });
+
+        // Contract should still be functional because TTL was extended
+        let wallet = Address::generate(&env);
+        let vitals = dummy_vitals(&env);
+        let hashes = vec![&env, String::from_str(&env, "QmTest")];
+        let player_id = client.register_player(&wallet, &vitals, &hashes);
+        assert_eq!(player_id, 1);
+
+        // Verify pause/unpause still works
+        client.pause_contract();
+        assert!(client.health());
+        client.unpause_contract();
+        assert!(client.health());
+
+        // Verify scout registration still works
+        let scout_wallet = Address::generate(&env);
+        let scout_id = client.register_scout(&scout_wallet, &String::from_str(&env, "Africa"));
+        assert_eq!(scout_id, 1);
+    }
+}
     // -------------------------------------------------------------------------
     // Issue #28: require_initialized before require_not_paused
     // -------------------------------------------------------------------------
