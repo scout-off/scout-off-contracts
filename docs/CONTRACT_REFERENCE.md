@@ -621,6 +621,14 @@ stellar contract invoke --id $VERIFICATION_CONTRACT_ID -- health
 | `contract_paused` | event_name | admin (Address) | Circuit breaker engaged |
 | `contract_unpaused` | event_name | admin (Address) | Circuit breaker released |
 
+### Events
+
+| Event | Topics | Data | Description |
+|-------|--------|------|-------------|
+| `milestone_approved` | event_name, validator_address, milestone_index (u32) | player_id (u64), description (String), evidence_hash (String) | Emitted when a validator approves a player milestone with full milestone details |
+| `validator_registered` | event_name | validator_address | Emitted when a new validator is registered |
+| `validator_revoked` | event_name | validator_address | Emitted when a validator is deactivated |
+
 ---
 
 ## progress
