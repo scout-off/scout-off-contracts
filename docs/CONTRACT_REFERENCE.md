@@ -1368,6 +1368,7 @@ pub struct TrialOffer {
 | 12 | `ProgressCallFailed` | Cross-contract `advance_level` failed |
 | 13 | `Overflow` | Milestone counter overflowed |
 | 14 | `MilestoneNotFound` | Index out of range |
+| 15 | `ValidatorCapacityReached` | Validator registry already has 100 entries |
 
 ### `ProgressError` (progress contract)
 

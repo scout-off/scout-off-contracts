@@ -18,4 +18,5 @@ pub enum VerificationError {
     ProgressCallFailed = 12,
     Overflow = 13,
     MilestoneNotFound = 14,
+    ValidatorCapacityReached = 15,
 }
