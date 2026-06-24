@@ -59,6 +59,14 @@ mod progress_contract {
     }
 }
 
+// Generated client for the registration contract — used to verify player existence.
+// Optional: only checked if set via `set_registration_contract`.
+mod registration_contract {
+    soroban_sdk::contractimport!(
+        file = "../../target/wasm32-unknown-unknown/release/scoutchain_registration.wasm"
+    );
+}
+
 #[contract]
 pub struct VerificationContract;
 
@@ -112,6 +120,19 @@ impl VerificationContract {
             .instance()
             .set(&DataKey::ProgressContract, &progress_contract);
         events::progress_contract_updated(&env, &progress_contract);
+        Ok(())
+    }
+
+    /// Store the registration contract address for player existence checks (admin only).
+    /// When set, approve_milestone will verify the player exists before recording a milestone.
+    pub fn set_registration_contract(
+        env: Env,
+        registration_contract: Address,
+    ) -> Result<(), VerificationError> {
+        Self::require_admin(&env)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::RegistrationContract, &registration_contract);
         Ok(())
     }
 
@@ -265,6 +286,18 @@ impl VerificationContract {
 
         if !validator.active {
             return Err(VerificationError::ValidatorInactive);
+        }
+
+        // Optional cross-contract check: verify player exists in registration contract.
+        if let Some(reg_addr) = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::RegistrationContract)
+        {
+            let reg_client = registration_contract::Client::new(&env, &reg_addr);
+            if reg_client.try_get_player(&player_id).is_err() {
+                return Err(VerificationError::PlayerNotFound);
+            }
         }
 
         // Increment milestone counter for this player
