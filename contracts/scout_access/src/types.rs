@@ -47,6 +47,8 @@ pub struct FeeConfig {
     pub elite_sub_stroops: i128,
     /// Subscription duration in seconds (default: 30 days)
     pub sub_duration_secs: u64,
+    /// Maximum contacts per month for Pro tier (default: 10)
+    pub pro_contact_limit: u32,
 }
 
 #[contracttype]
@@ -62,6 +64,10 @@ pub enum DataKey {
     Subscription(Address),
     /// (player_id, scout) → bool (has contacted)
     ContactRecord(u64, Address),
+    /// scout → Vec<u64> of contacted player_ids
+    ScoutContacts(Address),
+    /// Monthly contact count for Pro tier: (scout, month_bucket) → count
+    ContactCount(Address, u64),
     /// trial offer counter per player
     TrialCounter(u64),
     /// (player_id, trial_index) → TrialOffer

@@ -284,6 +284,87 @@ impl ScoutAccessContract {
     // Pay-to-contact
     // -------------------------------------------------------------------------
 
+    /// Helper: check Pro tier contact quota. Returns Ok(()) if within limit or not Pro tier.
+    fn check_pro_contact_quota(env: &Env, scout: &Address) -> Result<(), ScoutAccessError> {
+        let sub: Subscription = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Subscription(scout.clone()))
+            .ok_or(ScoutAccessError::ScoutNotSubscribed)?;
+
+        // Only Pro tier has a quota
+        if sub.tier != SubscriptionTier::Pro {
+            return Ok(());
+        }
+
+        // Month bucket: use Unix timestamp / seconds per month (30 days)
+        const SECONDS_PER_MONTH: u64 = 2_592_000;
+        let month_bucket = sub.subscribed_at / SECONDS_PER_MONTH;
+
+        let quota_key = DataKey::ContactCount(scout.clone(), month_bucket);
+        let current: u32 = env.storage().persistent().get(&quota_key).unwrap_or(0u32);
+
+        let config = Self::fee_config(&env);
+        let limit = config.pro_contact_limit;
+
+        if current >= limit {
+            return Err(ScoutAccessError::ContactQuotaExceeded);
+        }
+
+        Ok(())
+    }
+
+    /// Helper: check Pro tier contact quota with a specific count (batch support).
+    fn check_pro_contact_quota_with_count(
+        env: &Env,
+        scout: &Address,
+        requested: u32,
+    ) -> Result<(), ScoutAccessError> {
+        let sub: Subscription = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Subscription(scout.clone()))
+            .ok_or(ScoutAccessError::ScoutNotSubscribed)?;
+
+        // Only Pro tier has a quota
+        if sub.tier != SubscriptionTier::Pro {
+            return Ok(());
+        }
+
+        const SECONDS_PER_MONTH: u64 = 2_592_000;
+        let month_bucket = sub.subscribed_at / SECONDS_PER_MONTH;
+
+        let quota_key = DataKey::ContactCount(scout.clone(), month_bucket);
+        let current: u32 = env.storage().persistent().get(&quota_key).unwrap_or(0u32);
+
+        let config = Self::fee_config(&env);
+        let limit = config.pro_contact_limit;
+
+        if current.saturating_add(requested) > limit {
+            return Err(ScoutAccessError::ContactQuotaExceeded);
+        }
+
+        Ok(())
+    }
+
+    /// Helper: increment contact count for Pro tier scouts.
+    fn increment_contact_count(env: &Env, scout: &Address) {
+        Self::increment_contact_count_by(env, scout, 1)
+    }
+
+    /// Helper: increment contact count by N for Pro tier scouts (batch support).
+    fn increment_contact_count_by(env: &Env, scout: &Address, count: u32) {
+        const SECONDS_PER_MONTH: u64 = 2_592_000;
+        let now = env.ledger().timestamp();
+        let month_bucket = now / SECONDS_PER_MONTH;
+
+        let quota_key = DataKey::ContactCount(scout.clone(), month_bucket);
+        let current: u32 = env.storage().persistent().get(&quota_key).unwrap_or(0u32);
+        env.storage()
+            .persistent()
+            .set(&quota_key, &(current.saturating_add(count)));
+    }
+
     /// Pay a micro-fee to unlock a player's contact details.
     ///
     /// Payment flow:
@@ -292,6 +373,7 @@ impl ScoutAccessContract {
     /// 3. Write contact record to persistent storage (prevents duplicate contacts).
     ///
     /// Scout must have an active, non-expired subscription.
+    /// Pro tier scouts are limited to `pro_contact_limit` contacts per month.
     pub fn pay_to_contact(
         env: Env,
         scout: Address,
@@ -302,6 +384,7 @@ impl ScoutAccessContract {
         Self::require_initialized(&env)?;
         scout.require_auth();
         Self::require_active_subscription(&env, &scout)?;
+        Self::check_pro_contact_quota(&env, &scout)?;
 
         let contact_key = DataKey::ContactRecord(player_id, scout.clone());
         if env.storage().persistent().has(&contact_key) {
@@ -310,6 +393,7 @@ impl ScoutAccessContract {
 
         let config = Self::fee_config(&env);
         Self::collect_fee(&env, &scout, config.contact_fee_stroops)?;
+        Self::increment_contact_count(&env, &scout);
 
         env.storage().persistent().set(&contact_key, &true);
         env.storage()
@@ -347,6 +431,7 @@ impl ScoutAccessContract {
     /// that were recorded.
     ///
     /// Scout must have an active (non-expired) subscription.
+    /// Pro tier scouts are limited to `pro_contact_limit` contacts per month.
     pub fn batch_contact_players(
         env: Env,
         scout: Address,
@@ -379,6 +464,9 @@ impl ScoutAccessContract {
             return Ok(0);
         }
 
+        // Check quota with the count we're about to add
+        Self::check_pro_contact_quota_with_count(&env, &scout, new_contacts)?;
+
         // Single token transfer for all new contacts combined.
         let total_fee = config
             .contact_fee_stroops
@@ -401,6 +489,8 @@ impl ScoutAccessContract {
             );
             events::player_contacted(&env, player_id, &scout, config.contact_fee_stroops);
         }
+
+        Self::increment_contact_count_by(&env, &scout, new_contacts);
 
         env.storage().persistent().extend_ttl(
             &DataKey::Subscription(scout.clone()),

@@ -52,3 +52,16 @@ pub fn progress_contract_updated(env: &Env, progress_contract: &Address) {
         progress_contract.clone(),
     );
 }
+
+/// Emitted when a player disputes a milestone (issue #471)
+pub fn milestone_disputed(
+    env: &Env,
+    player_id: u64,
+    milestone_index: u32,
+    reason: &String,
+) {
+    env.events().publish(
+        (Symbol::new(env, "milestone_disputed"), player_id, milestone_index),
+        (),
+    );
+}

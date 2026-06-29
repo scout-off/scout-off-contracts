@@ -48,7 +48,8 @@ stellar contract invoke \
     "basic_sub_stroops": 10000000,
     "pro_sub_stroops": 30000000,
     "elite_sub_stroops": 70000000,
-    "sub_duration_secs": 2592000
+    "sub_duration_secs": 2592000,
+    "pro_contact_limit": 10
   }'
 
 echo "==> Wiring verification → progress cross-contract link..."

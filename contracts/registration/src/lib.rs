@@ -985,13 +985,11 @@ fn test_upgrade_preserves_admin() {
         client.get_player(&player_id).player_id,
         player_id
     );
-}        
-    client.register_player(&wallet, &vitals, &hashes);
-    }
+}
 
-    #[test]
-    #[should_panic]
-    fn test_register_scout_uninitialized_returns_not_initialized() {
+#[test]
+#[should_panic]
+fn test_register_scout_uninitialized_returns_not_initialized() {
         let (env, client) = setup();
         let wallet = Address::generate(&env);
         let region = String::from_str(&env, "Europe");

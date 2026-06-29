@@ -35,6 +35,16 @@ pub struct Validator {
     pub active: bool,
 }
 
+/// Dispute record for a milestone (issue #471)
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct MilestoneDispute {
+    pub player_id: u64,
+    pub milestone_index: u32,
+    pub reason: String,
+    pub disputed_at: u64,
+}
+
 #[contracttype]
 pub enum DataKey {
     Admin,
@@ -46,8 +56,9 @@ pub enum DataKey {
     MilestoneCounter(u64),
     Milestone(u64, u32),
     ValidatorMilestoneCount(Address),
-    /// progress contract address (cross-contract calls)
-    ProgressContract,
+    ValidatorPlayerMilestoneCount(Address, u64),
+    /// Milestone dispute record: (player_id, milestone_index) → MilestoneDispute
+    MilestoneDispute(u64, u32),
     ValidatorVector,
     TotalMilestoneCount,
 }
