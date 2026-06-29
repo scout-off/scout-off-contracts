@@ -30,7 +30,9 @@ pub fn player_level_synced(env: &Env, player_id: u64) {
         .publish((Symbol::new(env, "player_level_synced"),), player_id);
 }
 
-pub fn scout_verified(env: &Env, scout_id: u64) {
-    env.events()
-        .publish((Symbol::new(env, "scout_verified"),), scout_id);
+pub fn scout_verified(env: &Env, scout_id: u64, wallet: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "scout_verified"), wallet.clone()),
+        scout_id,
+    );
 }

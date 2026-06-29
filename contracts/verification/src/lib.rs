@@ -38,6 +38,16 @@ const MAX_VALIDATORS: u32 = 100;
 
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+// Persistent storage TTL bump for milestone records and admin key.
+const PERSISTENT_TTL_MIN: u32 = 500;
+const PERSISTENT_TTL_MAX: u32 = 2_000;
+
+// Admin key TTL — kept equal to PERSISTENT_TTL_MAX for simplicity.
+const ADMIN_BUMP_LEDGERS: u32 = 2_000;
+
+// Maximum milestones one validator may approve for a single player.
+const MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR: u32 = 10;
+
 // Generated client for the progress contract — used for cross-contract calls.
 // The progress contract must be deployed and its address registered via
 // `set_progress_contract` before `approve_milestone` can advance levels.
@@ -385,10 +395,15 @@ impl VerificationContract {
         player_id: u64,
         index: u32,
     ) -> Result<Milestone, VerificationError> {
-        env.storage()
+        let milestone = env
+            .storage()
             .persistent()
             .get(&DataKey::Milestone(player_id, index))
-            .ok_or(VerificationError::MilestoneNotFound)
+            .ok_or(VerificationError::MilestoneNotFound)?;
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Milestone(player_id, index), PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+        Ok(milestone)
     }
 
     pub fn get_milestone_count(env: Env, player_id: u64) -> u32 {
@@ -1198,5 +1213,149 @@ mod tests {
             &String::from_str(&env, "test"),
             &String::from_str(&env, "zdj7WbTaiJT1fgatdet7Sjxf4PJQgXkGfXPFgq5a2SdxYqYg"),
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Bug condition exploration test: TTL expiry without bump (Task 1)
+    // -------------------------------------------------------------------------
+
+    /// Bug condition exploration test: proves that `get_milestone` does NOT extend
+    /// the persistent TTL of `DataKey::Milestone(player_id, index)`.
+    ///
+    /// Steps:
+    ///   1. Initialize contract and register a validator (admin approves a scout as validator)
+    ///   2. Call `approve_milestone` to store `DataKey::Milestone(player_id, 1)`
+    ///   3. Advance `env.ledger().sequence_number` past the default Soroban persistent TTL
+    ///      threshold (100_000 — far above the ~4096 default persistent TTL)
+    ///   4. Call `get_milestone(player_id, 1)` and assert it returns the `Milestone` struct
+    ///
+    /// EXPECTED OUTCOME on UNFIXED code: TEST FAILS — the milestone key has expired,
+    /// so `get_milestone` panics or returns `MilestoneNotFound` instead of the `Milestone`.
+    /// This failure confirms the bug: reads never extend the TTL.
+    #[test]
+    fn test_get_milestone_ttl_expires_without_bump() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let validator = Address::generate(&env);
+        client.register_validator(&validator, &String::from_str(&env, "Coach"));
+
+        let player_id: u64 = 1u64;
+        client.approve_milestone(
+            &validator,
+            &player_id,
+            &String::from_str(&env, "Identity verified"),
+            &String::from_str(&env, VALID_CID_V0),
+        );
+
+        // Advance the ledger sequence far past the default Soroban persistent TTL (~4096).
+        // After this point, any persistent key written before the advance (without an
+        // explicit extend_ttl) will have expired and become inaccessible.
+        env.ledger().with_mut(|l| {
+            l.sequence_number = 100_000; // well past the ~4096 default persistent TTL
+            l.max_entry_ttl = 100_000;
+        });
+
+        // On unfixed code this panics because `DataKey::Milestone(player_id, 1)` has expired.
+        // The test asserts a successful return — it WILL FAIL on unfixed code, proving the bug.
+        let milestone = client.get_milestone(&player_id, &1u32);
+        assert_eq!(milestone.player_id, player_id);
+    }
+
+    // -------------------------------------------------------------------------
+    // Preservation property tests (Task 2)
+    // These tests validate that get_milestone's return value and error semantics
+    // are unchanged after the TTL-bump fix.
+    // -------------------------------------------------------------------------
+
+    /// Property 2: Preservation — get_milestone return value is unchanged.
+    ///
+    /// Approves a milestone and asserts that every field returned by `get_milestone`
+    /// matches the values supplied to `approve_milestone`.
+    ///
+    /// **Validates: Requirements 3.1**
+    #[test]
+    fn test_get_milestone_return_value_preserved() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let validator = Address::generate(&env);
+        client.register_validator(&validator, &String::from_str(&env, "Coach"));
+
+        let player_id: u64 = 42u64;
+        let description = String::from_str(&env, "Speed test passed 30 km/h");
+        let evidence_hash = String::from_str(&env, VALID_CID_V0);
+
+        let ledger_seq_at_approval = env.ledger().sequence();
+
+        let idx = client.approve_milestone(
+            &validator,
+            &player_id,
+            &description,
+            &evidence_hash,
+        );
+        assert_eq!(idx, 1);
+
+        // Retrieve the milestone and verify every field matches what was stored.
+        let milestone = client.get_milestone(&player_id, &idx);
+        assert_eq!(milestone.player_id, player_id);
+        assert_eq!(milestone.validator, validator);
+        assert_eq!(milestone.description, description);
+        assert_eq!(milestone.evidence_hash, evidence_hash);
+        assert_eq!(milestone.ledger_sequence, ledger_seq_at_approval);
+    }
+
+    /// Property 2: Preservation — get_milestone returns MilestoneNotFound for non-existent entry.
+    ///
+    /// Calls `get_milestone` for a `(player_id, index)` pair that was never approved and
+    /// asserts it returns `MilestoneNotFound`.
+    ///
+    /// **Validates: Requirements 3.2**
+    #[test]
+    fn test_get_milestone_not_found_preserved() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let result = client.try_get_milestone(&999u64, &1u32);
+        assert_eq!(result, Err(Ok(VerificationError::MilestoneNotFound)));
+    }
+
+    /// Property 2: Preservation — get_milestone does not alter counters.
+    ///
+    /// Approves a milestone, records the counter values, calls `get_milestone`, and
+    /// asserts that both `get_milestone_count` and `get_validator_milestone_count`
+    /// remain unchanged.
+    ///
+    /// **Validates: Requirements 3.3**
+    #[test]
+    fn test_get_milestone_does_not_alter_counters() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let validator = Address::generate(&env);
+        client.register_validator(&validator, &String::from_str(&env, "Coach"));
+
+        let player_id: u64 = 7u64;
+        client.approve_milestone(
+            &validator,
+            &player_id,
+            &String::from_str(&env, "Goal scored"),
+            &String::from_str(&env, VALID_CID_V0),
+        );
+
+        // Snapshot counters before calling get_milestone.
+        let milestone_count_before = client.get_milestone_count(&player_id);
+        let validator_count_before = client.get_validator_milestone_count(&validator);
+
+        // Call get_milestone — must not change any counters.
+        let _milestone = client.get_milestone(&player_id, &1u32);
+
+        // Assert counters are unchanged.
+        assert_eq!(client.get_milestone_count(&player_id), milestone_count_before);
+        assert_eq!(client.get_validator_milestone_count(&validator), validator_count_before);
     }
 }

@@ -53,6 +53,10 @@ const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 // to prevent race conditions / double-charging on rapid upgrades.
 const MIN_UPGRADE_INTERVAL_SECS: u64 = 3600;
 
+// #456: Minimum cooldown (seconds) between trial offers from the same scout
+// to the same player — enforces one pending offer per (scout, player) per day.
+const TRIAL_OFFER_COOLDOWN_SECS: u64 = 86_400; // 24 hours
+
 #[contract]
 pub struct ScoutAccessContract;
 
@@ -117,7 +121,7 @@ impl ScoutAccessContract {
         if fees == 0 {
             return Err(ScoutAccessError::NoFeesToWithdraw);
         }
-        let xlm = Self::get_token(&env);
+        let xlm = Self::get_token(&env)?;
         let contract_addr = env.current_contract_address();
         token::Client::new(&env, &xlm).transfer(&contract_addr, &to, &fees);
         env.storage()
@@ -161,6 +165,7 @@ impl ScoutAccessContract {
         env.storage()
             .instance()
             .set(&DataKey::ProgressContract, &addr);
+        events::progress_contract_updated(&env, &addr);
         Ok(())
     }
 
@@ -178,8 +183,12 @@ impl ScoutAccessContract {
         if amount <= 0 {
             return Err(ScoutAccessError::InvalidInput);
         }
-        let xlm = Self::get_token(&env);
+        let xlm = Self::get_token(&env)?;
         let contract_addr = env.current_contract_address();
+        let balance = token::Client::new(&env, &xlm).balance(&contract_addr);
+        if amount > balance {
+            return Err(ScoutAccessError::InsufficientFee);
+        }
         token::Client::new(&env, &xlm).transfer(&contract_addr, &scout, &amount);
         events::subscription_refunded(&env, &scout, amount);
         Ok(())
@@ -520,6 +529,25 @@ impl ScoutAccessContract {
             PERSISTENT_TTL_MAX,
         );
 
+        // #456: Enforce per-(scout, player) cooldown to prevent offer flooding.
+        // Reject a second offer from the same scout to the same player within
+        // TRIAL_OFFER_COOLDOWN_SECS (24 h). Offers to different players are
+        // independent and are not rate-limited against each other.
+        let rate_key = DataKey::TrialOfferLastSent(scout.clone(), player_id);
+        let now = env.ledger().timestamp();
+        if let Some(last_sent) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, u64>(&rate_key)
+        {
+            let next_allowed = last_sent
+                .checked_add(TRIAL_OFFER_COOLDOWN_SECS)
+                .ok_or(ScoutAccessError::Overflow)?;
+            if now < next_allowed {
+                return Err(ScoutAccessError::TrialOfferRateLimited);
+            }
+        }
+
         let counter_key = DataKey::TrialCounter(player_id);
         let index: u32 = env.storage().persistent().get(&counter_key).unwrap_or(0u32);
         let next_index = index.checked_add(1).ok_or(ScoutAccessError::Overflow)?;
@@ -528,9 +556,10 @@ impl ScoutAccessContract {
             player_id,
             scout: scout.clone(),
             details_hash,
-            logged_at: env.ledger().timestamp(),
+            logged_at: now,
         };
 
+        // #455-style ordering: all persistent writes before event emission.
         env.storage()
             .persistent()
             .set(&DataKey::TrialOffer(player_id, next_index), &offer);
@@ -542,6 +571,13 @@ impl ScoutAccessContract {
         );
         env.storage().persistent().extend_ttl(
             &counter_key,
+            TRIAL_TTL_THRESHOLD,
+            TRIAL_TTL_EXTEND_TO,
+        );
+        // #456: Record the timestamp of this offer for future cooldown checks.
+        env.storage().persistent().set(&rate_key, &now);
+        env.storage().persistent().extend_ttl(
+            &rate_key,
             TRIAL_TTL_THRESHOLD,
             TRIAL_TTL_EXTEND_TO,
         );
@@ -669,6 +705,28 @@ impl ScoutAccessContract {
         count
     }
 
+    /// Return all trial offers for a given player in ascending index order (1..=N).
+    /// Returns an empty Vec for a player with no trial offers.
+    pub fn get_player_trial_offers(env: Env, player_id: u64) -> soroban_sdk::Vec<TrialOffer> {
+        Self::bump_instance_ttl(&env);
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TrialCounter(player_id))
+            .unwrap_or(0u32);
+        let mut offers: soroban_sdk::Vec<TrialOffer> = soroban_sdk::Vec::new(&env);
+        for i in 1..=count {
+            if let Some(offer) = env
+                .storage()
+                .persistent()
+                .get(&DataKey::TrialOffer(player_id, i))
+            {
+                offers.push_back(offer);
+            }
+        }
+        offers
+    }
+
     /// Return all trial offers for a player in a single call.
     /// Bounded at 20 to prevent gas exhaustion. Returns empty Vec for no offers.
     pub fn get_all_trial_offers(env: Env, player_id: u64) -> soroban_sdk::Vec<TrialOffer> {
@@ -770,8 +828,11 @@ impl ScoutAccessContract {
             .expect("contract not initialized")
     }
 
-    fn get_token(env: &Env) -> Address {
-        env.storage().instance().get(&DataKey::XlmToken).unwrap()
+    fn get_token(env: &Env) -> Result<Address, ScoutAccessError> {
+        env.storage()
+            .instance()
+            .get(&DataKey::XlmToken)
+            .ok_or(ScoutAccessError::NotInitialized)
     }
 
     fn require_active_subscription(
@@ -814,7 +875,7 @@ impl ScoutAccessContract {
     /// Transfer `amount` stroops from `payer` to this contract and add it to
     /// `AccumulatedFees`. Both steps are atomic within the transaction.
     fn collect_fee(env: &Env, payer: &Address, amount: i128) -> Result<(), ScoutAccessError> {
-        let xlm = Self::get_token(env);
+        let xlm = Self::get_token(env)?;
         let contract_addr = env.current_contract_address();
         token::Client::new(env, &xlm).transfer(payer, &contract_addr, &amount);
         Self::accumulate_fee(env, amount)
@@ -1678,6 +1739,53 @@ assert_eq!(
         assert_eq!(result, Err(Ok(ScoutAccessError::InvalidInput)));
     }
 
+    #[test]
+    fn test_refund_subscription_exceeds_balance_returns_insufficient_fee() {
+        let (env, admin, xlm, _contract_id, client) = setup();
+        let scout = Address::generate(&env);
+        mint_token(&env, &xlm, &admin, &scout, 1_000_000);
+        // Scout subscribes Basic (1_000_000 stroops) — contract now holds 1_000_000
+        client.subscribe(&scout, &SubscriptionTier::Basic);
+        // Attempt to refund more than the contract balance
+        let result = client.try_refund_subscription(&scout, &2_000_000i128);
+        assert_eq!(result, Err(Ok(ScoutAccessError::InsufficientFee)));
+    }
+
+    #[test]
+    fn test_refund_subscription_within_balance_succeeds() {
+        let (env, admin, xlm, _contract_id, client) = setup();
+        let scout = Address::generate(&env);
+        mint_token(&env, &xlm, &admin, &scout, 10_000_000);
+        client.subscribe(&scout, &SubscriptionTier::Basic);
+        // Refund exactly what was paid — within balance
+        let result = client.try_refund_subscription(&scout, &1_000_000i128);
+        assert!(result.is_ok());
+    }
+
+    // -------------------------------------------------------------------------
+    // #451: set_progress_contract emits progress_contract_updated event
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_set_progress_contract_emits_event() {
+        let (env, _admin, _xlm, contract_id, client) = setup();
+        let progress_addr = Address::generate(&env);
+
+        client.set_progress_contract(&progress_addr);
+
+        assert_eq!(
+            env.events().all().filter_by_contract(&contract_id),
+            soroban_sdk::vec![
+                &env,
+                (
+                    contract_id.clone(),
+                    (Symbol::new(&env, "progress_contract_updated"),).into_val(&env),
+                    progress_addr.clone().into_val(&env),
+                )
+            ]
+        );
+    }
+
     // -------------------------------------------------------------------------
     // Integration test: log_trial_offer advances player to EliteTier via the
     // real progress contract cross-contract call.
@@ -1789,5 +1897,84 @@ assert_eq!(
             progress_client.get_level(&player_id),
             ProgressLevel::EliteTier
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // #454: Missing XlmToken key returns typed NotInitialized error
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_subscribe_missing_xlm_token_returns_not_initialized() {
+        let (env, admin, xlm, contract_id, client) = setup();
+        // Remove the XlmToken key from instance storage to simulate expiry/absence.
+        env.as_contract(&contract_id, || {
+            env.storage().instance().remove(&DataKey::XlmToken);
+        });
+        let scout = Address::generate(&env);
+        let result = client.try_subscribe(&scout, &SubscriptionTier::Basic);
+        assert_eq!(result, Err(Ok(ScoutAccessError::NotInitialized)));
+    }
+
+    // -------------------------------------------------------------------------
+    // #456: Per-(scout, player) trial offer rate limit
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_second_trial_offer_within_cooldown_is_rejected() {
+        let (env, admin, xlm, _contract_id, client) = setup();
+        let scout = Address::generate(&env);
+        mint_token(&env, &xlm, &admin, &scout, 100_000_000);
+
+        client.subscribe(&scout, &SubscriptionTier::Elite);
+        // First offer — must succeed.
+        client.log_trial_offer(&scout, &1u64, &String::from_str(&env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB"));
+
+        // Second offer to the same player within the 24-hour cooldown — must fail.
+        let result = client.try_log_trial_offer(
+            &scout,
+            &1u64,
+            &String::from_str(&env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB"),
+        );
+        assert_eq!(result, Err(Ok(ScoutAccessError::TrialOfferRateLimited)));
+    }
+
+    #[test]
+    fn test_trial_offer_allowed_after_cooldown_expires() {
+        let (env, admin, xlm, _contract_id, client) = setup();
+        let scout = Address::generate(&env);
+        mint_token(&env, &xlm, &admin, &scout, 100_000_000);
+
+        client.subscribe(&scout, &SubscriptionTier::Elite);
+        client.log_trial_offer(&scout, &1u64, &String::from_str(&env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB"));
+
+        // Advance past the 24-hour cooldown.
+        env.ledger().with_mut(|l| {
+            l.timestamp += TRIAL_OFFER_COOLDOWN_SECS + 1;
+        });
+
+        let result = client.try_log_trial_offer(
+            &scout,
+            &1u64,
+            &String::from_str(&env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB"),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_trial_offer_to_different_player_not_rate_limited() {
+        let (env, admin, xlm, _contract_id, client) = setup();
+        let scout = Address::generate(&env);
+        mint_token(&env, &xlm, &admin, &scout, 100_000_000);
+
+        client.subscribe(&scout, &SubscriptionTier::Elite);
+        client.log_trial_offer(&scout, &1u64, &String::from_str(&env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB"));
+
+        // Offer to a DIFFERENT player must not be rate-limited.
+        let result = client.try_log_trial_offer(
+            &scout,
+            &2u64,
+            &String::from_str(&env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB"),
+        );
+        assert!(result.is_ok());
     }
 }

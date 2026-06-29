@@ -64,3 +64,10 @@ pub fn subscription_refunded(env: &Env, scout: &Address, amount: i128) {
         amount,
     );
 }
+
+pub fn progress_contract_updated(env: &Env, progress_contract: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "progress_contract_updated"),),
+        progress_contract.clone(),
+    );
+}

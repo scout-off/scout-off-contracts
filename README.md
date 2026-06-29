@@ -129,6 +129,23 @@ Progress levels are configured per player and enforced on-chain by authorized va
 - `pay_to_contact(player_id, scout_wallet)` — Pay micro-fee to unlock premium data or initiate direct contact
 - `log_trial_offer(player_id, scout_wallet, details_hash)` — Record a trial offer on-chain, advancing player to Level 3
 
+### Subscription Tier Access
+
+Each tier controls which player progress levels a scout can view and what actions they can perform. These rules are enforced on-chain by the `scout_access` contract.
+
+| Tier | Accessible Player Levels | Pay-to-Contact | Trial Offer (`log_trial_offer`) |
+|------|--------------------------|----------------|---------------------------------|
+| **Basic** | Level 1 (VerifiedIdentity) and above | ❌ Not available | ❌ Not available |
+| **Pro** | Level 0–3 (all levels) | ✅ Available (contact fee applies) | ❌ Not available |
+| **Elite** | Level 0–3 (all levels) | ✅ Available (contact fee applies) | ✅ Available (advances player to Level 3) |
+
+**Notes:**
+- A scout without any active subscription cannot call `pay_to_contact` — the contract returns `ScoutNotSubscribed` (code 6).
+- An expired subscription is treated the same as no subscription — renew via `subscribe` before contacting players.
+- `log_trial_offer` is restricted to **Elite** tier only; calling it with Basic or Pro returns `Unauthorized` (code 4).
+- Basic tier scouts can browse and filter players at Level 1 and above but cannot contact or make trial offers.
+- Subscription downgrade to a lower tier is blocked while the current subscription is active (`SubscriptionDowngradeNotAllowed`, code 12).
+
 ### Admin Functions
 
 - `initialize(admin, platform_token, fee_config)` — One-time contract setup

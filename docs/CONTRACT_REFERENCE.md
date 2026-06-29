@@ -320,6 +320,57 @@ Return the contract's initialization and pause status.
 stellar contract invoke --id $REGISTRATION_CONTRACT_ID -- health
 ```
 
+---
+
+#### `get_player_summary(player_id: u64) -> Result<PlayerSummary, ScoutChainError>`
+
+Return a lightweight player view without IPFS hashes or wallet address.
+Useful for scout discovery lists where the full profile is not needed.
+
+| | |
+|---|---|
+| **Auth** | None |
+| **Errors** | `PlayerNotFound` |
+
+```bash
+stellar contract invoke --id $REGISTRATION_CONTRACT_ID \
+  -- get_player_summary --player_id 1
+```
+
+---
+
+#### `get_players(ids: Vec<u64>) -> Result<Vec<PlayerSummary>, ScoutChainError>`
+
+Batch-fetch lightweight player summaries for up to 20 IDs in a single call.
+Missing IDs are silently skipped (partial hits are returned without error).
+
+| | |
+|---|---|
+| **Auth** | None |
+| **Errors** | `InvalidInput` (more than 20 IDs provided) |
+
+```bash
+stellar contract invoke --id $REGISTRATION_CONTRACT_ID \
+  -- get_players --ids '[1,2,3]'
+```
+
+---
+
+#### `version() -> String`
+
+Return the deployed contract version string (from `Cargo.toml` at build time).
+
+| | |
+|---|---|
+| **Auth** | None |
+| **Errors** | None |
+
+```bash
+stellar contract invoke --id $REGISTRATION_CONTRACT_ID -- version
+```
+
+---
+
 ### Dual-Role Wallet Policy
 
 A single wallet may register as both a player and a scout. Cross-role
@@ -617,6 +668,54 @@ Return the contract's initialization and pause status.
 stellar contract invoke --id $VERIFICATION_CONTRACT_ID -- health
 ```
 
+---
+
+#### `upgrade(new_wasm_hash: BytesN<32>) -> Result<(), VerificationError>`
+
+Replace the contract WASM in-place. Persistent storage (admin, validator registry, milestones) survives the upgrade. Instance storage (initialized flag, progress contract link) is retained but should be re-verified after the call.
+
+| | |
+|---|---|
+| **Auth** | Admin must sign |
+| **Errors** | `Unauthorized` · `NotInitialized` |
+
+```bash
+stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
+  -- upgrade --new_wasm_hash <NEW_WASM_HASH>
+```
+
+---
+
+#### `get_total_milestone_count() -> u32`
+
+Return the total number of milestones approved across all players and validators.
+
+| | |
+|---|---|
+| **Auth** | None |
+| **Errors** | None |
+
+```bash
+stellar contract invoke --id $VERIFICATION_CONTRACT_ID -- get_total_milestone_count
+```
+
+---
+
+#### `version() -> String`
+
+Return the deployed contract version string (from `Cargo.toml` at build time).
+
+| | |
+|---|---|
+| **Auth** | None |
+| **Errors** | None |
+
+```bash
+stellar contract invoke --id $VERIFICATION_CONTRACT_ID -- version
+```
+
+---
+
 ### Events
 
 | Event | Topics | Data | Description |
@@ -632,10 +731,6 @@ stellar contract invoke --id $VERIFICATION_CONTRACT_ID -- health
 ---
 
 ## progress
-
-Maintains the tamper-proof four-tier level state machine. All level changes are
-stored as immutable `ProgressEntry` records with ledger sequence numbers for
-auditability.
 
 ### Functions
 
@@ -856,6 +951,101 @@ Return the contract's initialization and pause status.
 
 ```bash
 stellar contract invoke --id $PROGRESS_CONTRACT_ID -- health
+```
+
+---
+
+#### `set_verification_contract(addr: Address) -> Result<(), ProgressError>`
+
+Store the verification contract address so `advance_level` can authenticate cross-contract callers. Without this, only direct `caller` auth is accepted (useful for testing). Admin only.
+
+| | |
+|---|---|
+| **Auth** | Admin must sign |
+| **Errors** | `NotInitialized` · `Unauthorized` |
+
+```bash
+stellar contract invoke --id $PROGRESS_CONTRACT_ID \
+  -- set_verification_contract --addr $VERIFICATION_CONTRACT_ID
+```
+
+---
+
+#### `set_registration_contract(addr: Address) -> Result<(), ProgressError>`
+
+Store the registration contract address so `advance_level` can sync player levels via cross-contract call. Admin only.
+
+| | |
+|---|---|
+| **Auth** | Admin must sign |
+| **Errors** | `NotInitialized` · `Unauthorized` |
+
+```bash
+stellar contract invoke --id $PROGRESS_CONTRACT_ID \
+  -- set_registration_contract --addr $REGISTRATION_CONTRACT_ID
+```
+
+---
+
+#### `set_scout_access_contract(addr: Address) -> Result<(), ProgressError>`
+
+Whitelist the scout_access contract as a secondary authorized caller of `advance_level` (for trial-offer Level-3 advances). Admin only.
+
+| | |
+|---|---|
+| **Auth** | Admin must sign |
+| **Errors** | `NotInitialized` · `Unauthorized` |
+
+```bash
+stellar contract invoke --id $PROGRESS_CONTRACT_ID \
+  -- set_scout_access_contract --addr $SCOUT_ACCESS_CONTRACT_ID
+```
+
+---
+
+#### `upgrade(new_wasm_hash: BytesN<32>) -> Result<(), ProgressError>`
+
+Replace the contract WASM in-place. Persistent storage (admin, history) survives the upgrade. Admin only.
+
+| | |
+|---|---|
+| **Auth** | Admin must sign |
+| **Errors** | `Unauthorized` · `NotInitialized` |
+
+```bash
+stellar contract invoke --id $PROGRESS_CONTRACT_ID \
+  -- upgrade --new_wasm_hash <NEW_WASM_HASH>
+```
+
+---
+
+#### `get_progress_history_page(player_id: u64, offset: u32, limit: u32) -> Vec<ProgressEntry>`
+
+Paginated history retrieval. Returns entries from `offset+1` to `offset+limit`. `limit` is capped at 50. Returns an empty `Vec` when `offset` >= total count.
+
+| | |
+|---|---|
+| **Auth** | None |
+| **Errors** | None |
+
+```bash
+stellar contract invoke --id $PROGRESS_CONTRACT_ID \
+  -- get_progress_history_page --player_id 1 --offset 0 --limit 10
+```
+
+---
+
+#### `version() -> String`
+
+Return the deployed contract version string (from `Cargo.toml` at build time).
+
+| | |
+|---|---|
+| **Auth** | None |
+| **Errors** | None |
+
+```bash
+stellar contract invoke --id $PROGRESS_CONTRACT_ID -- version
 ```
 
 ### Events
@@ -1216,6 +1406,69 @@ Return the contract's initialization and pause status.
 stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID -- health
 ```
 
+---
+
+#### `upgrade(new_wasm_hash: BytesN<32>) -> Result<(), ScoutAccessError>`
+
+Replace the contract WASM in-place. Persistent storage (admin, subscriptions, trial offers) survives the upgrade. Admin only.
+
+| | |
+|---|---|
+| **Auth** | Admin must sign |
+| **Errors** | `Unauthorized` · `NotInitialized` |
+
+```bash
+stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
+  -- upgrade --new_wasm_hash <NEW_WASM_HASH>
+```
+
+---
+
+#### `get_scout_contacts(scout: Address) -> Vec<u64>`
+
+Return all player IDs contacted by a scout as an O(1) index lookup (backed by `ScoutContacts` persistent storage key).
+
+| | |
+|---|---|
+| **Auth** | None |
+| **Errors** | None |
+
+```bash
+stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
+  -- get_scout_contacts --scout $SCOUT_ADDRESS
+```
+
+---
+
+#### `get_all_trial_offers(player_id: u64) -> Vec<TrialOffer>`
+
+Return all trial offers for a player in a single call. Bounded at 20 to prevent gas exhaustion. Returns an empty `Vec` when no offers exist.
+
+| | |
+|---|---|
+| **Auth** | None |
+| **Errors** | None |
+
+```bash
+stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
+  -- get_all_trial_offers --player_id 1
+```
+
+---
+
+#### `version() -> String`
+
+Return the deployed contract version string (from `Cargo.toml` at build time).
+
+| | |
+|---|---|
+| **Auth** | None |
+| **Errors** | None |
+
+```bash
+stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID -- version
+```
+
 ### Events
 
 | Event | Topics | Data | Description |
@@ -1440,6 +1693,7 @@ pub struct TrialOffer {
 | 6 | `AlreadyAtMaxLevel` | Player is already at `EliteTier` |
 | 7 | `PlayerNotFound` | History index out of range |
 | 8 | `Overflow` | History counter overflowed |
+| 9 | `RegistrationCallFailed` | Cross-contract call to registration contract failed when syncing player level |
 
 ### `ScoutAccessError` (scout_access contract)
 
