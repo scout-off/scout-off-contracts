@@ -1,5 +1,7 @@
 # Deployment Guide
 
+> **See also:** [Glossary](GLOSSARY.md)
+
 ## Prerequisites
 
 - Rust + `wasm32-unknown-unknown` target: `rustup target add wasm32-unknown-unknown`
