@@ -1,4 +1,5 @@
 use soroban_sdk::contracterror;
+use scoutchain_shared_types::AdminError;
 
 /// Append-only: do not renumber existing variants. See docs/CONTRIBUTING.md.
 #[contracterror]
@@ -50,6 +51,12 @@ pub enum VerificationError {
     ProgressCallFailed = 12,
     /// Milestone counter overflowed.
     Overflow = 13,
+}
+
+impl AdminError for VerificationError {
+    fn not_initialized() -> Self {
+        VerificationError::NotInitialized
+    }
 }
 
 #[cfg(test)]

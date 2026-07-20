@@ -53,6 +53,7 @@ cargo fmt --all -- --check      # formatting must be clean
 - [ ] Cross-contract calls are documented with a comment explaining the atomicity guarantee
 - [ ] `ai.md` is updated if shared types, events, or env vars changed
 - [ ] `docs/CONTRACT_REFERENCE.md` is updated with new functions
+- [ ] New admin-gated functions use the shared `scoutchain_shared_types::require_admin` helper (see the `AdminError` trait) rather than hand-writing inline admin-check logic
 
 ### Error variant ordering
 

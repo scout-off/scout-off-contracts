@@ -23,7 +23,7 @@ use types::{
 
 use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
 
-use scoutchain_shared_types::validate_cid;
+use scoutchain_shared_types::{require_admin, validate_cid};
 
 const MAX_CREDENTIALS_LEN: u32 = 256;
 /// Minimum credentials length for validator registration.
@@ -98,7 +98,7 @@ impl VerificationContract {
         env: Env,
         progress_contract: Address,
     ) -> Result<(), VerificationError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         if env.storage().instance().has(&DataKey::ProgressContractSet) {
             return Err(VerificationError::AlreadyConfigured);
         }
@@ -118,7 +118,7 @@ impl VerificationContract {
         env: Env,
         progress_contract: Address,
     ) -> Result<(), VerificationError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         env.storage()
             .instance()
             .set(&DataKey::ProgressContract, &progress_contract);
@@ -132,7 +132,7 @@ impl VerificationContract {
         wallet: Address,
         credentials: String,
     ) -> Result<(), VerificationError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         Self::require_not_paused(&env)?;
 
         if credentials.len() > MAX_CREDENTIALS_LEN {
@@ -214,7 +214,7 @@ impl VerificationContract {
         wallet: Address,
         reason: Option<String>,
     ) -> Result<(), VerificationError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
 
         if let Some(ref r) = reason {
             if r.len() > 128 {
@@ -274,7 +274,7 @@ impl VerificationContract {
         wallets: Vec<Address>,
         reason: Option<String>,
     ) -> Result<(), VerificationError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
 
         if let Some(ref r) = reason {
             if r.len() > 128 {
@@ -327,7 +327,7 @@ impl VerificationContract {
     ///
     /// Returns `ValidatorNotFound` if the wallet has never been registered.
     pub fn restore_validator(env: Env, wallet: Address) -> Result<(), VerificationError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
 
         let mut validator: Validator = env
             .storage()
@@ -371,7 +371,7 @@ impl VerificationContract {
         old_wallet: Address,
         new_wallet: Address,
     ) -> Result<(), VerificationError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
 
         // Ensure old wallet is registered
         let old_validator: Validator = env
@@ -447,12 +447,7 @@ impl VerificationContract {
     }
 
     pub fn pause_contract(env: Env) -> Result<(), VerificationError> {
-        Self::require_admin(&env)?;
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(VerificationError::NotInitialized)?;
+        let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
 
         env.storage().instance().set(&DataKey::Paused, &true);
         events::contract_paused(&env, &admin);
@@ -460,12 +455,7 @@ impl VerificationContract {
     }
 
     pub fn unpause_contract(env: Env) -> Result<(), VerificationError> {
-        Self::require_admin(&env)?;
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(VerificationError::NotInitialized)?;
+        let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
 
         env.storage().instance().set(&DataKey::Paused, &false);
         events::contract_unpaused(&env, &admin);
@@ -478,7 +468,7 @@ impl VerificationContract {
         env: Env,
         new_wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), VerificationError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         env.deployer().update_current_contract_wasm(new_wasm_hash);
         Ok(())
     }
@@ -895,20 +885,6 @@ impl VerificationContract {
         Ok(())
     }
 
-    fn require_admin(env: &Env) -> Result<(), VerificationError> {
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(VerificationError::NotInitialized)?;
-        admin.require_auth();
-        env.storage().persistent().extend_ttl(
-            &DataKey::Admin,
-            ADMIN_BUMP_LEDGERS,
-            ADMIN_BUMP_LEDGERS,
-        );
-        Ok(())
-    }
 
     fn require_not_paused(env: &Env) -> Result<(), VerificationError> {
         if env

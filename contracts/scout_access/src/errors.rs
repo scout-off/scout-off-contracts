@@ -1,4 +1,5 @@
 use soroban_sdk::contracterror;
+use scoutchain_shared_types::AdminError;
 
 /// Errors for the ScoutAccess contract.
 ///
@@ -57,4 +58,10 @@ pub enum ScoutAccessError {
     // Numeric gap 11 → 14 is intentional (legacy reservation). Do not reuse.
     /// Cross-contract `advance_level` failed.
     ProgressCallFailed = 14,
+}
+
+impl AdminError for ScoutAccessError {
+    fn not_initialized() -> Self {
+        ScoutAccessError::NotInitialized
+    }
 }

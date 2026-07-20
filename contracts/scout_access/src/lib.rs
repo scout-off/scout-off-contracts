@@ -9,7 +9,7 @@ pub use types::{FeeConfig, SubscriptionTier};
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env, String, Vec};
 
-use scoutchain_shared_types::{validate_cid, ContractHealth};
+use scoutchain_shared_types::{require_admin, validate_cid, ContractHealth};
 
 // Generated client for cross-contract calls to the progress contract.
 // The #[contractclient] macro generates a real Client that performs the
@@ -114,7 +114,7 @@ impl ScoutAccessContract {
 
     pub fn update_fee_config(env: Env, fee_config: FeeConfig) -> Result<(), ScoutAccessError> {
         Self::bump_instance_ttl(&env);
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         Self::validate_fee_config(&fee_config)?;
 
         let old_config = Self::fee_config(&env);
@@ -129,7 +129,7 @@ impl ScoutAccessContract {
 
     pub fn withdraw_fees(env: Env, to: Address) -> Result<i128, ScoutAccessError> {
         Self::bump_instance_ttl(&env);
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         let key = DataKey::AccumulatedFees;
         let fees: i128 = env.storage().instance().get(&key).unwrap_or(0i128);
         if fees == 0 {
@@ -145,12 +145,7 @@ impl ScoutAccessContract {
 
     pub fn pause_contract(env: Env) -> Result<(), ScoutAccessError> {
         Self::bump_instance_ttl(&env);
-        Self::require_admin(&env)?;
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(ScoutAccessError::NotInitialized)?;
+        let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         env.storage().instance().set(&DataKey::Paused, &true);
         events::contract_paused(&env, &admin);
         Ok(())
@@ -158,12 +153,7 @@ impl ScoutAccessContract {
 
     pub fn unpause_contract(env: Env) -> Result<(), ScoutAccessError> {
         Self::bump_instance_ttl(&env);
-        Self::require_admin(&env)?;
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(ScoutAccessError::NotInitialized)?;
+        let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         env.storage().instance().set(&DataKey::Paused, &false);
         events::contract_unpaused(&env, &admin);
         Ok(())
@@ -173,7 +163,7 @@ impl ScoutAccessContract {
     /// atomically advance the player to Level 3 (admin only).
     pub fn set_progress_contract(env: Env, addr: Address) -> Result<(), ScoutAccessError> {
         Self::bump_instance_ttl(&env);
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         env.storage()
             .instance()
             .set(&DataKey::ProgressContract, &addr);
@@ -191,7 +181,7 @@ impl ScoutAccessContract {
         amount: i128,
     ) -> Result<(), ScoutAccessError> {
         Self::bump_instance_ttl(&env);
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         if amount <= 0 {
             return Err(ScoutAccessError::InvalidInput);
         }
@@ -212,7 +202,7 @@ impl ScoutAccessContract {
         env: Env,
         new_wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), ScoutAccessError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         env.deployer().update_current_contract_wasm(new_wasm_hash);
         Ok(())
     }
@@ -759,8 +749,7 @@ impl ScoutAccessContract {
     }
 
     pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), ScoutAccessError> {
-        Self::require_admin(&env)?;
-        let old_admin = Self::get_admin(&env);
+        let old_admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         env.storage().persistent().set(&DataKey::Admin, &new_admin);
         events::admin_transferred(&env, &old_admin, &new_admin);
         Ok(())
@@ -1034,23 +1023,6 @@ impl ScoutAccessContract {
         }
     }
 
-    fn require_admin(env: &Env) -> Result<(), ScoutAccessError> {
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(ScoutAccessError::NotInitialized)?;
-
-        admin.require_auth();
-
-        env.storage().persistent().extend_ttl(
-            &DataKey::Admin,
-            ADMIN_BUMP_LEDGERS,
-            ADMIN_BUMP_LEDGERS,
-        );
-
-        Ok(())
-    }
 
     fn require_initialized(env: &Env) -> Result<(), ScoutAccessError> {
         if !env
@@ -1074,13 +1046,6 @@ impl ScoutAccessContract {
             return Err(ScoutAccessError::ContractPaused);
         }
         Ok(())
-    }
-
-    fn get_admin(env: &Env) -> Address {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .expect("contract not initialized")
     }
 
     fn get_token(env: &Env) -> Result<Address, ScoutAccessError> {

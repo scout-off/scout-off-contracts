@@ -14,7 +14,7 @@ use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
 // Generated client stub for the progress contract — used to resolve a player's
 // current level at read time.  `level` is never stored in this contract.
 mod progress_contract {
-    use scoutchain_shared_types::ProgressLevel;
+    use scoutchain_shared_types::{require_admin, ProgressLevel};
     use soroban_sdk::{contractclient, Env};
 
     #[contractclient(name = "Client")]
@@ -86,13 +86,13 @@ impl RegistrationContract {
     }
 
     pub fn pause_contract(env: Env) -> Result<(), ScoutChainError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         env.storage().instance().set(&DataKey::Paused, &true);
         Ok(())
     }
 
     pub fn unpause_contract(env: Env) -> Result<(), ScoutChainError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         env.storage().instance().set(&DataKey::Paused, &false);
         Ok(())
     }
@@ -103,7 +103,7 @@ impl RegistrationContract {
         env: Env,
         new_wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), ScoutChainError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         env.deployer().update_current_contract_wasm(new_wasm_hash);
         Ok(())
     }
@@ -111,7 +111,7 @@ impl RegistrationContract {
     /// Store the progress contract address so filter_players can resolve
     /// levels at query time (admin only).
     pub fn set_progress_contract(env: Env, addr: Address) -> Result<(), ScoutChainError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         env.storage()
             .instance()
             .set(&DataKey::ProgressContract, &addr);
@@ -277,7 +277,7 @@ impl RegistrationContract {
 
     /// Deregister a player profile (admin only, GDPR right-to-erasure).
     pub fn deregister_player(env: Env, player_id: u64) -> Result<(), ScoutChainError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         let profile = Self::load_stored_player(&env, player_id)?;
         // Resolve level before removing storage keys (progress contract is source of truth)
         let level = Self::resolve_level(&env, player_id);
@@ -314,7 +314,7 @@ impl RegistrationContract {
     /// to skip this player. The on-chain profile, progress history, and all
     /// milestone data are fully preserved and still accessible via `get_player`.
     pub fn deactivate_player(env: Env, player_id: u64) -> Result<(), ScoutChainError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         // Ensure the player actually exists before setting the flag.
         Self::load_stored_player(&env, player_id)?;
         env.storage()
@@ -328,7 +328,7 @@ impl RegistrationContract {
     /// Clears the `PlayerDeactivated(player_id)` flag, making the player
     /// visible in `filter_players` results again.
     pub fn reactivate_player(env: Env, player_id: u64) -> Result<(), ScoutChainError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         // Ensure the player actually exists.
         Self::load_stored_player(&env, player_id)?;
         env.storage()
@@ -448,7 +448,7 @@ impl RegistrationContract {
 
     /// Verify a scout profile (admin only).
     pub fn verify_scout(env: Env, scout_id: u64) -> Result<(), ScoutChainError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         let mut profile: ScoutProfile = env
             .storage()
             .persistent()
@@ -668,20 +668,6 @@ impl RegistrationContract {
         Ok(())
     }
 
-    fn require_admin(env: &Env) -> Result<(), ScoutChainError> {
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(ScoutChainError::NotInitialized)?;
-        admin.require_auth();
-        env.storage().persistent().extend_ttl(
-            &DataKey::Admin,
-            ADMIN_BUMP_LEDGERS,
-            ADMIN_BUMP_LEDGERS,
-        );
-        Ok(())
-    }
 
     fn load_stored_player(
         env: &Env,

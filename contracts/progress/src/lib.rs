@@ -5,7 +5,8 @@ mod events;
 mod types;
 
 use errors::ProgressError;
-use types::{ContractHealth, DataKey, ProgressEntry, ProgressLevel};
+use types::{DataKey, ProgressEntry};
+use scoutchain_shared_types::{require_admin, ContractHealth, ProgressLevel};
 
 use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
 
@@ -80,7 +81,7 @@ impl ProgressContract {
 
     /// Store the registration contract address so we can sync player levels (admin only).
     pub fn set_registration_contract(env: Env, addr: Address) -> Result<(), ProgressError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         env.storage()
             .instance()
             .set(&DataKey::RegistrationContract, &addr);
@@ -89,7 +90,7 @@ impl ProgressContract {
 
     pub fn pause_contract(env: Env) -> Result<(), ProgressError> {
         Self::bump_instance_ttl(&env);
-        let admin = Self::require_admin(&env)?;
+        let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         env.storage().instance().set(&DataKey::Paused, &true);
         events::contract_paused(&env, &admin);
         Ok(())
@@ -97,7 +98,7 @@ impl ProgressContract {
 
     pub fn unpause_contract(env: Env) -> Result<(), ProgressError> {
         Self::bump_instance_ttl(&env);
-        let admin = Self::require_admin(&env)?;
+        let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         env.storage().instance().set(&DataKey::Paused, &false);
         events::contract_unpaused(&env, &admin);
         Ok(())
@@ -107,7 +108,7 @@ impl ProgressContract {
     /// that the caller is the configured VerificationContract (admin only).
     pub fn set_verification_contract(env: Env, addr: Address) -> Result<(), ProgressError> {
         Self::bump_instance_ttl(&env);
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         env.storage()
             .instance()
             .set(&DataKey::VerificationContract, &addr);
@@ -118,7 +119,7 @@ impl ProgressContract {
     /// advance_level (for trial-offer Level-3 advances). Admin only.
     pub fn set_scout_access_contract(env: Env, addr: Address) -> Result<(), ProgressError> {
         Self::bump_instance_ttl(&env);
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         env.storage()
             .instance()
             .set(&DataKey::ScoutAccessContract, &addr);
@@ -128,12 +129,7 @@ impl ProgressContract {
     /// Transfer admin rights to a new address (current admin auth required).
     pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), ProgressError> {
         Self::bump_instance_ttl(&env);
-        let old_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(ProgressError::NotInitialized)?;
-        old_admin.require_auth();
+        let old_admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         env.storage().persistent().set(&DataKey::Admin, &new_admin);
         env.storage().persistent().extend_ttl(
             &DataKey::Admin,
@@ -147,7 +143,7 @@ impl ProgressContract {
     /// Upgrade the contract WASM. Admin auth required.
     /// Persistent storage (including Admin) survives this call.
     pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) -> Result<(), ProgressError> {
-        Self::require_admin(&env)?;
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         env.deployer().update_current_contract_wasm(new_wasm_hash);
         Ok(())
     }
@@ -160,7 +156,7 @@ impl ProgressContract {
         target_level: ProgressLevel,
     ) -> Result<(), ProgressError> {
         Self::require_not_paused(&env)?;
-        let admin = Self::require_admin(&env)?;
+        let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
 
         let old_level = Self::get_current_level(&env, player_id);
         Self::record_progress_entry(
@@ -573,20 +569,6 @@ impl ProgressContract {
         Ok(())
     }
 
-    fn require_admin(env: &Env) -> Result<Address, ProgressError> {
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(ProgressError::NotInitialized)?;
-        admin.require_auth();
-        env.storage().persistent().extend_ttl(
-            &DataKey::Admin,
-            ADMIN_BUMP_LEDGERS,
-            ADMIN_BUMP_LEDGERS,
-        );
-        Ok(admin)
-    }
 }
 
 // =============================================================================

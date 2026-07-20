@@ -1,4 +1,5 @@
 use soroban_sdk::contracterror;
+use scoutchain_shared_types::AdminError;
 
 /// Append-only: do not renumber existing variants. See docs/CONTRIBUTING.md.
 #[contracterror]
@@ -40,4 +41,10 @@ pub enum ScoutChainError {
     InvalidInput = 13,
     /// Counter or fee arithmetic overflowed.
     Overflow = 11,
+}
+
+impl AdminError for ScoutChainError {
+    fn not_initialized() -> Self {
+        ScoutChainError::NotInitialized
+    }
 }

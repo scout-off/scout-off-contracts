@@ -1,4 +1,5 @@
 use soroban_sdk::contracterror;
+use scoutchain_shared_types::AdminError;
 
 /// Append-only: do not renumber existing variants. See docs/CONTRIBUTING.md.
 #[contracterror]
@@ -30,4 +31,10 @@ pub enum ProgressError {
     Overflow = 8,
     /// Call to registration contract failed.
     RegistrationCallFailed = 9,
+}
+
+impl AdminError for ProgressError {
+    fn not_initialized() -> Self {
+        ProgressError::NotInitialized
+    }
 }

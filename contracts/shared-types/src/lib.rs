@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contracttype, String};
+use soroban_sdk::{contracttype, Address, Env, IntoVal, String};
 
 /// Four-tier progress level for a player profile
 #[contracttype]
@@ -32,6 +32,59 @@ impl ProgressLevel {
             ProgressLevel::EliteTier => None,
         }
     }
+}
+
+/// Trait for contract-specific error enums that can produce admin-related
+/// errors. Each contract implements this trait on its own error type so the
+/// shared `require_admin` helper can return the correct per-contract error.
+pub trait AdminError {
+    /// Return the "contract not initialized" error variant for this contract.
+    fn not_initialized() -> Self;
+}
+
+/// Shared admin-authorization helper.
+///
+/// Reads the stored admin `Address` from persistent storage using `admin_key`,
+/// calls [`Address::require_auth`] on it, extends the key's TTL by
+/// `admin_bump_ledgers`, and returns the admin address.
+///
+/// # Generic parameters
+/// - `K` — the storage key type (each contract defines its own `DataKey` enum;
+///   pass `&DataKey::Admin`).
+/// - `E` — the contract-specific error type, which must implement
+///   [`AdminError`].
+///
+/// # Errors
+/// Returns `E::not_initialized()` when the admin key is absent from
+/// persistent storage.
+///
+/// # Usage
+///
+/// ```ignore
+/// use scoutchain_shared_types::require_admin;
+///
+/// // Inside a contract function returning Result<(), MyError>:
+/// let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+/// ```
+pub fn require_admin<K, E>(
+    env: &Env,
+    admin_key: &K,
+    admin_bump_ledgers: u32,
+) -> Result<Address, E>
+where
+    K: IntoVal<Env, soroban_sdk::Val>,
+    E: AdminError,
+{
+    let admin: Address = env
+        .storage()
+        .persistent()
+        .get(admin_key)
+        .ok_or_else(|| E::not_initialized())?;
+    admin.require_auth();
+    env.storage()
+        .persistent()
+        .extend_ttl(admin_key, admin_bump_ledgers, admin_bump_ledgers);
+    Ok(admin)
 }
 
 /// Validate that a string is a plausible IPFS/Arweave CID.
