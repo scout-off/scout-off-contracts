@@ -4,7 +4,7 @@ mod events;
 mod types;
 
 use errors::ScoutAccessError;
-use types::{ContactRecord, DataKey, ProContactPeriod, Subscription, TrialOffer};
+use types::{ContactRecord, DataKey, PaginatedPlayerIds, ProContactPeriod, Subscription, TrialOffer};
 pub use types::{FeeConfig, SubscriptionTier};
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env, String, Vec};
@@ -848,6 +848,37 @@ impl ScoutAccessContract {
         list
     }
 
+    /// Return a page of player_ids contacted by `scout`.
+    pub fn get_scout_contacts_page(
+        env: Env,
+        scout: Address,
+        cursor: u64,
+        limit: u32,
+    ) -> PaginatedPlayerIds {
+        Self::bump_instance_ttl(&env);
+        let key = DataKey::ScoutContacts(scout.clone());
+        let list: soroban_sdk::Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
+        if !list.is_empty() {
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+        }
+        let cap = limit.min(50);
+        let start = cursor as u32;
+        let mut items = soroban_sdk::Vec::new(&env);
+        let mut i = start;
+        while i < list.len() && items.len() < cap {
+            items.push_back(list.get(i).unwrap());
+            i += 1;
+        }
+        let next_cursor = if i < list.len() { i as u64 } else { 0 };
+        PaginatedPlayerIds { items, next_cursor }
+    }
+
     /// Return all scout addresses that have contacted `player_id` as an O(1)
     /// index lookup.  Players can audit their inbound contact history directly
     /// from on-chain state without replaying off-chain events.
@@ -1479,6 +1510,29 @@ mod tests {
         client.pay_to_contact(&scout, &1u64);
         // second contact with same player should panic
         client.pay_to_contact(&scout, &1u64);
+    }
+
+    #[test]
+    fn test_get_scout_contacts_page_returns_cursor_and_items() {
+        let (env, admin, xlm, _contract_id, client) = setup();
+        let scout = Address::generate(&env);
+        mint_token(&env, &xlm, &admin, &scout, 100_000_000);
+        client.subscribe(&scout, &SubscriptionTier::Elite);
+
+        for player_id in 1u64..=3u64 {
+            client.pay_to_contact(&scout, &player_id);
+        }
+
+        let page1 = client.get_scout_contacts_page(&scout, &0u64, &2u32);
+        assert_eq!(page1.items.len(), 2);
+        assert_eq!(page1.items.get(0).unwrap(), 1u64);
+        assert_eq!(page1.items.get(1).unwrap(), 2u64);
+        assert_eq!(page1.next_cursor, 2);
+
+        let page2 = client.get_scout_contacts_page(&scout, &page1.next_cursor, &2u32);
+        assert_eq!(page2.items.len(), 1);
+        assert_eq!(page2.items.get(0).unwrap(), 3u64);
+        assert_eq!(page2.next_cursor, 0);
     }
 
     #[test]

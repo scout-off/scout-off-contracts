@@ -1,0 +1,20 @@
+[package]
+name = "scoutchain-e2e"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+soroban-sdk = { workspace = true }
+soroban-sdk-testutils = { workspace = true }
+scoutchain-registration = { path = "../contracts/registration" }
+scoutchain-verification = { path = "../contracts/verification" }
+scoutchain-progress = { path = "../contracts/progress" }
+scoutchain-scout-access = { path = "../contracts/scout_access" }
+scoutchain-shared-types = { path = "../contracts/shared-types" }
+
+[dev-dependencies]
+scoutchain-registration = { path = "../contracts/registration" }
+scoutchain-verification = { path = "../contracts/verification" }
+scoutchain-progress = { path = "../contracts/progress" }
+scoutchain-scout-access = { path = "../contracts/scout_access" }
+scoutchain-shared-types = { path = "../contracts/shared-types" }

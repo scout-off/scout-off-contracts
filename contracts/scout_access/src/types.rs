@@ -57,6 +57,14 @@ pub struct ProContactPeriod {
     pub count: u32,
 }
 
+/// Paginated response for scout-contact lookups.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PaginatedPlayerIds {
+    pub items: soroban_sdk::Vec<u64>,
+    pub next_cursor: u64,
+}
+
 /// Platform fee configuration
 #[contracttype]
 #[derive(Clone, Debug)]
