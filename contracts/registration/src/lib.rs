@@ -5,9 +5,12 @@ mod types;
 
 use errors::ScoutChainError;
 use types::{
-    ContractHealth, DataKey, FilterResult, PlayerProfile, PlayerSummary, PlayerVitals,
-    ProgressLevel, ScoutProfile, StoredPlayerProfile,
+    ContractHealth, DataKey, PlayerSummary, ProgressLevel, ScoutProfile, StoredPlayerProfile,
 };
+// Re-exported so external integration tests (e.g. tests/integration_progress_sync.rs)
+// can construct register_player's `vitals` argument and read filter_players /
+// get_player results — mirrors scout_access's `pub use types::{FeeConfig, ...}`.
+pub use types::{FilterResult, PlayerProfile, PlayerVitals};
 
 use scoutchain_shared_types::require_admin;
 use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
