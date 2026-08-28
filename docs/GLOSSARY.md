@@ -204,6 +204,7 @@ sequentially; skipping or reversing is blocked by the progress contract (admin
 | 2 | `PerformanceMilestones` | Performance stats verified by a validator |
 | 3 | `EliteTier` | Trial offer logged by an Elite-tier scout |
 
+- Level progression is canonically implemented by `ProgressLevel::next()`; its `None` return from `EliteTier` is what `progress::advance_level` maps to `ProgressError::AlreadyAtMaxLevel`.
 - Relevant functions: `advance_level`, `get_level`, `get_progress_history`,
   `reset_player_level` — see
   [CONTRACT_REFERENCE.md](CONTRACT_REFERENCE.md#progress).
