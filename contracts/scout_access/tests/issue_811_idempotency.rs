@@ -134,12 +134,7 @@ fn test_confirm_trial_offer_idempotency_nonce_prevents_replay() {
     // Register a validator + approve one milestone for the player so the
     // secondary-caller milestone_ref check passes (index 1 ≤ count 1).
     let validator = Address::generate(&env);
-    verification.register_validator(
-        &validator,
-        &String::from_str(&env, "UEFA-B-License"),
-        &String::from_str(&env, "Default Academy"),
-        &soroban_sdk::Vec::new(&env),
-    );
+    verification.register_validator(&validator, &String::from_str(&env, "UEFA-B-License"), &String::from_str(&env, "Default Academy"), &String::from_str(&env, "Default Region"), &soroban_sdk::Vec::new(&env));
     verification.approve_milestone(
         &validator,
         &1u64,

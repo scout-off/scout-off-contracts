@@ -210,12 +210,33 @@ pub fn health(env: Env) -> ContractHealth {
 
 ---
 
+## Second Implementation: `pay_to_contact` (scout_access, #1056)
+
+The pattern was next applied to `pay_to_contact` in the `scout_access` contract —
+its second real use. It follows the conventions above exactly:
+
+- **Storage Flag:** `DataKey::PausedPayToContact` (instance storage)
+- **Pause / Unpause:** `pause_pay_to_contact()` / `unpause_pay_to_contact()`
+- **Check Helper:** `require_pay_to_contact_not_paused()`, called from `pay_to_contact()`
+- **Events:** `pay_to_contact_paused` / `pay_to_contact_unpaused`
+- **Error Code:** `ScoutAccessError::PayToContactPaused = 36`
+- **Health Query:** `pay_to_contact_paused: bool` added to the scout_access health response
+
+Note the error code is `36`, not a low number: each contract's error enum is
+independent, so a function-scoped pause code just takes the next free slot in
+that contract's `errors.rs`.
+
+---
+
 ## Reusability for Future Functions
 
-To apply this pattern to another function (e.g., `resolve_dispute`):
+To apply this pattern to another function (e.g., `resolve_dispute` in the
+verification contract):
 
 1. Add new `DataKey` variant: `PausedResolveDispute`
-2. Add new error code: `ResolvePausedPaused = 21`
+2. Add new error code in that contract's `errors.rs` at the next free slot
+   (in `verification` that is currently `ResolveDisputePaused = 37` — codes
+   0–36 are already taken; always check `errors.rs` before assigning)
 3. Add new events: `resolve_dispute_paused` / `resolve_dispute_unpaused`
 4. Implement `pause_resolve_dispute()` and `unpause_resolve_dispute()` functions
 5. Add `require_resolve_dispute_not_paused()` helper

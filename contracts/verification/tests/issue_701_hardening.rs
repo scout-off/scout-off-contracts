@@ -51,12 +51,7 @@ fn setup() -> (Env, VerificationContractClient<'static>, Address, Address) {
 
 fn register_validator(env: &Env, client: &VerificationContractClient) -> Address {
     let wallet = Address::generate(env);
-    client.register_validator(
-        &wallet,
-        &String::from_str(env, CREDENTIALS),
-        &String::from_str(env, "Default Academy"),
-        &soroban_sdk::Vec::new(env),
-    );
+    client.register_validator(&wallet, &String::from_str(env, CREDENTIALS), &String::from_str(env, "Default Academy"), &String::from_str(env, "Default Region"), &soroban_sdk::Vec::new(env));
     wallet
 }
 
@@ -160,18 +155,13 @@ fn sign_attestation(env: &Env, sk: &SigningKey, attestation: &MilestoneAttestati
     BytesN::from_array(env, &sig.to_bytes())
 }
 
-fn register_validator_with_key(
+fnregister_validator_with_key(
     env: &Env,
     client: &VerificationContractClient,
     validator: &Address,
     sk: &SigningKey,
 ) {
-    client.register_validator(
-        validator,
-        &String::from_str(env, CREDENTIALS),
-        &String::from_str(env, "Default Academy"),
-        &soroban_sdk::Vec::new(env),
-    );
+    client.register_validator(validator, &String::from_str(env, CREDENTIALS), &String::from_str(env, "Default Academy"), &String::from_str(env, "Default Region"), &soroban_sdk::Vec::new(env));
     client.register_attestation_key(validator, &pubkey_bytesn(env, sk));
 }
 
@@ -182,8 +172,7 @@ fn submit_attested_milestone_is_closed_once_threshold_mode_is_configured() {
 
     let validator = Address::generate(&env);
     let relayer = Address::generate(&env);
-    let sk = signing_key(1);
-    register_validator_with_key(&env, &client, &validator, &sk);
+    let sk = signing_key(1);register_validator_with_key(&env, &client, &validator, &sk);
 
     let attestation = MilestoneAttestation {
         validator_wallet: validator.clone(),

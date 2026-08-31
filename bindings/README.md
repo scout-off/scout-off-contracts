@@ -42,6 +42,18 @@ The script validates that `.env.contracts` exists and all four IDs are
 non-empty before making any network calls. It exits immediately with a
 descriptive error if anything is missing.
 
+### Version sync
+
+Each binding package's `package.json` `version` is kept in lockstep with the
+contracts' workspace version — the value of `[workspace.package].version` in
+[`Cargo.toml`](../Cargo.toml), the build-time source of truth documented in
+[`docs/VERSIONING.md`](../docs/VERSIONING.md). The committed scaffolds already
+carry that version, and `scripts/generate-bindings.sh` re-derives it from
+`Cargo.toml` on every run and rewrites each generated `package.json` after the
+CLI (which overwrites the package with its own template and a placeholder
+version). Bump the version in `Cargo.toml` and the bindings follow
+automatically on the next regeneration.
+
 ---
 
 ## Build

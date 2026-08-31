@@ -90,18 +90,13 @@ fn make_attestation(
     }
 }
 
-fn register_validator_with_key(
+fnregister_validator_with_key(
     env: &Env,
     client: &VerificationContractClient,
     validator: &Address,
     sk: &SigningKey,
 ) {
-    client.register_validator(
-        validator,
-        &String::from_str(env, CREDENTIALS),
-        &String::from_str(env, "Default Academy"),
-        &soroban_sdk::Vec::new(env),
-    );
+    client.register_validator(validator, &String::from_str(env, CREDENTIALS), &String::from_str(env, "Default Academy"), &String::from_str(env, "Default Region"), &soroban_sdk::Vec::new(env));
     client.register_attestation_key(validator, &pubkey_bytesn(env, sk));
 }
 
@@ -110,8 +105,7 @@ fn relayer_submits_validator_presigned_attestation() {
     let (env, client, _admin, contract_id) = setup();
     let validator = Address::generate(&env);
     let relayer = Address::generate(&env);
-    let sk = signing_key(1);
-    register_validator_with_key(&env, &client, &validator, &sk);
+    let sk = signing_key(1);register_validator_with_key(&env, &client, &validator, &sk);
 
     let attestation = make_attestation(
         &env,
@@ -139,8 +133,7 @@ fn nonce_replay_rejected_with_fresh_evidence_hash() {
     let (env, client, _admin, contract_id) = setup();
     let validator = Address::generate(&env);
     let relayer = Address::generate(&env);
-    let sk = signing_key(2);
-    register_validator_with_key(&env, &client, &validator, &sk);
+    let sk = signing_key(2);register_validator_with_key(&env, &client, &validator, &sk);
 
     let first = make_attestation(
         &env,
@@ -185,10 +178,7 @@ fn cross_contract_attestation_rejected() {
 
     let validator = Address::generate(&env);
     let relayer = Address::generate(&env);
-    let sk = signing_key(3);
-
-    register_validator_with_key(&env, &client_a, &validator, &sk);
-    register_validator_with_key(&env, &client_b, &validator, &sk);
+    let sk = signing_key(3);register_validator_with_key(&env, &client_a, &validator, &sk);register_validator_with_key(&env, &client_b, &validator, &sk);
 
     // Signed for instance A
     let attestation = make_attestation(&env, &id_a, &validator, 1, "cross-context claim", CID_C, 1);
@@ -215,8 +205,7 @@ fn cross_network_attestation_rejected() {
     let (env, client, _admin, contract_id) = setup();
     let validator = Address::generate(&env);
     let relayer = Address::generate(&env);
-    let sk = signing_key(4);
-    register_validator_with_key(&env, &client, &validator, &sk);
+    let sk = signing_key(4);register_validator_with_key(&env, &client, &validator, &sk);
 
     let mut attestation = make_attestation(
         &env,
@@ -248,9 +237,7 @@ fn attribution_follows_signed_validator_not_relayer() {
     let validator_b = Address::generate(&env);
     let relayer = Address::generate(&env);
     let sk_a = signing_key(5);
-    let sk_b = signing_key(6);
-    register_validator_with_key(&env, &client, &validator_a, &sk_a);
-    register_validator_with_key(&env, &client, &validator_b, &sk_b);
+    let sk_b = signing_key(6);register_validator_with_key(&env, &client, &validator_a, &sk_a);register_validator_with_key(&env, &client, &validator_b, &sk_b);
 
     // Genuinely signed by A — no separate validator Address parameter exists for
     // the relayer to spoof; attribution must equal the signed payload's wallet.
@@ -277,8 +264,7 @@ fn submit_attested_milestone_cpu_budget_vs_approve() {
     let (env, client, _admin, contract_id) = setup();
     let validator = Address::generate(&env);
     let relayer = Address::generate(&env);
-    let sk = signing_key(7);
-    register_validator_with_key(&env, &client, &validator, &sk);
+    let sk = signing_key(7);register_validator_with_key(&env, &client, &validator, &sk);
 
     // Baseline: approve_milestone
     env.cost_estimate().budget().reset_default();
@@ -325,8 +311,7 @@ fn exact_pair_replay_also_rejected_by_nonce() {
     let (env, client, _admin, contract_id) = setup();
     let validator = Address::generate(&env);
     let relayer = Address::generate(&env);
-    let sk = signing_key(8);
-    register_validator_with_key(&env, &client, &validator, &sk);
+    let sk = signing_key(8);register_validator_with_key(&env, &client, &validator, &sk);
 
     let attestation = make_attestation(&env, &contract_id, &validator, 1, "exact pair", CID_A, 1);
     let signature = sign_attestation(&env, &sk, &attestation);

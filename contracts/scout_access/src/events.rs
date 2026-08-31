@@ -284,6 +284,8 @@ pub fn progress_call_failed(env: &Env, player_id: u64, error_code: u32) {
 
 pub const AUTO_RENEW_SET: &str = "auto_renew_set";
 pub const SUBSCRIPTION_AUTO_RENEWED: &str = "subscription_auto_renewed";
+pub const EVIDENCE_ACCESS_GRANTED: &str = "evidence_access_granted";
+pub const EVIDENCE_ACCESS_REVOKED: &str = "evidence_access_revoked";
 
 /// topics: (event_name, scout)  data: enabled
 pub fn auto_renew_set(env: &Env, scout: &Address, enabled: bool) {
@@ -343,5 +345,17 @@ pub fn evidence_access_revoked(env: &Env, player_id: u64, scout: &Address, admin
     env.events().publish(
         (Symbol::new(env, EVIDENCE_ACCESS_REVOKED), scout.clone()),
         (player_id, admin.clone()),
+    );
+}
+
+pub const REGIONAL_CONTACT_LIMIT_SET: &str = "regional_contact_limit_set";
+
+/// topics: (event_name, admin)  data: (region, limit)
+///
+/// Emitted when an admin sets or updates a per-region Pro-tier contact limit override.
+pub fn regional_contact_limit_set(env: &Env, admin: &Address, region: &soroban_sdk::String, limit: u32) {
+    env.events().publish(
+        (Symbol::new(env, REGIONAL_CONTACT_LIMIT_SET), admin.clone()),
+        (region.clone(), limit),
     );
 }

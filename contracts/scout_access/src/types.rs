@@ -2,6 +2,23 @@ use soroban_sdk::{contracttype, Address, String};
 
 pub use scoutchain_shared_types::WiringLink;
 
+/// Paginated response for `get_scout_contacts_page`.
+///
+/// Follows the `{ entries, total }` convention established by
+/// [`verification::GlobalMilestoneIndexPage`] so callers have a consistent
+/// stop condition when walking pages.
+///
+/// `entries` contains at most 50 player IDs per page; `total` is the full
+/// number of players the scout has ever contacted.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScoutContactsPage {
+    /// Page of contacted player IDs, in contact order (oldest first).
+    pub entries: soroban_sdk::Vec<u64>,
+    /// Total number of players this scout has contacted.
+    pub total: u32,
+}
+
 /// Subscription tier for scouts
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -179,6 +196,10 @@ pub enum DataKey {
     /// Proposed fee configuration awaiting activation after a 7-day delay
     PendingFeeConfig,
     AccumulatedFees,
+    /// Track the total XLM in escrow across all outstanding trial offers.
+    /// Incremented on log_trial_offer, decremented on all escrow release paths.
+    /// Used by withdraw_fees to ensure AccumulatedFees does not exceed balance - EscrowedTotal.
+    EscrowedTotal,
     /// Native XLM token contract address
     XlmToken,
     /// scout wallet → Subscription
@@ -237,6 +258,21 @@ pub enum DataKey {
     /// the caller to re-check `Subscription.expires_at` for exact filtering,
     /// which `get_subscriptions_expiring_before` already does.
     ExpiryBucket(u64),
+    /// Earliest (minimum) day for which an `ExpiryBucket` entry is known to be
+    /// populated, i.e. the smallest `day` passed to `add_to_expiry_bucket`
+    /// (or written via `admin_seed_subscription`) so far.
+    ///
+    /// Stored in instance storage (a single scalar). Updated in a monotonic
+    /// downward direction whenever a new, earlier bucket is created. Acts as a
+    /// safe lower bound: buckets for days before this value were never
+    /// populated, so `get_expiring_subscriptions` starts its bucket scan here
+    /// instead of at day 0, keeping the query cost tied to the number of
+    /// populated days rather than to the wall-clock day count since epoch.
+    ///
+    /// This value is intentionally only ever lowered by writes (never raised
+    /// when a bucket later empties), so iterating from it is always correct —
+    /// at worst it starts slightly earlier than strictly necessary.
+    MinExpiryBucketDay,
 
     /// Boolean flag (`true`) written by `open_migration_window`; absent or
     /// `false` means the migration window is closed. All `admin_seed_*`

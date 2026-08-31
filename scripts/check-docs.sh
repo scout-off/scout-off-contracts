@@ -372,6 +372,23 @@ check_cross_contract_calls "scout_access"  "$REPO_ROOT/contracts/scout_access/sr
 check_cross_contract_calls "registration"  "$REPO_ROOT/contracts/registration/src/lib.rs"
 
 echo ""
+# --- Sanity check: ensure CONTRACT_REFERENCE.md is not truncated ---
+DOC_LINES=$(wc -l < "$DOCS_FILE")
+DOC_LAST_LINE=$(tail -1 "$DOCS_FILE")
+if [[ "$DOC_LAST_LINE" != *"# END OF DOCS CONTRACT_REFERENCE.md"* ]]; then
+  echo "  WARNING: DOCS FILE LAST LINE UNEXPECTED:"
+  echo "    Last line: $DOC_LAST_LINE"
+  echo "    (Expected marker: '# END OF DOCS CONTRACT_REFERENCE.md')"
+  echo "    Doc file may be truncated — verify CONTRACT_REFERENCE.md completeness."
+  FAIL=1
+fi
+if [[ $DOC_LINES -lt 100 ]]; then
+  echo "  WARNING: DOCS FILE UNEXPECTEDLY SHORT ($DOC_LINES lines):"
+  echo "    CONTRACT_REFERENCE.md may be truncated."
+  FAIL=1
+fi
+echo ""
+
 if [[ $FAIL -ne 0 ]]; then
   echo "FAIL: One or more issues found — see above."
   echo "      Update docs/CONTRACT_REFERENCE.md to match the Rust source and re-run."

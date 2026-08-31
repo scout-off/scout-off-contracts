@@ -52,16 +52,17 @@ This document defines the persistent storage TTL policy for the scout-off-contra
 | DataKey | TTL | Justification |
 |---------|-----|---|
 | `PlayerLevel(player_id)` | 518,400 | Core identity: player's current tier/reputation. Never auto-archive dormant players. Extended on every `get_level()` read. |
-| `HistoryEntry(player_id, index)` | 518,400 | Permanent audit trail: milestone approvals are immutable. Extended on `advance_level` write and `get_history_entry` read. |
+| `HistoryEntry(player_id, index)` | 518,400 | Permanent audit trail: milestone approvals are immutable. Extended on `advance_level` write and on the `get_history_entry`, `get_progress_history_page`, and `get_history_page_with_cursor` reads. |
 | `HistoryPage(player_id, page_index)` | 518,400 | Bounded history storage: player history is sharded into fixed-size pages so a single persistent key never grows without limit. Extended on append and on page reads. |
 | `HistoryVec(player_id)` | 518,400 | Legacy compatibility key retained for migration / recovery tooling; new writes populate `HistoryPage` shards instead of growing this monolithic vec. |
-| `HistoryCounter(player_id)` | 518,400 | Milestone index counter; must outlive all history entries. Extended on write. |
+| `HistoryCounter(player_id)` | 518,400 | Milestone index counter; must outlive all history entries. Extended on write and on the `get_progress_history_page` / `get_history_page_with_cursor` paginated reads. |
 | `Admin` | 518,400 | Cross-contract consistency. Bumped by `require_admin()` helper. |
 | `PendingAdmin` | 518,400 | Must survive admin proposal/acceptance window (typically seconds to minutes). |
 
 **Keep-Alive Mechanism:**
 - `get_level()` extends PlayerLevel TTL on every read, preventing silent archival of dormant players.
 - `get_history_entry()` and `get_progress_history()` extend history entry TTLs on read.
+- `get_progress_history_page()` and `get_history_page_with_cursor()` — the paginated getters a UI actually uses — extend the `HistoryCounter` and every `HistoryEntry` they touch, so history browsed only through the paginated path is never silently archived.
 
 ### Registration Contract (`contracts/registration/src/lib.rs`)
 
@@ -128,6 +129,7 @@ This document defines the persistent storage TTL policy for the scout-off-contra
 | `ConfirmationNonce(nonce)` | 518,400 | Idempotency marker for `confirm_trial_offer` retries. Extended on `confirm_trial_offer` write. |
 | `AutoRenew(scout)` | 518,400 | Scout auto-renewal opt-in flag. Extended on `set_auto_renew` write and `get_auto_renew` read. |
 | `ExpiryBucket(day)` | 518,400 | Day-granularity subscription expiry index for pagination. Extended in `add_to_expiry_bucket` write. |
+| `MinExpiryBucketDay` | Instance | Earliest populated expiry-bucket day. Lowered in `add_to_expiry_bucket` (and seeding); lets `get_expiring_subscriptions` start its bucket scan here instead of at day 0. 
 
 **Keep-Alive Mechanism:**
 - Instance keys (`Initialized`, `Paused`, `FeeConfig`, `AccumulatedFees`, `XlmToken`, `FeeConfigHistory`) are bumped on every state-modifying contract entry point via `bump_instance_ttl`.

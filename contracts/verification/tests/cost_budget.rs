@@ -69,12 +69,7 @@ fn cost_register_validator() {
     let credentials = String::from_str(&env, "UEFA-A-License-2026");
 
     env.cost_estimate().budget().reset_default();
-    client.register_validator(
-        &validator,
-        &credentials,
-        &String::from_str(&env, ""),
-        &Vec::new(&env),
-    );
+    client.register_validator(&validator, &credentials, &String::from_str(&env, ""), &String::from_str(&env, "Default Region"), &Vec::new(&env));
     assert_cpu_budget(&env, "register_validator", REGISTER_VALIDATOR_CPU_BUDGET);
 }
 
@@ -82,12 +77,7 @@ fn cost_register_validator() {
 fn cost_approve_milestone() {
     let (env, client) = setup();
     let validator = Address::generate(&env);
-    client.register_validator(
-        &validator,
-        &String::from_str(&env, "UEFA-A-License-2026"),
-        &String::from_str(&env, ""),
-        &Vec::new(&env),
-    );
+    client.register_validator(&validator, &String::from_str(&env, "UEFA-A-License-2026"), &String::from_str(&env, ""), &String::from_str(&env, "Default Region"), &Vec::new(&env));
 
     env.cost_estimate().budget().reset_default();
     client.approve_milestone(
@@ -104,12 +94,7 @@ fn cost_approve_milestone() {
 fn cost_get_validator_milestones_page() {
     let (env, client) = setup();
     let validator = Address::generate(&env);
-    client.register_validator(
-        &validator,
-        &String::from_str(&env, "UEFA-A-License-2026"),
-        &String::from_str(&env, ""),
-        &Vec::new(&env),
-    );
+    client.register_validator(&validator, &String::from_str(&env, "UEFA-A-License-2026"), &String::from_str(&env, ""), &String::from_str(&env, "Default Region"), &Vec::new(&env));
     client.approve_milestone(
         &validator,
         &1u64,
@@ -159,12 +144,7 @@ fn cid_for_budget(env: &Env, seed: u32) -> String {
 fn cost_revoke_validator_cascade_50_limit_at_500_milestones() {
     let (env, client) = setup();
     let validator = Address::generate(&env);
-    client.register_validator(
-        &validator,
-        &String::from_str(&env, "UEFA-A-License-2026"),
-        &String::from_str(&env, "Default Academy"),
-        &soroban_sdk::Vec::new(&env),
-    );
+    client.register_validator(&validator, &String::from_str(&env, "UEFA-A-License-2026"), &String::from_str(&env, "Default Academy"), &String::from_str(&env, "Default Region"), &soroban_sdk::Vec::new(&env));
 
     // Approve 500 milestones: 5 per player, 100 players.
     let mut cid_seed: u32 = 20_000;

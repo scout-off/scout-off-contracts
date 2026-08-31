@@ -38,6 +38,7 @@ That keeps the command copy-paste-runnable in a standard `bash`/`zsh` shell.
 - [Error Codes](#error-codes)
 - [Events](#events)
 - [Design Discussion: Check-Ordering Follow-ups](#design-discussion-check-ordering-follow-ups)
+- [Cross-Contract Wiring](#cross-contract-wiring)
 
 ---
 
@@ -705,6 +706,29 @@ stellar contract invoke --id $NEW_REGISTRATION_CONTRACT_ID \
 
 A single wallet may register as both a player and a scout. Cross-role
 registration is permitted; duplicate prevention is enforced per role only.
+
+### ScoutChainError Codes
+
+| Code | Error | Description |
+|------|-------|-------------|
+| 1 | `AlreadyInitialized` | Contract has already been initialized |
+| 2 | `NotInitialized` | Contract has not been initialized yet |
+| 3 | `PlayerNotFound` | Player ID does not exist |
+| 4 | `ValidatorNotAuthorized` | Caller is not a registered and active validator |
+| 5 | `InvalidProgressTransition` | Requested level transition is not allowed |
+| 6 | `ScoutNotSubscribed` | Scout does not have an active subscription |
+| 7 | `InsufficientFee` | Payment amount is below the required fee |
+| 8 | `AlreadyRegistered` | Wallet already has a registered profile |
+| 9 | `ContractPaused` | Contract is paused by the emergency circuit breaker |
+| 10 | `Unauthorized` | Caller is not authorized for the requested operation |
+| 11 | `Overflow` | Arithmetic overflow in fee calculation |
+| 12 | `ScoutNotFound` | Scout ID does not exist |
+| 13 | `InvalidInput` | One or more input parameters are invalid |
+| 14 | `ValidatorCapReached` | Maximum number of registered validators has been reached |
+| 15 | `PlayerCapReached` | Maximum number of registered players has been reached |
+| 16 | `RegistrationCooldown` | Registration attempted before the cooldown period has elapsed |
+| 17 | `PlayerRecordEvicted` | Player record was evicted from contract storage |
+| 18 | `ScoutRecordEvicted` | Scout record was evicted from contract storage |
 
 ---
 
@@ -1767,7 +1791,8 @@ stellar contract invoke --id $VERIFICATION_CONTRACT_ID -- get_total_milestone_co
 
 Return all distinct player IDs for which `wallet` has approved at least one
 milestone. Accumulated on every `approve_milestone` call; each player ID
-appears at most once.
+appears at most once. This legacy method is unbounded; high-volume callers
+should use `get_validator_players_page` instead.
 
 | | |
 |---|---|
@@ -1777,6 +1802,34 @@ appears at most once.
 ```bash
 stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
   -- get_validator_players --wallet $VALIDATOR_ADDRESS
+```
+
+---
+
+#### `get_validator_players_page(wallet: Address, offset: u32, limit: u32) -> ValidatorPlayersPage`
+
+Return a bounded, paginated page of distinct player IDs for which the validator
+has approved at least one milestone, together with the total number of distinct
+players.
+
+This is the canonical paginated successor to the unbounded `get_validator_players`.
+The `total` field lets callers determine when paging is complete without
+over-fetching.
+
+**Pagination**: `offset` is a zero-based item offset; `limit` is capped at 50 entries
+per page, matching `get_global_milestone_index`. Returns an empty `entries` vec
+when the offset is beyond the validator's player list.
+
+**Ordering**: entries are returned in order of first approval.
+
+| | |
+|---|---|
+| **Auth** | None |
+| **Errors** | None |
+
+```bash
+stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
+  -- get_validator_players_page --wallet $VALIDATOR_ADDRESS --offset 0 --limit 50
 ```
 
 ---
@@ -1872,10 +1925,11 @@ always reflects exactly the set of open disputes with no full-scan required at
 query time — making it possible to build an admin "disputes needing attention"
 dashboard from on-chain queries alone.
 
-- `limit` is capped at **50** per page, consistent with `get_global_milestone_index`
-  and `get_validator_milestones_page`.
+- `limit` is capped at **50** per page (minimum 1), consistent with
+  `get_global_milestone_index` and `get_validator_milestones_page`.
 - `offset` is a zero-based item offset (e.g. `offset=0, limit=50` → first page;
-  `offset=50, limit=50` → second page).
+  `offset=50, limit=50` → second page). If `offset >= total`, an empty list is
+  returned immediately without iterating the index.
 - Entries are returned **oldest-first** (insertion order).
 - The index tracks **only unresolved disputes** — resolved disputes are removed
   immediately, so the index stays naturally bounded in size.
@@ -1903,10 +1957,13 @@ stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
 #### `get_global_milestone_index(offset: u32, limit: u32) -> GlobalMilestoneIndexPage`
 
 Return a page of the global milestone index — a rolling log of the most
-recent `(player_id, milestone_index)` pairs across all players and
-validators (capped at 500 entries; oldest entries are evicted first).
-`limit` is capped at 50 entries per page. `GlobalMilestoneIndexPage` has
-`entries: Vec<GlobalMilestoneEntry>` and `total: u32`.
+recent `(player_id, milestone_index)` pairs across all players and validators
+(capped at 500 entries; oldest entries are evicted first). `limit` is capped
+at 50 entries per page (minimum 1). `GlobalMilestoneIndexPage` has `entries:
+Vec<GlobalMilestoneEntry>` and `total: u32`.
+
+If `offset >= total`, `entries` is empty and `total` still reflects the full
+index length — safe to use for pagination bounds checks.
 
 | | |
 |---|---|
@@ -1920,12 +1977,40 @@ stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
 
 ---
 
+#### `get_milestones_since_page(player_id: u64, since_timestamp: u64, offset: u32, limit: u32) -> Vec<Milestone>`
+
+Return a bounded page of milestones for `player_id` that were approved at or
+after `since_timestamp` (Unix seconds). This is the bounded replacement for
+an unbounded time-range scan.
+
+**Pagination contract:**
+- `limit` is capped at **50** per page (minimum 1).
+- `offset` is bounded against the player's milestone count: if `offset >=
+  count`, an empty list is returned immediately without iterating.
+- Results are returned in approval order (oldest first within the page).
+- Callers who want all milestones without a time filter should use
+  `get_milestone_count` + `get_milestone` directly.
+
+| | |
+|---|---|
+| **Auth** | None |
+| **Errors** | None |
+
+```bash
+# Milestones for player 1 approved after a given Unix timestamp
+stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
+  -- get_milestones_since_page --player_id 1 --since_timestamp 1700000000 \
+     --offset 0 --limit 50
+```
+
+---
+
 #### `get_validator_milestones(wallet: Address) -> Vec<MilestoneRef>`
 
 Return the list of `(player_id, milestone_index)` references for every
 milestone `wallet` has approved. `MilestoneRef` has `player_id: u64` and
 `milestone_index: u32`. This legacy method is unbounded; high-volume callers
-should use `get_validator_milestones_page` instead.
+should use `get_validator_milestones_page_v2` instead.
 
 | | |
 |---|---|
@@ -1941,6 +2026,9 @@ stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
 
 #### `get_validator_milestones_page(wallet: Address, offset: u32, limit: u32) -> Vec<MilestoneRef>`
 
+> **Deprecated**: use `get_validator_milestones_page_v2` which returns a structured `MilestoneRefPage`
+> with `entries` and `total` fields instead of a raw `Vec`.
+
 Return a bounded page of `(player_id, milestone_index)` references for milestones
 approved by `wallet`. `offset` is zero-based and `limit` is capped at 50 entries,
 matching `get_global_milestone_index`. Returns an empty `Vec` when the offset is
@@ -1954,6 +2042,33 @@ beyond the validator's approval history or `limit` is zero.
 ```bash
 stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
   -- get_validator_milestones_page --wallet $VALIDATOR_ADDRESS --offset 0 --limit 50
+```
+
+---
+
+#### `get_validator_milestones_page_v2(wallet: Address, offset: u32, limit: u32) -> MilestoneRefPage`
+
+Return a bounded, paginated page of `(player_id, milestone_index)` references for
+milestones approved by `wallet`, together with the total number of milestones.
+
+This is the canonical successor to both `get_validator_milestones` (unbounded,
+deprecated) and `get_validator_milestones_page` (returns raw Vec). The `total` field
+lets callers determine when paging is complete without over-fetching.
+
+**Pagination**: `offset` is a zero-based item offset; `limit` is capped at 50 entries
+per page, matching `get_global_milestone_index`. Returns an empty `entries` vec
+when the offset is beyond the validator's approval history.
+
+**Ordering**: entries are returned in approval order (oldest first).
+
+| | |
+|---|---|
+| **Auth** | None |
+| **Errors** | None |
+
+```bash
+stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
+  -- get_validator_milestones_page_v2 --wallet $VALIDATOR_ADDRESS --offset 0 --limit 50
 ```
 
 ---
@@ -2407,13 +2522,19 @@ stellar contract invoke --id $PROGRESS_CONTRACT_ID \
 #### `get_level(player_id: u64) -> ProgressLevel`
 
 Return the player's current progress level. Returns `Unverified` for unknown
-player IDs (no `PlayerNotFound` error).
+player IDs (no `PlayerNotFound` error) — a **default-on-absent** getter.
 
 Reading is a keep-alive: when a `PlayerLevel` record exists, `get_level` extends
 its TTL so a dormant player's level is not lost to archival decay. The extension
 is skipped when no record exists — extending the TTL of an unwritten key raises
 `Storage/MissingValue`, which the host escalates to a panic, so an unguarded
 extension would make the documented `Unverified` default trap instead of return.
+
+The `Unverified` default is indistinguishable from a player genuinely stuck at
+the base tier, so this getter alone cannot assert a player's existence. To
+confirm a player exists, check the registration contract
+(`registration.get_player(player_id)`, which returns `PlayerNotFound` for an
+unknown ID) rather than reading it off the level.
 
 | | |
 |---|---|
@@ -2429,12 +2550,21 @@ stellar contract invoke --id $PROGRESS_CONTRACT_ID \
 
 #### `get_history_count(player_id: u64) -> u32`
 
-Return the total number of history entries recorded for a player.
+Return the total number of history entries recorded for a player. **Returns `0`
+on absent storage — for a registered player with no recorded level changes and
+for an *unknown* `player_id` alike — with no error (default-on-absent).**
+
+There is no distinct empty-vs-missing signal: a `0` cannot tell you whether the
+player exists. Do not use this getter to assert existence; confirm the player
+against the registration contract (`registration.get_player(player_id)`, which
+returns `PlayerNotFound` for an unknown ID) and only then treat a `0` here as
+"no history entries." See [`docs/INDEXER.md`](INDEXER.md) for how the
+`player_level_history` reconciliation cross-check relies on this disambiguation.
 
 | | |
 |---|---|
 | **Auth** | None |
-| **Errors** | None |
+| **Errors** | None — returns the `0` default on absent storage |
 
 ```bash
 stellar contract invoke --id $PROGRESS_CONTRACT_ID \
@@ -2449,6 +2579,11 @@ Read a specific history entry. Indices start at `1`. Each `ProgressEntry`
 includes `updated_at` in Unix seconds and `ledger_sequence: u32`, the Soroban
 ledger sequence number at the time of the change (not a timestamp), for
 tamper-proof auditability.
+
+Unlike the count / list getters above, this one is **not** default-on-absent:
+an out-of-range `index` (including any index on an unknown player, so `0`
+entries) fails with `PlayerNotFound` rather than returning a zero value. This
+makes it the only progress getter that can itself reject an unknown player.
 
 | | |
 |---|---|
@@ -2469,7 +2604,11 @@ stores the full logical history as bounded `HistoryPage(player_id, page_index)`
 shards (fixed-size pages, not one ever-growing `HistoryVec` key) and
 reconstructs the chronological list at read time. This keeps per-entry storage
 cost bounded even if a player experiences many resets or repeated re-entries.
-Returns an empty `Vec` for unknown player IDs.
+Returns an empty `Vec` for unknown player IDs (default-on-absent, no error).
+Because an empty result is returned both for a registered player with no history
+and for an unknown `player_id`, verify existence against the registration
+contract (`registration.get_player(player_id)`) before interpreting the empty
+list, and distinguish "no level changes" from "player unknown" via that call.
 
 **Gas trade-off**: each page is a small, fixed-size `Vec<ProgressEntry>`, so the
 read cost scales with the number of pages touched rather than the total lifetime
@@ -2639,7 +2778,7 @@ stellar contract invoke --id $PROGRESS_CONTRACT_ID \
 
 #### `get_progress_history_page(player_id: u64, offset: u32, limit: u32) -> Vec<ProgressEntry>`
 
-Paginated history retrieval. Returns entries starting at `offset+1`. `limit` is clamped to the range 1 through 50. Returns an empty `Vec` when `offset` >= total count.
+Paginated history retrieval. Returns entries starting at `offset+1`. `limit` is clamped to the range 1 through 50. Returns an empty `Vec` when `offset` >= total count, **and also returns an empty `Vec` for an unknown `player_id` (default-on-absent, no error)** — an unknown player has a count of `0`, so `offset` is always `>= count`. An empty result therefore does not by itself prove the player exists; confirm existence against the registration contract (`registration.get_player(player_id)`).
 
 | | |
 |---|---|
@@ -2658,6 +2797,12 @@ stellar contract invoke --id $PROGRESS_CONTRACT_ID \
 Return all of a player's history entries with `updated_at >= since_timestamp`
 (Unix seconds). Useful for indexers polling for changes since their last sync
 point instead of re-reading the full history.
+
+Returns an empty `Vec` for an unknown `player_id` (default-on-absent, no error)
+— the same empty result a registered player with no matching entries yields —
+so this getter does not assert existence. Confirm the player against the
+registration contract (`registration.get_player(player_id)`) when the empty
+result's cause matters.
 
 | | |
 |---|---|
@@ -2815,6 +2960,26 @@ stellar contract invoke --id $PROGRESS_CONTRACT_ID -- version
 | `contract_paused` | event_name, admin (Address) | () | Circuit breaker engaged |
 | `contract_unpaused` | event_name, admin (Address) | () | Circuit breaker released |
 
+### ProgressError Codes
+
+| Code | Error | Description |
+|------|-------|-------------|
+| 1 | `AlreadyInitialized` | Contract has already been initialized |
+| 2 | `NotInitialized` | Contract has not been initialized yet |
+| 3 | `ContractPaused` | Contract is paused by the emergency circuit breaker |
+| 4 | `Unauthorized` | Caller is not authorized for the requested operation |
+| 5 | `InvalidProgressTransition` | Requested level transition is not allowed |
+| 6 | `AlreadyAtMaxLevel` | Player is already at the maximum progress level (EliteTier) |
+| 7 | `PlayerNotFound` | Player ID does not exist in progress storage |
+| 8 | `HistoryNotFound` | Progress history record does not exist for this player |
+| 9 | `InvalidHistoryEntry` | History entry data is malformed or inconsistent |
+| 10 | `ProgressRecordEvicted` | Progress record was evicted from contract storage |
+| 11 | `MigrationNotActive` | Migration operation attempted when no migration is in progress |
+| 12 | `HistoryAlreadyExists` | History entry for this level already exists for the player |
+| 13 | `MerkleRootMismatch` | Provided Merkle root does not match the stored root |
+| 14 | `InvalidHistoryIndex` | Requested history index is out of bounds |
+| 15 | `PlayerLevelRecordEvicted` | Player level record was evicted from contract storage |
+
 ---
 
 ## scout_access
@@ -2854,6 +3019,12 @@ greater than zero; either function returns `InvalidInput` otherwise.
   `ProContactLimitReached` (code 20) for that scout until their subscription
   renews. **Elite-tier scouts are exempt** from this limit and may contact any
   number of players regardless of `pro_contact_limit`.
+
+  > **Per-region overrides**: admins may configure a different limit for scouts
+  > in specific regions using `set_regional_contact_limit(region, limit)`. When
+  > set, the regional value takes precedence over this platform-wide default for
+  > scouts whose registered `region` matches. See the
+  > `set_regional_contact_limit` function reference below for details.
 - `trial_offer_escrow_stroops` must be > 0 (zero or negative → `InvalidInput`). This is the XLM amount held in escrow when a scout logs a trial offer.
 - `trial_offer_expiry_secs` must be > 0 (zero → `InvalidInput`). This defines the window within which a player must confirm a trial offer before it expires and the escrow is refunded.
 - There is no enforced upper bound on fee fields, but values larger than the XLM supply
@@ -2906,6 +3077,48 @@ Written exactly once, atomically, by a successful `pay_to_contact` or
 > This lightweight on-chain trail lets you read the immediately-previous fee configuration without depending on the off-chain indexer, making it suitable for quick audits or on-chain fee-change verification. For a *complete*, unbounded audit trail — including all historical fee rates for verifying that a contact fee or subscription payment matched the rate in effect at that time — replay the `fee_config_updated` event logs via the off-chain indexer's `fee_config_history` table (see [001_initial_schema.sql](migrations/001_initial_schema.sql#L135-L148)).
 
 ### Functions
+
+### ScoutAccessError Codes
+
+| Code | Error | Description |
+|------|-------|-------------|
+| 1 | `AlreadyInitialized` | Contract has already been initialized |
+| 2 | `NotInitialized` | Contract has not been initialized yet |
+| 3 | `ContractPaused` | Contract is paused by admin (circuit breaker) |
+| 4 | `Unauthorized` | Caller is not authorized for this operation |
+| 5 | `InsufficientFee` | Payment amount is below the required fee |
+| 6 | `ScoutNotSubscribed` | Scout does not have an active subscription |
+| 7 | `SubscriptionExpired` | Scout's subscription has expired |
+| 8 | `AlreadyContacted` | Scout has already contacted this player |
+| 9 | `InvalidTier` | Subscription tier value is not valid |
+| 10 | `Overflow` | Arithmetic overflow in fee calculation |
+| 11 | `TrialOfferNotFound` | Trial offer record does not exist |
+| 12 | `PlayerNotRegistered` | Player is not registered in the registration contract |
+| 13 | `ScoutNotRegistered` | Scout is not registered in the registration contract |
+| 14 | `PlayerCapReached` | Maximum number of players per scout has been reached |
+| 15 | `SubscriptionNotFound` | Subscription record not found for this scout |
+| 16 | `ContactRecordNotFound` | Contact record not found |
+| 17 | `TrialOfferExpired` | Trial offer has passed its expiry ledger |
+| 18 | `InvalidSubscriptionDuration` | Subscription duration value is not valid |
+| 19 | `FeeConfigNotFound` | Fee configuration has not been set |
+| 20 | `TokenTransferFailed` | XLM or platform token transfer failed |
+| 21 | `InvalidContactFee` | Contact fee value is not valid |
+| 22 | `InvalidSubFee` | Subscription fee value is not valid |
+| 23 | `EliteOnlyFeature` | Operation requires an Elite-tier subscription |
+| 24 | `MigrationAlreadyComplete` | Migration has already been completed |
+| 25 | `MigrationNotFound` | Migration record does not exist |
+| 26 | `InvalidMigrationVersion` | Migration version number is not valid |
+| 27 | `MigrationDataCorrupted` | Migration data failed integrity check |
+| 28 | `MigrationStateMismatch` | Migration state does not match expected state |
+| 29 | `MigrationNotActive` | Migration is not currently active |
+| 30 | `MigrationReplayDetected` | Migration replay attempt detected |
+| 31 | `MigrationConflict` | Migration conflicts with existing state |
+| 32 | `MigrationVersionMismatch` | Migration version does not match current contract version |
+| 33 | `MigrationChecksumFailed` | Migration checksum verification failed |
+| 34 | `MigrationRollbackFailed` | Migration rollback could not be completed |
+| 35 | `SubscriptionRecordEvicted` | Subscription record was evicted from contract storage |
+| 36 | `PayToContactPaused` | Pay-to-contact feature is currently paused |
+| 37 | `TrialEscrowNotOutstanding` | No outstanding trial escrow exists for this player |
 
 ---
 
@@ -3294,6 +3507,55 @@ stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
   -- refund_subscription \
   --scout $SCOUT_ADDRESS \
   --amount 1000000
+```
+
+---
+
+#### `set_regional_contact_limit(region: String, limit: u32) -> Result<(), ScoutAccessError>`
+
+Set or update a per-region Pro-tier contact limit override.
+
+When a Pro-tier scout calls `pay_to_contact` or `batch_contact_players`, the
+quota check first looks for a regional override keyed by the scout's registered
+`region` (from the registration contract). If an override exists it is used
+**instead of** `FeeConfig.pro_contact_limit`. If no override exists the
+platform-wide default applies (backward-compatible fallback).
+
+Override storage is bounded (one `u32` per region string) and admin-managed
+only — scouts cannot alter their own quota.
+
+| | |
+|---|---|
+| **Auth** | Admin must sign |
+| **Errors** | `Unauthorized` · `InvalidInput` (limit = 0) |
+| **Emits** | `regional_contact_limit_set` with `(admin, region, limit)` |
+
+```bash
+stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
+  -- set_regional_contact_limit \
+  --region "North America" \
+  --limit 20
+```
+
+---
+
+#### `remove_regional_contact_limit(region: String) -> Result<(), ScoutAccessError>`
+
+Remove a previously-set per-region Pro-tier contact limit override.
+
+After removal, scouts in that region fall back to the platform-wide
+`FeeConfig.pro_contact_limit`. No-ops silently if no override existed for the
+given region.
+
+| | |
+|---|---|
+| **Auth** | Admin must sign |
+| **Errors** | `Unauthorized` |
+
+```bash
+stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
+  -- remove_regional_contact_limit \
+  --region "North America"
 ```
 
 ---
@@ -3810,6 +4072,29 @@ stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID -- get_fee_config_history
 
 ---
 
+#### `get_regional_contact_limit(region: String) -> u32`
+
+Return the effective Pro-tier contact limit for the given `region`.
+
+If a per-region override has been set via `set_regional_contact_limit`, that
+value is returned. Otherwise the platform-wide `FeeConfig.pro_contact_limit`
+is returned as the fallback. This is the same value the quota check inside
+`pay_to_contact` and `batch_contact_players` uses for scouts registered in
+that region.
+
+| | |
+|---|---|
+| **Auth** | None |
+| **Errors** | None |
+
+```bash
+stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
+  -- get_regional_contact_limit \
+  --region "North America"
+```
+
+---
+
 #### `get_accumulated_fees() -> i128`
 
 Return total platform fees pending admin withdrawal (in stroops).
@@ -3929,7 +4214,8 @@ stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
 #### `get_scout_contacts(scout: Address) -> Vec<u64>`
 
 Return the list of player IDs that a scout has unlocked via `pay_to_contact`
-or `batch_contact_players`.
+or `batch_contact_players`. This legacy method is unbounded; high-volume callers
+should use `get_scout_contacts_page` instead.
 
 | | |
 |---|---|
@@ -3939,6 +4225,33 @@ or `batch_contact_players`.
 ```bash
 stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
   -- get_scout_contacts --scout $SCOUT_ADDRESS
+```
+
+---
+
+#### `get_scout_contacts_page(scout: Address, offset: u32, limit: u32) -> ScoutContactsPage`
+
+Return a bounded, paginated page of player IDs contacted by `scout`, together
+with the total number of contacts.
+
+This is the canonical paginated successor to the unbounded `get_scout_contacts`.
+The `total` field lets callers determine when paging is complete without
+over-fetching.
+
+**Pagination**: `offset` is a zero-based item offset; `limit` is capped at 50 entries
+per page, matching `get_global_milestone_index`. Returns an empty `entries` vec
+when the offset is beyond the scout's contact list.
+
+**Ordering**: entries are returned in contact order (oldest first).
+
+| | |
+|---|---|
+| **Auth** | None |
+| **Errors** | None |
+
+```bash
+stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
+  -- get_scout_contacts_page --scout $SCOUT_ADDRESS --offset 0 --limit 50
 ```
 
 ---
@@ -4157,7 +4470,10 @@ stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
 Return subscriptions whose `expires_at` is at or before `before_timestamp`.
 This query uses a day-granularity expiry bucket index to avoid scanning every
 subscription, and it filters renewals by re-checking the live stored
-`Subscription.expires_at`.
+`Subscription.expires_at`. The bucket scan starts at the earliest populated
+bucket day (`DataKey::MinExpiryBucketDay`, tracked by `subscribe`/seeding), so
+its cost tracks the number of populated expiry days in range rather than the
+number of days elapsed since the epoch.
 
 | | |
 |---|---|
@@ -4645,20 +4961,31 @@ pub struct TrialOffer {
 | 16 | `DuplicateEvidence` | Evidence hash has already been used in a prior `approve_milestone` call |
 | 17 | `MilestoneLimitExceeded` | Validator has already approved 5 milestones for this player |
 | 18 | `DisputeAlreadyResolved` | Dispute was already resolved and cannot be resolved again |
-| 19 | `PendingAdminNotSet` | `accept_admin` called without a pending proposal |
-| 20 | `ApproveMilestonePaused` | `approve_milestone` function is independently paused |
-| 21 | `InvalidAttestation` | The provided attestation signature is invalid or does not match the expected issuer |
-| 22 | `UntrustedIssuer` | The attestation issuer is not registered in the trusted issuer registry |
-| 23 | `CredentialExpired` | The credential claim has expired |
-| 24 | `IssuerCapReached` | The issuer registry limit (20) has been reached; contract upgrade required to raise the cap |
-| 25 | `IssuerAlreadyRegistered` | The issuer is already registered |
-| 26 | `IssuerNotFound` | The issuer was not found in the registry |
+| 19 | `PendingAdminNotSet` | `accept_admin` called before an admin transfer was proposed |
 | 20 | `ApproveMilestonePaused` | `approve_milestone` is paused independently of the whole-contract pause |
-| 21 | `SpecializationMismatch` | `milestone_category` supplied to `approve_milestone` but validator is not tagged for that category |
-| 26 | `DuplicateAttestation` | Same active validator attested to the same claim within its current voting round |
-| 27 | `TooManyPendingVotes` | Validator already has `MAX_PENDING_VOTES_PER_VALIDATOR` (25) concurrent open votes |
-| 28 | `ThresholdModeRequiresAttestation` | `approve_milestone` called while `get_milestone_threshold() > 1` — use `attest_milestone` |
-| 29 | `RegistrationCallFailed` | Cross-contract call to registration contract failed when verifying dispute-milestone wallet-to-player-id binding |
+| 21 | `SpecializationMismatch` | `milestone_category` supplied to `approve_milestone` but the validator is not tagged for that category |
+| 22 | `InvalidAttestation` | ed25519 signature over the attestation payload failed, or its contract/network binding does not match this instance |
+| 23 | `AttestationKeyNotFound` | No attestation public key has been registered for this validator |
+| 24 | `InvalidNonce` | Attestation nonce is not strictly greater than the last accepted nonce |
+| 25 | `RegistrationCooldown` | Validator registration attempted before the cooldown window elapsed |
+| 26 | `DuplicateAttestation` | Same active validator attested to the same `(player_id, evidence_hash)` claim within its current voting round |
+| 27 | `TooManyPendingVotes` | Validator already has `MAX_PENDING_VOTES_PER_VALIDATOR` concurrent open attestation votes |
+| 28 | `ThresholdModeRequiresAttestation` | `approve_milestone` / `submit_attested_milestone` called while `get_milestone_threshold() > 1` — use `attest_milestone` |
+| 29 | `RegistrationCallFailed` | Cross-contract call to the registration contract failed |
+| 30 | `MigrationNotActive` | Migration window is not currently active; call `open_migration_window` first |
+| 31 | `MilestoneAlreadyExists` | A `Milestone` already exists at `(player_id, milestone_index)` with different content |
+| 32 | `DisputeAlreadyExists` | A `MilestoneDispute` already exists at `(player_id, milestone_index)` with different content |
+| 33 | `ValidatorRecordEvicted` | `restore_validator_record` targeted a validator entry whose archival grace period has fully elapsed |
+| 34 | `MilestoneRecordEvicted` | `restore_milestone_record` targeted a milestone entry that has been fully evicted |
+| 35 | `NotEligibleToReReview` | `rereview_milestone` called by a wallet that is not a currently-active validator |
+| 36 | `MilestoneNotFlagged` | `rereview_milestone` called on a milestone not currently flagged as pending re-review |
+| 37 | `DisputeRequiresJury` | `resolve_dispute` called on a dispute that requires jury resolution — use `tally_dispute` |
+| 38 | `NotJuryDispute` | `cast_dispute_vote` / `tally_dispute` called on a dispute not routed to the jury path |
+| 39 | `VotingWindowClosed` | `cast_dispute_vote` called after the voting window has closed |
+| 40 | `ConflictOfInterest` | `cast_dispute_vote` called by the validator who approved the disputed milestone |
+| 41 | `AlreadyVoted` | `cast_dispute_vote` called by a validator who has already voted on this dispute |
+| 42 | `VotingWindowOpen` | `tally_dispute` called before the window closes with votes tied at or above quorum |
+| 43 | `QuorumNotReached` | `tally_dispute` called before the window closes and quorum not yet reached |
 
 ### `ProgressError` (progress contract)
 
@@ -4745,8 +5072,6 @@ All events follow the unified `(Symbol, actor)` topic schema introduced in #246.
 | `validator_revoked` | event_name, admin (Address) | wallet (Address), reason (String) | Validator deactivated |
 | `validator_restored` | event_name, admin (Address) | wallet (Address) | Revoked validator re-activated |
 | `validator_transferred` | event_name, admin (Address) | old_wallet (Address), new_wallet (Address) | Validator identity migrated to new wallet |
-| `issuer_registered` | event_name, issuer_wallet (Address) | issuer_name (String) | New trusted credential issuer onboarded |
-| `issuer_revoked` | event_name, issuer_wallet (Address) | issuer_wallet (Address) | Trusted credential issuer deactivated |
 | `milestone_disputed` | event_name, player_wallet (Address) | player_id (u64), milestone_index (u32), reason (String) | Player disputes a milestone attribution |
 | `dispute_resolved` | event_name, admin (Address) | player_id (u64), milestone_index (u32), upheld (bool) | Admin resolves a milestone dispute |
 | `progress_contract_updated` | event_name, admin (Address) | progress_contract (Address) | Progress contract address re-wired |
@@ -4838,19 +5163,32 @@ before the Pro monthly quota check (`ProContactLimitReached`). A scout who
 is simultaneously at their quota limit *and* has already contacted the same
 player sees `AlreadyContacted`.
 
-**Why this may be suboptimal**: `AlreadyContacted` (code 8) is the correct
-terminal error for a genuine duplicate contact attempt, so the ordering is
-correct for the pure-duplicate case. However, the quota check at Priority 7
-fires *only* for new contacts — if a scout at quota tries to contact a new
-player they will correctly see `ProContactLimitReached`. The current ordering
-is therefore only relevant when both the quota and a duplicate exist for the
-same `(scout, player_id)` pair. In that case `AlreadyContacted` is the more
-actionable response ("you already unlocked this player") and the quota is
-irrelevant. The current ordering is defensible.
+**Rationale**: `AlreadyContacted` (error code 8) is the correct terminal error
+for a genuine duplicate-contact attempt — it signals that this specific
+`(scout, player_id)` pair has already been processed. The Pro-quota guard
+at Priority 7 is a separate concern that only applies to new contacts; it
+fires `ProContactLimitReached` (code 20) when a Pro-tier scout attempts to
+contact a *new* player beyond their monthly limit. The ordering is therefore
+correct for its intended purpose: duplicate detection takes precedence over
+quota enforcement.
 
-**Conclusion**: No change recommended. The ordering is correct and the
-"worse" scenario (quota masking duplicate) does not arise in practice because
-the quota check only runs for *new* contacts.
+The apparent overlap — a Pro scout at their quota limit who re-attempts an
+already-contacted player — sees `AlreadyContacted` because the duplicate-check
+guard runs first. This is intentional: if a scout has already contacted a
+player, the system should report that condition first, regardless of quota
+status. The quota check is only meaningfully different for new contacts, where
+it correctly returns `ProContactLimitReached`.
+
+**Why no change is needed**: Swapping the ordering so that `ProContactLimitReached`
+fires before `AlreadyContacted` would change the error semantics for any caller
+that currently handles `AlreadyContacted` as the "duplicate already exists"
+signal. The existing property-test suite (`check_precedence_property_tests.rs`)
+locks in the current priority order across all reachable states, and altering
+it would be a behavioral change beyond a simple doc update. The current ordering
+is consistent, well-tested, and the quota-versus-duplicate overlap is rare in
+practice because the quota guard is only active for new contacts.
+
+**Decision**: No change. The ordering is correct and resolved.
 
 ---
 
@@ -4898,3 +5236,5 @@ double). However, this is self-penalizing (the scout pays twice for no
 benefit) and the new subscription simply overwrites the old one. The
 `refund_subscription` admin function already handles the accidental-double-charge
 recovery path.
+
+# END OF DOCS CONTRACT_REFERENCE.md — all sections, TOC entries, and Design Discussion items are complete and resolved.

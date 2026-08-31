@@ -103,12 +103,7 @@ fn advance_player(h: &Harness, player_id: u64, levels: u32) {
 /// (the verification contract rejects duplicate evidence hashes).
 fn approve_milestone(h: &Harness, player_id: u64, evidence_hash: &str) {
     let validator = Address::generate(&h.env);
-    h.verification.register_validator(
-        &validator,
-        &String::from_str(&h.env, "UEFA-B-License"),
-        &String::from_str(&h.env, "Default Academy"),
-        &soroban_sdk::Vec::new(&h.env),
-    );
+    h.verification.register_validator(&validator, &String::from_str(&h.env, "UEFA-B-License"), &String::from_str(&h.env, "Default Academy"), &String::from_str(&h.env, "Default Region"), &soroban_sdk::Vec::new(&h.env));
     h.verification.approve_milestone(
         &validator,
         &player_id,

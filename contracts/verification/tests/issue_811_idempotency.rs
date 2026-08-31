@@ -31,12 +31,7 @@ fn test_approve_milestone_progress_call_failed_reverts_all_state() {
 
     verification_client.initialize(&admin);
     verification_client.set_progress_contract(&progress_id);
-    verification_client.register_validator(
-        &validator,
-        &String::from_str(&env, "UEFA-B-License-2026"),
-        &String::from_str(&env, "Default Academy"),
-        &soroban_sdk::Vec::new(&env),
-    );
+    verification_client.register_validator(&validator, &String::from_str(&env, "UEFA-B-License-2026"), &String::from_str(&env, "Default Academy"), &String::from_str(&env, "Default Region"), &soroban_sdk::Vec::new(&env));
 
     progress_client.initialize(&admin);
 
@@ -112,12 +107,7 @@ fn test_approve_milestone_duplicate_evidence_prevents_double_commit_on_retry() {
     let player_id = 1u64;
 
     verification_client.initialize(&admin);
-    verification_client.register_validator(
-        &validator,
-        &String::from_str(&env, "UEFA-B-License-2026"),
-        &String::from_str(&env, "Default Academy"),
-        &soroban_sdk::Vec::new(&env),
-    );
+    verification_client.register_validator(&validator, &String::from_str(&env, "UEFA-B-License-2026"), &String::from_str(&env, "Default Academy"), &String::from_str(&env, "Default Region"), &soroban_sdk::Vec::new(&env));
 
     // First approval with a fresh evidence hash commits milestone #1.
     let result = verification_client.try_approve_milestone(

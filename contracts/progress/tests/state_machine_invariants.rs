@@ -61,18 +61,25 @@ fn level_to_u32(l: &ProgressLevel) -> u32 {
 
 /// Assert the one-step-forward invariant between two consecutive levels unless
 /// this was an explicit reset (milestone_ref == 0 in history entry).
+/// For resets, enforce that new_level < old_level (a true rollback).
 fn assert_valid_transition(old: &ProgressLevel, new: &ProgressLevel, is_reset: bool) {
-    if is_reset {
-        // Admin reset: any target level is valid — no further assertion.
-        return;
-    }
     let old_n = level_to_u32(old);
     let new_n = level_to_u32(new);
-    assert_eq!(
-        new_n,
-        old_n + 1,
-        "state machine violation: level jumped from {old_n} to {new_n} without a reset"
-    );
+    
+    if is_reset {
+        // Admin reset: new level must be strictly less than old level (true rollback)
+        assert!(
+            new_n < old_n,
+            "reset violation: cannot reset from level {old_n} to level {new_n} (resets must move backward)"
+        );
+    } else {
+        // Forward advance: must move exactly one tier forward
+        assert_eq!(
+            new_n,
+            old_n + 1,
+            "state machine violation: level jumped from {old_n} to {new_n} without a reset"
+        );
+    }
 }
 
 /// Read the full history and verify every consecutive pair satisfies the

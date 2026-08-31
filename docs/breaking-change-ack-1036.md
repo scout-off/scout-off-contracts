@@ -29,8 +29,8 @@ migration.
 
 This breaking change is **intentional and expected**, as documented in:
 
-- `CHANGELOG.md` — v0.4.0 entry with migration guide
-- `docs/VERSIONING.md` — v0.4.0 version history row (MAJOR)
+- `CHANGELOG.md` — v1.0.0 entry with migration guides
+- `docs/VERSIONING.md` — v1.0.0 version history row (MAJOR)
 - `docs/DISPUTE_JURY.md` — design spec (now marked Implemented)
 
 ## Migration path

@@ -125,12 +125,7 @@ impl Harness {
         let mut validators = Vec::new(&env);
         for _ in 0..2 {
             let wallet = Address::generate(&env);
-            verification.register_validator(
-                &wallet,
-                &String::from_str(&env, "UEFA B License"),
-                &String::from_str(&env, "Default Academy"),
-                &Vec::new(&env),
-            );
+            verification.register_validator(&wallet, &String::from_str(&env, "UEFA B License"), &String::from_str(&env, "Default Academy"), &String::from_str(&env, "Default Region"), &Vec::new(&env));
             validators.push_back(wallet);
         }
 

@@ -65,6 +65,13 @@ pub fn player_registered(env: &Env, player_id: u64, wallet: &Address) {
     );
 }
 
+pub fn player_deregistered(env: &Env, player_id: u64, wallet: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "player_deregistered"), wallet.clone()),
+        player_id,
+    );
+}
+
 /// topics: (event_name, wallet)  data: scout_id
 pub fn scout_registered(env: &Env, scout_id: u64, wallet: &Address) {
     env.events().publish(

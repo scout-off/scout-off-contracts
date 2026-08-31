@@ -65,6 +65,12 @@ fn test_seed_dispute_rejected_when_window_closed() {
         disputed_at: 1_700_000_000,
         resolved: false,
         upheld: false,
+        impact_score: 0,
+        jury_required: false,
+        quorum: 0,
+        voting_deadline: 0,
+        votes_for: 0,
+        votes_against: 0,
     };
     let result = client.try_admin_seed_dispute(&1u64, &1u32, &dispute);
     assert_eq!(result, Err(Ok(VerificationError::MigrationNotActive)));
@@ -249,6 +255,12 @@ fn test_seed_dispute_happy_path() {
         disputed_at: 1_700_000_000,
         resolved: false,
         upheld: false,
+        impact_score: 0,
+        jury_required: false,
+        quorum: 0,
+        voting_deadline: 0,
+        votes_for: 0,
+        votes_against: 0,
     };
 
     client.admin_seed_dispute(&1u64, &1u32, &dispute);
@@ -273,9 +285,71 @@ fn test_seed_resolved_dispute_does_not_increment_active_count() {
         disputed_at: 1_700_000_000,
         resolved: true,
         upheld: false,
+        impact_score: 0,
+        jury_required: false,
+        quorum: 0,
+        voting_deadline: 0,
+        votes_for: 0,
+        votes_against: 0,
     };
 
     client.admin_seed_dispute(&1u64, &1u32, &dispute);
+    assert_eq!(client.get_active_disputes_count(), 0u32);
+}
+
+/// Issue #1189: a seeded already-resolved dispute must not be closeable a
+/// second time through either the admin path or the jury path — a spurious
+/// decrement would underflow `ActiveDisputesCount` (which the seed left at 0).
+#[test]
+fn test_seed_resolved_dispute_cannot_be_closed_again_no_underflow() {
+    let (env, client, _admin) = setup();
+    client.open_migration_window();
+
+    let admin_dispute = MilestoneDispute {
+        player_id: 1,
+        milestone_index: 1,
+        reason: String::from_str(&env, "Admin-path dispute resolved off-chain"),
+        disputed_at: 1_700_000_000,
+        resolved: true,
+        upheld: true,
+        impact_score: 0,
+        jury_required: false,
+        quorum: 0,
+        voting_deadline: 0,
+        votes_for: 0,
+        votes_against: 0,
+    };
+    client.admin_seed_dispute(&1u64, &1u32, &admin_dispute);
+
+    let jury_dispute = MilestoneDispute {
+        player_id: 2,
+        milestone_index: 0,
+        reason: String::from_str(&env, "Jury-path dispute resolved off-chain"),
+        disputed_at: 1_700_000_000,
+        resolved: true,
+        upheld: false,
+        impact_score: 100,
+        jury_required: true,
+        quorum: 3,
+        voting_deadline: 1_700_000_500,
+        votes_for: 0,
+        votes_against: 0,
+    };
+    client.admin_seed_dispute(&2u64, &0u32, &jury_dispute);
+
+    assert_eq!(client.get_active_disputes_count(), 0u32);
+
+    // Admin path on an already-resolved dispute: rejected, no decrement.
+    assert_eq!(
+        client.try_resolve_dispute(&1u64, &1u32, &true),
+        Err(Ok(VerificationError::DisputeAlreadyResolved))
+    );
+    // Jury path on an already-resolved dispute: rejected, no decrement.
+    assert_eq!(
+        client.try_tally_dispute(&2u64, &0u32),
+        Err(Ok(VerificationError::DisputeAlreadyResolved))
+    );
+
     assert_eq!(client.get_active_disputes_count(), 0u32);
 }
 
@@ -293,6 +367,12 @@ fn test_identical_dispute_replay_is_noop() {
         disputed_at: 1_700_000_000,
         resolved: false,
         upheld: false,
+        impact_score: 0,
+        jury_required: false,
+        quorum: 0,
+        voting_deadline: 0,
+        votes_for: 0,
+        votes_against: 0,
     };
 
     client.admin_seed_dispute(&1u64, &1u32, &dispute);
@@ -315,6 +395,12 @@ fn test_conflicting_dispute_rejected() {
         disputed_at: 1_700_000_000,
         resolved: false,
         upheld: false,
+        impact_score: 0,
+        jury_required: false,
+        quorum: 0,
+        voting_deadline: 0,
+        votes_for: 0,
+        votes_against: 0,
     };
     client.admin_seed_dispute(&1u64, &1u32, &dispute);
 
@@ -338,6 +424,12 @@ fn test_seed_dispute_populates_player_disputes_index() {
         disputed_at: 1_700_000_000,
         resolved: false,
         upheld: false,
+        impact_score: 0,
+        jury_required: false,
+        quorum: 0,
+        voting_deadline: 0,
+        votes_for: 0,
+        votes_against: 0,
     };
     let d1 = MilestoneDispute {
         player_id: 1,
@@ -346,6 +438,12 @@ fn test_seed_dispute_populates_player_disputes_index() {
         disputed_at: 1_700_000_001,
         resolved: true,
         upheld: true,
+        impact_score: 0,
+        jury_required: false,
+        quorum: 0,
+        voting_deadline: 0,
+        votes_for: 0,
+        votes_against: 0,
     };
 
     client.admin_seed_dispute(&1u64, &1u32, &d0);

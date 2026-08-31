@@ -69,12 +69,7 @@ fn setup_unwired() -> (Env, VerificationContractClient<'static>, Address) {
     let admin = Address::generate(&env);
     client.initialize(&admin);
     let validator = Address::generate(&env);
-    client.register_validator(
-        &validator,
-        &String::from_str(&env, "UEFA-B-License-2026"),
-        &String::from_str(&env, "Default Academy"),
-        &soroban_sdk::Vec::new(&env),
-    );
+    client.register_validator(&validator, &String::from_str(&env, "UEFA-B-License-2026"), &String::from_str(&env, "Default Academy"), &String::from_str(&env, "Default Region"), &soroban_sdk::Vec::new(&env));
     (env, client, validator)
 }
 
@@ -93,12 +88,7 @@ fn setup_bad_wiring() -> (Env, VerificationContractClient<'static>, Address) {
     client.set_progress_contract(&bad_progress);
 
     let validator = Address::generate(&env);
-    client.register_validator(
-        &validator,
-        &String::from_str(&env, "UEFA-B-License-2026"),
-        &String::from_str(&env, "Default Academy"),
-        &soroban_sdk::Vec::new(&env),
-    );
+    client.register_validator(&validator, &String::from_str(&env, "UEFA-B-License-2026"), &String::from_str(&env, "Default Academy"), &String::from_str(&env, "Default Region"), &soroban_sdk::Vec::new(&env));
     (env, client, validator)
 }
 
@@ -300,12 +290,7 @@ fn test_retry_with_fresh_evidence_hash_succeeds_after_wiring_fixed() {
     client.set_progress_contract(&prog_id);
 
     let validator = Address::generate(&env);
-    client.register_validator(
-        &validator,
-        &String::from_str(&env, "UEFA-B-License-2026"),
-        &String::from_str(&env, "Default Academy"),
-        &soroban_sdk::Vec::new(&env),
-    );
+    client.register_validator(&validator, &String::from_str(&env, "UEFA-B-License-2026"), &String::from_str(&env, "Default Academy"), &String::from_str(&env, "Default Region"), &soroban_sdk::Vec::new(&env));
 
     let player_id: u64 = 42;
 
@@ -345,22 +330,12 @@ fn test_validator_cap_bounds_evidence_storage() {
     // exactly 100 total.
     for _ in 0..99 {
         let v = Address::generate(&env);
-        client.register_validator(
-            &v,
-            &String::from_str(&env, "UEFA-B-License-2026"),
-            &String::from_str(&env, "Default Academy"),
-            &soroban_sdk::Vec::new(&env),
-        );
+        client.register_validator(&v, &String::from_str(&env, "UEFA-B-License-2026"), &String::from_str(&env, "Default Academy"), &String::from_str(&env, "Default Region"), &soroban_sdk::Vec::new(&env));
     }
 
     // Next registration must fail with ValidatorCapReached (code 15).
     let extra = Address::generate(&env);
-    let result = client.try_register_validator(
-        &extra,
-        &String::from_str(&env, "UEFA-A-License-2026"),
-        &String::from_str(&env, "Default Academy"),
-        &soroban_sdk::Vec::new(&env),
-    );
+    let result = client.try_register_validator(&extra, &String::from_str(&env, "UEFA-A-License-2026"), &String::from_str(&env, "Default Academy"), &String::from_str(&env, "Default Region"), &soroban_sdk::Vec::new(&env));
     assert!(
         matches!(
             result,

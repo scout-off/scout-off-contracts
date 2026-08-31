@@ -8,9 +8,17 @@
     "node": ">=18"
   },
   "scripts": {
-    "reconcile-indexer": "node scripts/reconcile-indexer.js"
+    "reconcile-indexer": "node scripts/reconcile-indexer.js",
+    "test": "jest"
   },
   "dependencies": {
     "pg": "^8.11.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^26.4.0",
+    "jest": "^30.5.0",
+    "ts-jest": "^29.4.12",
+    "typescript": "^7.0.2"
   }
 }

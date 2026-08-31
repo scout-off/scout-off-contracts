@@ -37,19 +37,34 @@ explicitly (it prints them under "Skipped" rather than silently omitting
 them) and, for `player_level_history`, cross-checks the per-player row count
 against `progress.get_history_count` as a cheap drift signal.
 
+> **Why passing on a distinct empty-vs-missing signal is fine here.**
+> `get_history_count` is a *default-on-absent* getter (see
+> [`docs/CONTRACT_REFERENCE.md`](CONTRACT_REFERENCE.md#get_history_countplayer_id-u64---u32)):
+> it returns `0` both for a registered player with no recorded level changes
+> and for a `player_id` that does not exist on the progress contract, with no
+> error to tell them apart. For the reconciliation cross-check the ambiguity
+> is harmless because existence is disambiguated elsewhere in the same run:
+> this loop only iterates players already present in the `player_level_history`
+> rows *and* the `players` reconciliation (same sweep) diffs each one against
+> `registration.get_player`, reporting a `PlayerNotFound` existence mismatch
+> for any row whose player is absent on-chain. Once a player is confirmed to
+> exist via the registration contract, a `0` from `get_history_count` means
+> exactly "no level changes," which is the only comparison the cross-check
+> needs. A distinct `get_history_count` signal (e.g. returning `None` for an
+> unknown ID) would only be worth the added complexity if the cross-check ever
+> ran in isolation without the registration-contract existence check — it
+> currently does not.
+
 - ~~`scouts.verified`~~ — column added in migration `001_initial_schema.sql`
 - ~~Player deactivation status~~ — column added in migration `001_initial_schema.sql`
 - ~~Milestone pending-re-review flags~~ — `milestone_flags` and `revocation_records` tables added in migration `005_milestone_flags.sql` (issue #1039)
 # Indexer Reconciliation
 
-`migrations/001_initial_schema.sql` defines the PostgreSQL schema the backend
-event indexer mirrors on-chain state into (see
-[README.md — Database Schema](../README.md#database-schema)). Nothing forces
-that copy to stay accurate: a missed event, a reorg the indexer didn't
-rewind for, or a plain indexing bug can all cause silent drift between the
-database and the contracts' authoritative on-chain state. Since scout
-discovery (`filter_players`) and fee accounting both read from the off-chain
-copy, drift there is a real, hard-to-detect data-integrity risk.
+The backend event indexer mirrors on-chain state into PostgreSQL so the
+frontend and API can answer queries (player discovery, fee accounting, contact
+history) without making live Soroban RPC calls on every request.
+`migrations/001_initial_schema.sql` defines the fourteen tables it writes to
+(see [README.md — Database Schema](../README.md#database-schema)).
 
 `scripts/reconcile-indexer.js` closes that gap: it queries live contract
 state and diffs it against the corresponding Postgres rows, table by table.
@@ -63,8 +78,7 @@ local database. The report distinguishes:
 ### When to run it
 
 - **On a schedule** (recommended: hourly or daily via cron/CI) against
-  production, to catch indexer drift before it's noticed by a scout or
-  player.
+  production, to catch indexer drift before it's noticed by a scout or player.
 - **After any indexer deploy or replay**, to confirm the replay landed
   correctly.
 - **Whenever `filter_players` results or fee balances look wrong** — this is
@@ -83,10 +97,10 @@ Requires:
   used by `scripts/generate-bindings.sh`, on your `PATH`.
 - A `DATABASE_URL` pointing at the backend's Postgres instance. **This
   database lives in the `scoutchain-backend` repo, not here** — this script
-  is intentionally standalone and takes the connection string as a
-  parameter rather than assuming any deployment.
-- The four `*_CONTRACT_ID` variables, either exported directly or available
-  in a `.env.contracts` file (the same file `deploy.sh` writes).
+  is intentionally standalone and takes the connection string as a parameter
+  rather than assuming any deployment.
+- The four `*_CONTRACT_ID` variables, either exported directly or available in
+  a `.env.contracts` file (the same file `deploy.sh` writes).
 
 ```bash
 npm install
@@ -110,8 +124,8 @@ Useful options:
 | `--tables <a,b,c>` | Check only a subset of tables (see the table above) |
 | `--json` | Emit the report as JSON instead of text, for feeding into another tool |
 
-Exit code is `0` for a clean run and `1` when drift is found — wire this
-into a scheduled job (cron, CI) and alert on non-zero.
+Exit code is `0` for a clean run and `1` when drift is found — wire this into a
+scheduled job (cron, CI) and alert on non-zero.
 
 ## Known gaps
 
@@ -138,21 +152,21 @@ only (see the table above).
 
 1. **Re-run with `--sample`** on the affected table to confirm the drift is
    reproducible and not a transient RPC hiccup.
-2. **Check `indexer_cursor` first** — if the indexer is far behind the
-   latest ledger, most "mismatches" are just events it hasn't processed yet,
-   not real bugs. Wait for it to catch up and re-run.
+2. **Check `indexer_cursor` first** — if the indexer is far behind the latest
+   ledger, most "mismatches" are just events it hasn't processed yet, not real
+   bugs. Wait for it to catch up and re-run.
 3. **For a handful of rows**: manually re-derive the correct value from the
    contract and issue a targeted `UPDATE` in the backend's indexer, then
-   confirm the fix with `--tables <table> --sample <n>` scoped to the
-   affected IDs.
-4. **For widespread drift across a table**: treat it as an indexer bug —
-   check the backend's event-processing logs around when the drift likely
-   started, and consider a full replay of that table from the on-chain
-   event log rather than patching rows by hand.
-5. **Escalate** to whoever owns the `scoutchain-backend` indexer if the
-   cause isn't obvious from the mismatch detail — the report includes the
-   exact key, field, on-chain value, and off-chain value needed to start
-   that investigation.
+   confirm the fix with `--tables <table> --sample <n>` scoped to the affected
+   IDs.
+4. **For widespread drift across a table**: treat it as an indexer bug — check
+   the backend's event-processing logs around when the drift likely started,
+   and consider a full replay of that table from the on-chain event log rather
+   than patching rows by hand.
+5. **Escalate** to whoever owns the `scoutchain-backend` indexer if the cause
+   isn't obvious from the mismatch detail — the report includes the exact key,
+   field, on-chain value, and off-chain value needed to start that
+   investigation.
 
 ## Recent improvements (issue #1015)
 

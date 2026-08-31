@@ -30,6 +30,78 @@ Run ./scripts/emergency-pause.sh
 > If the script exits mid-way (e.g. network error), run it again — the already-
 > paused contracts will return `ContractPaused` but will not change state.
 > Continue from the failed contract manually if needed.
+```
+
+## Function-Scoped Circuit Breakers
+
+### When to Use `pause_approve_milestone` Instead of `pause_contract`
+
+**Use `pause_approve_milestone` if:**
+- Only milestone approval has been compromised or has a bug
+- Validators are being investigated; don't block validator registration/revocation
+- Cross-contract issue with progress contract; other verification logic is fine
+
+**Use `pause_contract` (whole contract) if:**
+- Multiple functions are affected
+- Vulnerability is in core contract logic, not a specific function
+- Need immediate shutdown of all state changes
+
+### Example: Validator Collusion Incident
+
+```bash
+# 1. Pause only approve_milestone while investigation continues
+stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
+  -- pause_approve_milestone
+
+# 2. Continue validator operations (registration, revocation)
+# 3. Query health to confirm state
+stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
+  -- health
+
+# 4. Once investigation complete, unpause
+stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
+  -- unpause_approve_milestone
+```
+
+### When to Use `pause_pay_to_contact` Instead of `pause_contract`
+
+**Use `pause_pay_to_contact` if:**
+- Fee-charging `pay_to_contact` has been compromised or has a bug
+- Need to halt contact fees while keeping scout operations (subscribe, renew, read state) running
+- Cross-contract issue affecting payments but not scout admin functions
+
+**Use `pause_contract` (whole contract) if:**
+- Multiple functions are affected
+- Core contract logic vulnerability
+- Need immediate shutdown of all state changes
+
+### Example: Payment Issue Incident
+
+```bash
+# 1. Pause only pay_to_contact while investigation continues
+stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
+  -- pause_pay_to_contact
+
+# 2. Continue scout operations (subscribe, renew, read state)
+# 3. Query health to confirm state
+stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
+  -- health
+
+# 4. Once investigation complete, unpause
+stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
+  -- unpause_pay_to_contact
+```
+
+### Monitoring
+
+Subscribe to events to detect and verify pause state changes:
+
+- `approve_milestone_paused` — Function-scoped pause for verify activated
+- `approve_milestone_unpaused` — Function-scoped pause for verify lifted
+- `pay_to_contact_paused` — Function-scoped pause for scout_access activated
+- `pay_to_contact_unpaused` — Function-scoped pause for scout_access lifted
+- `contract_paused` — Whole-contract pause (overrides function-scoped state)
+```
 
 ### Manual pause (contract by contract)
 

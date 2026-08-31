@@ -48,12 +48,7 @@ fn setup() -> (Env, VerificationContractClient<'static>) {
 
 fn register_validator(env: &Env, client: &VerificationContractClient) -> Address {
     let wallet = Address::generate(env);
-    client.register_validator(
-        &wallet,
-        &String::from_str(env, "UEFA-B-License-2026"),
-        &String::from_str(env, "Default Academy"),
-        &Vec::new(env),
-    );
+    client.register_validator(&wallet, &String::from_str(env, "UEFA-B-License-2026"), &String::from_str(env, "Default Academy"), &String::from_str(env, "Default Region"), &Vec::new(env));
     wallet
 }
 

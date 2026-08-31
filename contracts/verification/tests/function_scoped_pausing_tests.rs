@@ -40,12 +40,7 @@ fn setup() -> Harness {
     let client = VerificationContractClient::new(&env, &contract_id);
 
     client.initialize(&admin);
-    client.register_validator(
-        &validator,
-        &String::from_str(&env, CREDENTIALS),
-        &String::from_str(&env, "Default Academy"),
-        &soroban_sdk::Vec::new(&env),
-    );
+    client.register_validator(&validator, &String::from_str(&env, CREDENTIALS), &String::from_str(&env, "Default Academy"), &String::from_str(&env, "Default Region"), &soroban_sdk::Vec::new(&env));
 
     Harness {
         env,
@@ -246,13 +241,8 @@ fn test_register_validator_works_when_approve_milestone_paused() {
     // Pause only approve_milestone
     h.client.pause_approve_milestone();
 
-    // register_validator should still work
-    h.client.register_validator(
-        &new_validator,
-        &String::from_str(&h.env, CREDENTIALS),
-        &String::from_str(&h.env, "Default Academy"),
-        &soroban_sdk::Vec::new(&h.env),
-    );
+    //register_validator should still work
+    h.client.register_validator(&new_validator, &String::from_str(&h.env, CREDENTIALS), &String::from_str(&h.env, "Default Academy"), &String::from_str(&h.env, "Default Region"), &soroban_sdk::Vec::new(&h.env));
 }
 
 #[test]
@@ -268,12 +258,14 @@ fn test_batch_register_validators_works_when_approve_milestone_paused() {
                 validator1,
                 String::from_str(&h.env, CREDENTIALS),
                 String::from_str(&h.env, "Default Academy"),
+                String::from_str(&h.env, "Default Region"),
                 soroban_sdk::Vec::new(&h.env),
             ),
             (
                 validator2,
                 String::from_str(&h.env, "UEFA A License"),
                 String::from_str(&h.env, "Default Academy"),
+                String::from_str(&h.env, "Default Region"),
                 soroban_sdk::Vec::new(&h.env),
             ),
         ],
@@ -373,14 +365,9 @@ fn test_function_pause_independent_of_whole_contract_pause() {
     // Pause only function-scoped
     h.client.pause_approve_milestone();
 
-    // Verify register_validator still works (whole-contract is not paused)
+    // Verifyregister_validator still works (whole-contract is not paused)
     let new_validator = Address::generate(&h.env);
-    h.client.register_validator(
-        &new_validator,
-        &String::from_str(&h.env, CREDENTIALS),
-        &String::from_str(&h.env, "Default Academy"),
-        &soroban_sdk::Vec::new(&h.env),
-    );
+    h.client.register_validator(&new_validator, &String::from_str(&h.env, CREDENTIALS), &String::from_str(&h.env, "Default Academy"), &String::from_str(&h.env, "Default Region"), &soroban_sdk::Vec::new(&h.env));
 
     // Verify approve_milestone is still blocked
     let result = h.client.try_approve_milestone(

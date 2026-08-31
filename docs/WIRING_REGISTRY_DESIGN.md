@@ -9,24 +9,24 @@ partial-rewiring detection, and a rewritten verification script.
 ## Problem Statement (original, #801)
 
 ScoutChain's four contracts are interconnected by peer-address pointer
-fields. The original design doc (below) enumerated five; a sixth link
-(`verification.RegistrationContract`, added by issue #1014 shortly after this
-doc was written) went undocumented here until now, and a seventh and eighth
-(`scout_access.RegistrationContract`, already implemented; `progress`'s
-missing wiring call in `scripts/initialize.sh`, fixed by #1041) rounded out
-the full picture. **There are eight links, not five or six** — see "The Full
-Picture" below for the corrected, current table.
+fields. The table below enumerates all **eight** links. It originates from
+the #801 design doc — which listed only six — and has been corrected to
+match the current code and the **"The Full Picture"** table below; the two
+tables now agree. "The Full Picture" remains the authoritative reference and
+adds the per-link owner/target and epoch details.
 
 | Contract | Setter | Storage Key | Re-wiring guard |
 |----------|--------|-------------|-----------------|
 | `verification` | `set_progress_contract` | `ProgressContract` | First-call-only (`AlreadyConfigured`); use `update_progress_contract` after |
+| `verification` | `set_registration_contract` | `RegistrationContract` | First-call-only (`AlreadyConfigured`); use `update_registration_contract` after |
 | `registration` | `set_progress_contract` | `ProgressContract` | None — freely re-settable |
 | `progress` | `set_verification_contract` | `VerificationContract` | None |
 | `progress` | `set_registration_contract` | `RegistrationContract` | None |
 | `progress` | `set_scout_access_contract` | `ScoutAccessContract` | None |
 | `scout_access` | `set_progress_contract` | `ProgressContract` | None |
+| `scout_access` | `set_registration_contract` | `RegistrationContract` | None |
 
-Today there is **no on-chain mechanism** to ask "are all five links mutually
+Today there is **no on-chain mechanism** to ask "are all links mutually
 consistent?" — `scripts/verify-cross-contract-wiring.sh` polls each contract
 externally, but it can only confirm the contracts are alive; it cannot yet read
 the stored peer addresses (no public getter functions exist for them).
@@ -59,7 +59,7 @@ to compute a consistency snapshot without any on-chain coordination.
 
 ### Option B — Dedicated registry contract
 
-A fifth `WiringRegistry` contract holds all five peer addresses as the single
+A fifth `WiringRegistry` contract holds all eight peer addresses as the single
 source of truth. All four contracts query the registry at runtime via
 cross-contract call to resolve peer addresses instead of reading local storage.
 

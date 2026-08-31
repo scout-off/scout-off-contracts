@@ -77,21 +77,6 @@ never archived and warm state that is archived after 30–90 days:
 | Subscription | 1 (Subscription) | 1 | 12 |
 | Milestone | 1 (Milestone) | 1 | 12 |
 
-#### Warm (archived after 30–90 days)
-
-| Category | Storage keys per entity | TTL keys bumped per year | Annual TTL ops |
-|----------|------------------------|--------------------------|----------------|
-| MarketplaceEvent | 1 | 1 | 12 |
-| PriceHistory | 1 | 1 | 12 |
-| LedgerCheckpoint | 1 | 1 | 12 |
-| BackfillJob | 1 | 1 | 12 |
-| LedgerGap | 1 | 1 | 12 |
-| DeadLetterEvent | 1 | 1 | 12 |
-| ReconciliationRepair | 1 | 1 | 12 |
-| ReconciliationRun | 1 | 1 | 12 |
-| Discrepancy | 1 | 1 | 12 |
-| KeeperAction | 1 | 1 | 12 |
-
 ---
 
 ## On-Chain vs Off-Chain State

@@ -52,6 +52,8 @@ cargo clippy --workspace        # zero warnings
 cargo fmt --all -- --check      # formatting must be clean
 bash scripts/check-docs.sh      # documentation completeness check
 bash scripts/check-event-topic-consistency.sh  # event-topic / docs consistency
+bash scripts/check-error-code-continuity.sh  # append-only error code continuity
+bash scripts/check-cargo-doc.sh  # public-item docs coverage check
 ```
 
 ## CI checks
@@ -62,10 +64,10 @@ The repository defines seven CI jobs across `.github/workflows/ci.yml` and `.git
 |-----|------|----------------|----------|
 | `check-todos` | `ci.yml` | Scans `contracts/` for `TODO`/`FIXME`/`HACK`/`XXX` markers — fails if any are found | Yes |
 | `test` | `contract-ci.yml` | Runs `cargo test --workspace` (including each contract's `tests/cost_budget.rs` CPU-instruction cost budget), tests `scoutchain-progress`, uploads a `cpu-cost-budget-<sha>` report artifact, builds WASM release | Yes |
-| `lint` | `contract-ci.yml` | Clippy (deny warnings), `rustfmt` check, shellcheck on all tracked shell scripts, docs completeness (`scripts/check-docs.sh`), event-topic consistency (`scripts/check-event-topic-consistency.sh`), guard-ordering audit (`scripts/check-guard-ordering.sh`), cross-doc consistency (`scripts/check-cross-doc-consistency.sh`), trial-offer flow doc consistency (`scripts/check-trial-offer-flow-consistency.sh`), and bindings template validation (`scripts/check-bindings.sh`) | Yes |
+| `lint` | `contract-ci.yml` | Clippy (deny warnings), `rustfmt` check, shellcheck on all tracked shell scripts, docs completeness (`scripts/check-docs.sh`), event-topic consistency (`scripts/check-event-topic-consistency.sh`), guard-ordering audit (`scripts/check-guard-ordering.sh`), cross-doc consistency (`scripts/check-cross-doc-consistency.sh`), trial-offer flow doc consistency (`scripts/check-trial-offer-flow-consistency.sh`), error-code continuity (`scripts/check-error-code-continuity.sh`), public-item docs coverage (`scripts/check-cargo-doc.sh`), and bindings template validation (`scripts/check-bindings.sh`) | Yes |
 | `bindings-smoke-test` | `contract-ci.yml` | Deploys all contracts to a local Soroban sandbox, initializes them and wires cross-contract links, verifies that wiring (`scripts/verify-cross-contract-wiring.sh`), runs `scripts/health-check.sh` and `scripts/full-readiness-check.sh`, runs `scripts/smoke-test.sh`, generates TypeScript bindings, verifies their structure, builds each binding package, **verifies that every ABI-declared function has a corresponding export in the generated binding** (fails with a clear list of missing exports if any), runs `scripts/migrate-contract-smoke-test.sh` against the already-running sandbox to continuously verify the deploy-old→seed→migrate→replay→before/after-comparison path, and re-runs `scripts/check-docs.sh` | Yes |
 | `abi-export` | `contract-ci.yml` | Exports contract ABIs to `abi/*.json` using `stellar contract info interface`, validates JSON parseability, measures each contract's optimized WASM size against `ci/wasm-size-budget.json` (failing the job if any contract is over budget), and uploads the artifacts; per `docs/VERSIONING.md` the ABI diff is how breaking changes are detected | Yes |
-| `abi-diff` | `contract-ci.yml` | Diffs the PR branch's ABI against the base branch (main/develop), classifies changes as MAJOR/MINOR/PATCH per `docs/VERSIONING.md`, and fails if a MAJOR or MINOR change lacks a matching entry in `CHANGELOG.md`'s Unreleased section | Yes |
+| `abi-diff` | `contract-ci.yml` | Diffs the PR branch's ABI against the base branch (main/develop), classifies changes as MAJOR/MINOR/PATCH per `docs/VERSIONING.md`, and fails if a MAJOR or MINOR change lacks a matching entry in `CHANGELOG.md`'s Unreleased section and a matching row in `docs/VERSIONING.md`'s Version History table | Yes |
 | `budget-calibration` | `contract-ci.yml` | Downloads the `abi-export` job's ABI and CPU-cost-budget artifacts, runs `scripts/calibrate-budgets.py --headroom 0.20` to check the checked-in size/cost budgets aren't badly out of calibration with measured values, and fails if any measured value exceeds its budget | Not verifiable from this repo alone — configure via `Settings > Branches > main > Require status checks` and confirm here |
 
 > **Note on the audit:** The "What it checks" column for every job above was re-audited directly against the live job definitions in `.github/workflows/ci.yml` and `.github/workflows/contract-ci.yml`, not just against branch-protection status. The `Required` column reflects the actual branch-protection rules on `main` at the time of writing, except for `budget-calibration`, whose required-status could not be confirmed while auditing this table (see that row). Because changing branch-protection settings requires repository admin access, any future update to the required checks — including confirming `budget-calibration`'s status — must be performed by a maintainer in the repository settings (`Settings > Branches > main > Require status checks`).
@@ -106,10 +108,9 @@ numeric code.
 policy. It compares every `errors.rs` in the PR branch against `origin/main`
 and fails if any numeric code present in both has a different variant name, or
 if a code that existed in `main` disappears without an explicit `// reserved`
-comment in the new version. **This script is not currently invoked by any CI
-job** (neither `ci.yml` nor `contract-ci.yml` calls it) — run it locally
-before opening a PR that touches an `errors.rs` file, since a renamed or
-silently removed error code will not be caught by CI today.
+comment in the new version. This check is now part of the `lint` job in
+`contract-ci.yml`, and it should still be run locally before opening a PR that
+touches an `errors.rs` file as a fast, targeted validation of the same policy.
 
 When adding a new variant:
 

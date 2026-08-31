@@ -129,6 +129,11 @@ pub enum ScoutAccessError {
     /// already released by `confirm_trial_offer` or `expire_trial_offers`
     /// (or by a prior `admin_refund_trial_escrow` call).
     TrialEscrowNotOutstanding = 37,
+
+    // ── Evidence access grants ──
+    /// `admin_revoke_evidence_access` targeted a (player_id, scout) pair for
+    /// which no `EvidenceAccessGrant` record exists.
+    GrantNotFound = 38,
 }
 
 impl AdminError for ScoutAccessError {
@@ -200,7 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn grant_not_found_is_code_30() {
-        assert_eq!(ScoutAccessError::GrantNotFound as u32, 30);
+    fn grant_not_found_is_code_38() {
+        assert_eq!(ScoutAccessError::GrantNotFound as u32, 38);
     }
 }

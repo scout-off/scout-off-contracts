@@ -41,6 +41,7 @@ measured-cost trends can be tracked across commits.
 | scout_access   | `pay_to_contact`                 | 20,000,000                |
 | scout_access   | `batch_contact_players` (5 ids)  | 25,000,000                |
 | scout_access   | `expire_trial_offers` (limit=20) | 25,000,000                |
+| scout_access   | `get_expiring_subscriptions` (20 scouts, buckets ~50k days from epoch, limit 50) | 1,500,000 |
 
 All budgets above were calibrated from real `cargo test --test cost_budget
 -- --nocapture` measurements (see `cpu-cost-budget-report.txt`) with 20%

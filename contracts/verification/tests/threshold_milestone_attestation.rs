@@ -40,11 +40,27 @@ fn setup() -> (Env, VerificationContractClient<'static>, Address) {
 
 fn register_validator(env: &Env, client: &VerificationContractClient) -> Address {
     let wallet = Address::generate(env);
+    client.register_validator(&wallet, &String::from_str(env, CREDENTIALS), &String::from_str(env, "Default Academy"), &String::from_str(env, "Default Region"), &soroban_sdk::Vec::new(env));
+    wallet
+}
+
+/// Register a validator with an explicit `affiliation` and `region`, used by
+/// the anti-collusion-diversity tests to prove a k-of-n threshold is NOT a
+/// bypass of the `DiversityConfig` affiliation gate or the `min_region_quorum`
+/// regional gate.
+fn register_validator_with(
+    env: &Env,
+    client: &VerificationContractClient,
+    affiliation: &str,
+    region: &str,
+) -> Address {
+    let wallet = Address::generate(env);
     client.register_validator(
         &wallet,
         &String::from_str(env, CREDENTIALS),
-        &String::from_str(env, "Default Academy"),
-        &soroban_sdk::Vec::new(env),
+        &String::from_str(env, affiliation),
+        &String::from_str(env, region),
+        &Vec::new(env),
     );
     wallet
 }

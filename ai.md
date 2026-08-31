@@ -136,10 +136,13 @@ pub fn register_validator(
     env: Env,
     wallet: Address,
     credentials: String,
+    affiliation: String,
+    specializations: Vec<String>,
 ) -> Result<(), VerificationError>
 
-// severity is explicit: RevocationSeverity::Routine (no cascade) or RevocationSeverity::ForCause (cascade flags all prior milestones)
-// reason is optional — pass None to omit a revocation reason
+// `affiliation` is the canonical org identifier used for diversity gating;
+// `specializations` are optional category tags such as "physical-stats" or "identity-kyc"
+// that must match the milestone category when nested category gating is active.
 pub fn revoke_validator(
     env: Env,
     wallet: Address,
@@ -156,7 +159,7 @@ pub fn batch_revoke_validators(
 
 pub fn batch_register_validators(
     env: Env,
-    entries: Vec<(Address, String)>,
+    entries: Vec<(Address, String, String, Vec<String>)>,
 ) -> Result<(), VerificationError>
 
 pub fn restore_validator(env: Env, wallet: Address) -> Result<(), VerificationError>
@@ -309,21 +312,26 @@ pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), ScoutAccessErr
 
 ## Cross-Contract Wiring
 
-Five links must be established after every fresh deployment. `initialize.sh` sets all five automatically. Run the diagnostic script to check which links are present:
+Eight peer-address links must be established after every fresh deployment. `initialize.sh` sets all eight automatically. Run the diagnostic script to check which links are present:
 
 ```bash
 ./scripts/verify-cross-contract-wiring.sh testnet
 ```
 
-### The five wiring links
+### The eight wiring links
 
 | # | Command | What it does |
 |---|---------|-------------|
 | 1 | `verification.set_progress_contract` | Allows `approve_milestone` to call `advance_level` |
-| 2 | `registration.set_progress_contract` | Allows `progress.reset_player_level` to sync level to registration |
-| 3 | `progress.set_verification_contract` | Whitelists verification as authorized caller of `advance_level` |
-| 4 | `progress.set_registration_contract` | Allows progress to call `set_player_level` on registration |
-| 5 | `scout_access.set_progress_contract` | Allows `confirm_trial_offer` to call `advance_level` for Level 3 |
+| 2 | `verification.set_registration_contract` | Allows the dispute-milestone wallet-to-`player_id` binding check |
+| 3 | `registration.set_progress_contract` | Lets `filter_players` resolve player levels at query time |
+| 4 | `progress.set_verification_contract` | Whitelists verification as authorized caller of `advance_level` |
+| 5 | `progress.set_registration_contract` | Allows progress to call `set_player_level` on registration |
+| 6 | `progress.set_scout_access_contract` | Whitelists scout_access as authorized caller of `advance_level` |
+| 7 | `scout_access.set_progress_contract` | Allows `confirm_trial_offer` to call `advance_level` for Level 3 |
+| 8 | `scout_access.set_registration_contract` | Pro-tier scout verification / Sybil gating lookups |
+
+This list matches what `scripts/verify-cross-contract-wiring.sh` checks and the "Full Picture" table in [`docs/WIRING_REGISTRY_DESIGN.md`](docs/WIRING_REGISTRY_DESIGN.md).
 
 ### Manual wiring commands
 
@@ -333,25 +341,40 @@ stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
   --source $ADMIN_ADDRESS --network testnet \
   -- set_progress_contract --progress_contract $PROGRESS_CONTRACT_ID
 
-# 2. Registration ← Progress
+# 2. Verification → Registration
+stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
+  --source $ADMIN_ADDRESS --network testnet \
+  -- set_registration_contract --reg_contract $REGISTRATION_CONTRACT_ID
+
+# 3. Registration → Progress
 stellar contract invoke --id $REGISTRATION_CONTRACT_ID \
   --source $ADMIN_ADDRESS --network testnet \
   -- set_progress_contract --addr $PROGRESS_CONTRACT_ID
 
-# 3. Progress → Verification
+# 4. Progress → Verification
 stellar contract invoke --id $PROGRESS_CONTRACT_ID \
   --source $ADMIN_ADDRESS --network testnet \
   -- set_verification_contract --addr $VERIFICATION_CONTRACT_ID
 
-# 4. Progress → Registration
+# 5. Progress → Registration
 stellar contract invoke --id $PROGRESS_CONTRACT_ID \
   --source $ADMIN_ADDRESS --network testnet \
   -- set_registration_contract --addr $REGISTRATION_CONTRACT_ID
 
-# 5. Scout Access → Progress
+# 6. Progress → Scout Access
+stellar contract invoke --id $PROGRESS_CONTRACT_ID \
+  --source $ADMIN_ADDRESS --network testnet \
+  -- set_scout_access_contract --addr $SCOUT_ACCESS_CONTRACT_ID
+
+# 7. Scout Access → Progress
 stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
   --source $ADMIN_ADDRESS --network testnet \
   -- set_progress_contract --addr $PROGRESS_CONTRACT_ID
+
+# 8. Scout Access → Registration
+stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
+  --source $ADMIN_ADDRESS --network testnet \
+  -- set_registration_contract --addr $REGISTRATION_CONTRACT_ID
 ```
 
 > **Note:** `verification.set_progress_contract` is first-call-only and returns
@@ -510,7 +533,7 @@ When the progress contract is not wired, a `progress_contract_not_set` event is 
    ```bash
    ./scripts/verify-cross-contract-wiring.sh testnet
    ```
-   It checks all five documented wiring links: `verification.set_progress_contract`, `registration.set_progress_contract`, `progress.set_verification_contract`, `progress.set_registration_contract`, and `scout_access.set_progress_contract`.
+   It checks all eight documented wiring links: `verification.set_progress_contract`, `verification.set_registration_contract`, `registration.set_progress_contract`, `progress.set_verification_contract`, `progress.set_registration_contract`, `progress.set_scout_access_contract`, `scout_access.set_progress_contract`, and `scout_access.set_registration_contract`.
 2. Re-wire if any link shows ❌:
    ```bash
    ./scripts/initialize.sh testnet
@@ -609,6 +632,7 @@ When the progress contract is not wired, a `progress_contract_not_set` event is 
 - **Subscription tier check is enforced on-chain.** Basic scouts cannot call `pay_to_contact`. Elite is required for `log_trial_offer`.
 - **`filter_players` requires `offset` and `limit`.** The limit is capped at 50 server-side.
 - **`set_progress_contract` on verification is first-call-only.** Returns `AlreadyConfigured` (code 11) if called again. Use `update_progress_contract` to re-wire.
+- **`approve_milestone` stops working once k-of-n threshold mode is enabled.** Once an admin calls `set_milestone_threshold(n)` with `n >= 2`, both `approve_milestone` and `submit_attested_milestone` return `ThresholdModeRequiresAttestation` (code 28) for every subsequent call — all milestone submissions must go through `attest_milestone` instead. Call `get_milestone_threshold()` to check the current mode before integrating; a return value of `1` (the default) means single-signature mode is still active and `approve_milestone` works as normal. A return value of `2` or higher means every validator must call `attest_milestone` independently, and the milestone commits automatically once the threshold number of distinct active validators have voted for the same `(player_id, evidence_hash)` claim within the configured voting window.
 
 > **⚠️ Verify `log_trial_offer` behavior against the live contract before integrating.**
 > The documented two-step flow (`log_trial_offer` → `confirm_trial_offer`) and level-advancement mechanics in this file reflect the contract's *intended* behavior at the time of writing. However, on-chain behavior is the ultimate source of truth. Before building any integration that depends on trial offers, **call `log_trial_offer` on the target network (testnet/mainnet) with a test scout account and inspect the resulting transaction: confirm the offer is recorded, the fee is escrowed, and no level advancement occurs until `confirm_trial_offer` is called by the player.** Cross-reference the emitted `trial_offer_logged` event and the progress contract's state against this document. If the live contract diverges from the docs, the live contract wins — file an issue to update the docs, but code to the live behavior.

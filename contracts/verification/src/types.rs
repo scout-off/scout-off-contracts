@@ -87,6 +87,14 @@ pub struct Validator {
     /// matching specialization tag can approve it. An empty Vec means the validator can approve
     /// any untagged (general-category) milestone but cannot approve tagged milestones.
     pub specializations: Vec<String>,
+    /// Geographic region (e.g. "West Africa", "Europe") used by the
+    /// `min_region_quorum` anti-collusion gate: approving validators must span
+    /// at least that many distinct regions before a gated level (2/3) advance
+    /// commits (see `set_min_region_quorum` / README Progress Level table).
+    /// APPENDED LAST to keep existing stored `Validator` entries
+    /// deserializable after upgrade (safe-layout-compat, matching
+    /// `scripts/fixtures/storage_compat_safe/new_types.rs`).
+    pub region: String,
 }
 
 /// Entry in the global milestone index for on-chain auditability.
@@ -106,6 +114,33 @@ pub struct GlobalMilestoneIndexPage {
     /// Page of global milestone index entries.
     pub entries: Vec<GlobalMilestoneEntry>,
     /// Total number of milestones in the global index.
+    pub total: u32,
+}
+
+/// Paginated response for `get_validator_milestones_page` and the new
+/// `get_validator_players_page`.
+///
+/// Follows the same `{ entries, total }` convention as
+/// [`GlobalMilestoneIndexPage`] so callers have a consistent stop condition.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct MilestoneRefPage {
+    /// Page of milestone references, in approval order (oldest first).
+    pub entries: Vec<MilestoneRef>,
+    /// Total number of milestone references in the validator's list.
+    pub total: u32,
+}
+
+/// Paginated response for `get_validator_players_page`.
+///
+/// `entries` is a page of distinct player IDs for which the validator has
+/// approved at least one milestone; `total` is the size of the full list.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ValidatorPlayersPage {
+    /// Page of distinct player IDs, in order of first approval.
+    pub entries: Vec<u64>,
+    /// Total number of distinct players in the validator's list.
     pub total: u32,
 }
 
@@ -234,6 +269,42 @@ pub struct PendingMilestoneClaim {
     /// the global threshold mid-vote cannot retroactively fast-track or
     /// invalidate an in-flight claim.
     pub threshold: u32,
+    /// Per-(region, count) tally of the distinct validator regions among the
+    /// attesters who have voted in this round. `count` tracks how many
+    /// active votes carry that region so a later `revoke_validator` can
+    /// decrement it exactly (the claim's stored vote count and this tally
+    /// stay in lockstep). At threshold-crossing the region-quorum gate is
+    /// evaluated over the entries with `count > 0` — the attesting validator
+    /// set — NOT the accumulated per-player region history.
+    /// APPENDED LAST (safe-layout-compat): in-flight claims written by a
+    /// pre-upgrade build are transient (TTL-bounded, cleared on commit or
+    /// round expiry), so a decode failure here only orphans short-lived
+    /// pending-vote state, never committed milestones.
+    pub attester_regions: Vec<(String, u32)>,
+    /// Per-(affiliation, count) tally of the distinct validator affiliations
+    /// among this round's attesters, mirroring `attester_regions` for the
+    /// `DiversityConfig` affiliation gate.
+    pub attester_affiliations: Vec<(String, u32)>,
+}
+
+/// Distinct regions/affiliations of the validators whose votes reached the
+/// k-of-n threshold for a single claim (derived from
+/// `PendingMilestoneClaim::attester_regions` / `attester_affiliations` at
+/// threshold-crossing).
+///
+/// The `min_region_quorum` and `DiversityConfig` affiliation gates evaluate
+/// against THIS set for k-of-n approvals, so a threshold met entirely by
+/// validators from one region or one affiliation can never advance the level
+/// on the strength of accumulated history from other milestones. The
+/// single-validator paths (`approve_milestone`,
+/// `submit_attested_milestone`, and `attest_milestone` with threshold == 1)
+/// pass `None` and keep evaluating against the accumulated per-player sets.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AttesterDiversity {
+    /// Distinct validator regions among the attesting set.
+    pub regions: Vec<String>,
+    /// Distinct validator affiliations among the attesting set.
+    pub affiliations: Vec<String>,
 }
 
 /// Reference to one of a validator's currently-open pending-claim votes.
@@ -255,7 +326,10 @@ pub enum AttestationStatus {
     /// Vote recorded; still short of threshold. Payload is the new vote count.
     Pending(u32),
     /// This vote reached threshold; the milestone was committed and
-    /// `progress.advance_level` was invoked. Payload is the milestone index.
+    /// `progress.advance_level` was invoked — unless the region-quorum or
+    /// affiliation-diversity gates blocked the advance (see
+    /// `commit_approved_milestone`), in which case the milestone is recorded
+    /// but the level is not advanced. Payload is the milestone index.
     Committed(u32),
 }
 
@@ -319,11 +393,31 @@ pub enum DataKey {
     ValidatorPlayerMilestoneCount(Address, u64),
     ValidatorVector,
     TotalMilestoneCount,
+    /// Reserved legacy key for the pre-ring global milestone index. New reads
+    /// and writes use `GlobalMilestoneWriteHead` + `GlobalMilestoneSlot(slot)`.
     GlobalMilestoneIndex,
+    /// Monotonic write counter for the ring-buffer global milestone index.
+    /// Stored in instance storage. Value is the total number of entries ever
+    /// written (including evicted ones). O(1) to read and update.
+    GlobalMilestoneWriteHead,
+    /// One slot of the ring-buffer global milestone index, stored in
+    /// **persistent** storage (not instance) so individual slots have
+    /// per-key TTL management and the hot instance-storage entry does not
+    /// balloon with each slot write.
+    ///
+    /// `slot_index = write_head % MAX_GLOBAL_MILESTONE_INDEX`
+    GlobalMilestoneSlot(u32),
     /// Persistent config for diversity-gated milestone advancement
     DiversityConfig,
     /// Persistent index: player_id → Vec<String> distinct affiliations that have contributed milestones
     PlayerAffiliations(u64),
+    /// Persistent index: player_id → Vec<String> distinct validator REGIONS that
+    /// have contributed milestones, used by the `min_region_quorum` gate for the
+    /// single-validator approval paths. Mirrors `PlayerAffiliations` so both
+    /// anti-collusion predicates are evaluated over the same accumulated validator
+    /// diversity for a player. k-of-n threshold approvals instead evaluate the
+    /// gate over the attesting validator set (see `AttesterDiversity`).
+    PlayerRegions(u64),
     /// Persistent index: validator wallet → Vec<u64> of distinct player_ids
     /// for which that validator has approved at least one milestone.
     /// Updated on every `approve_milestone` call (duplicates are skipped).
@@ -411,6 +505,17 @@ pub enum DataKey {
     /// Re-wiring epoch for `DataKey::RegistrationContract`, bumped by every
     /// `set_registration_contract` / `update_registration_contract` call.
     RegistrationContractEpoch,
+
+    // ── Jury escalation system (issue #1036) ──
+    /// Admin-configurable jury parameters stored in instance storage.
+    /// Defaults: impact_threshold=100, quorum=3, voting_window_secs=604800.
+    JuryConfig,
+    /// Individual validator vote on a jury-required dispute.
+    /// Keyed by (player_id, milestone_index, validator_wallet).
+    DisputeVote(u64, u32, Address),
+    /// Running vote count for a dispute, keyed by (player_id, milestone_index).
+    /// Provides an O(1) count without scanning individual DisputeVote entries.
+    DisputeVoteCount(u64, u32),
 
     // ── Validator revocation cascade re-review (issue #1039) ──
     /// Persisted `RevocationRecord` for a revoked validator wallet.

@@ -100,6 +100,8 @@ jobs:
           shellcheck scripts/check-guard-ordering.sh
           shellcheck scripts/check-cross-doc-consistency.sh
           shellcheck scripts/check-trial-offer-flow-consistency.sh
+          shellcheck scripts/check-error-code-continuity.sh
+          shellcheck scripts/check-cargo-doc.sh
       - name: Docs completeness check
         run: bash scripts/check-docs.sh
       - name: Event-topic consistency check
@@ -110,6 +112,10 @@ jobs:
         run: bash scripts/check-cross-doc-consistency.sh
       - name: Trial-offer flow doc consistency check
         run: bash scripts/check-trial-offer-flow-consistency.sh
+      - name: Error-code continuity check
+        run: bash scripts/check-error-code-continuity.sh
+      - name: Cargo doc missing-documentation check
+        run: bash scripts/check-cargo-doc.sh
       - name: Validate bindings package.json templates
         run: bash scripts/check-bindings.sh
 
@@ -520,15 +526,7 @@ jobs:
             stellar contract optimize --wasm "$wasm_src" --wasm-out "$wasm_opt"
             size=$(wc -c < "$wasm_opt" | tr -d ' ')
             echo "    ${contract}: ${size} bytes (optimized)"
-            python3 -c "
-import json
-path = 'abi/wasm-sizes.json'
-with open(path) as f:
-    data = json.load(f)
-data['${contract}'] = ${size}
-with open(path, 'w') as f:
-    json.dump(data, f, indent=2, sort_keys=True)
-"
+            python3 scripts/record_wasm_sizes.py "${contract}"
           done
           echo ""
           echo "==> abi/wasm-sizes.json:"

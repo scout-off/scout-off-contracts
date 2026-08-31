@@ -25,6 +25,73 @@ NETWORK="${1:-testnet}"
 # shellcheck disable=SC1091
 source .env.contracts
 
+# Derive the contract/workspace version from Cargo.toml — the build-time source
+# of truth (see docs/VERSIONING.md). The generated bindings packages are
+# versioned in lockstep with it so consumers can match a bindings release to
+# the contract code that produced it.
+WORKSPACE_VERSION="$(awk '
+  /^\[workspace\.package\]/ { in_ws = 1; next }
+  /^\[/                   { in_ws = 0 }
+  in_ws && /^version[[:space:]]*=/ {
+    match($0, /"[^"]+"/)
+    print substr($0, RSTART + 1, RLENGTH - 2)
+    exit
+  }
+' Cargo.toml)"
+
+if [[ -z "$WORKSPACE_VERSION" ]]; then
+  echo "ERROR: could not derive the workspace version from Cargo.toml ([workspace.package].version)"
+  exit 1
+fi
+
+echo "==> Using workspace version $WORKSPACE_VERSION for bindings packages (from Cargo.toml)"
+
+# Rewrite the "version" field of a generated binding package.json to the
+# workspace version. `stellar contract bindings typescript` wipes the output
+# dir (with --overwrite) and regenerates package.json from the CLI's own
+# template, which hardcodes a placeholder version — so this must run after
+# every generation. jq is preferred; python3 is a fallback (both are already
+# used elsewhere in this repo's tooling).
+sync_binding_version() {
+  local name="$1"
+  local pkg_json="bindings/${name}/package.json"
+
+  if [[ ! -f "$pkg_json" ]]; then
+    echo "    WARNING: $pkg_json not found — cannot sync version"
+    return
+  fi
+
+  if command -v jq >/dev/null 2>&1; then
+    local tmpfile
+    tmpfile="$(mktemp)"
+    if jq --arg v "$WORKSPACE_VERSION" '.version = $v' "$pkg_json" > "$tmpfile" && mv "$tmpfile" "$pkg_json"; then
+      echo "    Synced version to $WORKSPACE_VERSION in $pkg_json"
+    else
+      echo "    WARNING: failed to sync version in $pkg_json"
+      rm -f "$tmpfile"
+    fi
+  elif command -v python3 >/dev/null 2>&1; then
+    if python3 - "$pkg_json" "$WORKSPACE_VERSION" <<'PYEOF'
+import json, sys
+
+path, version = sys.argv[1], sys.argv[2]
+with open(path) as f:
+    data = json.load(f)
+data["version"] = version
+with open(path, "w") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+PYEOF
+    then
+      echo "    Synced version to $WORKSPACE_VERSION in $pkg_json"
+    else
+      echo "    WARNING: failed to sync version in $pkg_json"
+    fi
+  else
+    echo "    WARNING: neither jq nor python3 available — could not sync version in $pkg_json"
+  fi
+}
+
 CONTRACTS=(registration verification progress scout_access)
 
 declare -A IDS=(
@@ -46,6 +113,11 @@ for name in "${CONTRACTS[@]}"; do
     --overwrite
 
   echo "    Written to $out/"
+
+  # The CLI regenerates package.json from its own template on every run, so
+  # re-apply the workspace version afterwards to keep bindings in lockstep
+  # with the contracts they wrap.
+  sync_binding_version "$name"
 done
 
 # Extract function lists from CONTRACT_REFERENCE.md and inject into each bindings README

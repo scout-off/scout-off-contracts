@@ -194,18 +194,31 @@ The two underlying scripts remain available for targeted debugging:
 
 ### 7. Run the database migration
 
-Copy the migration files to your backend repo and run them against PostgreSQL in order:
+Copy the migration files to your backend repo and run them against PostgreSQL in
+numeric order. **Run every file** — skipping any migration leaves tables, columns,
+or indexes missing and will cause silent indexer errors at runtime.
 
 ```bash
 psql $DATABASE_URL -f migrations/001_initial_schema.sql
 psql $DATABASE_URL -f migrations/002_cursor_upsert_helper.sql
+psql $DATABASE_URL -f migrations/003_diagnostic_events.sql
+psql $DATABASE_URL -f migrations/004_evidence_access_grants.sql
+psql $DATABASE_URL -f migrations/004_scout_subscriptions_auto_renew.sql
+psql $DATABASE_URL -f migrations/005_dispute_jury.sql
+psql $DATABASE_URL -f migrations/005_milestone_flags.sql
 ```
 
-`001_initial_schema.sql` creates all fourteen tables and seeds the `indexer_cursor`
-row so the indexer can `SELECT` it on first startup without encountering an empty
-result. Every `CREATE TABLE` and `CREATE INDEX` uses `IF NOT EXISTS` and the seed
-`INSERT` uses `ON CONFLICT DO NOTHING`, making both files safe to re-run against an
-already-migrated database.
+> **Note:** Where two files share the same numeric prefix (both `004_*` and both
+> `005_*`), apply them in alphabetical filename order — they are independent and
+> additive (different tables/columns) and have no inter-dependency within the same
+> prefix. See `migrations/README.md` for details.
+
+All migration files are idempotent (`CREATE TABLE IF NOT EXISTS`,
+`ALTER TABLE … ADD COLUMN IF NOT EXISTS`): re-running against an already-migrated
+database is safe.
+
+`001_initial_schema.sql` creates all fourteen base tables and seeds the
+`indexer_cursor` row so the indexer can `SELECT` it on first startup.
 
 `002_cursor_upsert_helper.sql` adds the `advance_indexer_cursor(p_ledger BIGINT)`
 helper function. Call it from the indexer after processing each batch of Horizon
@@ -217,6 +230,21 @@ SELECT advance_indexer_cursor(42391);
 
 The function updates `last_ledger` only when the supplied value is greater than the
 stored value, so replaying an old batch never accidentally rewinds the cursor.
+
+`003_diagnostic_events.sql` adds the `diagnostic_events` table for off-chain
+diagnostic event logging.
+
+`004_evidence_access_grants.sql` adds the `evidence_access_grants` table —
+the off-chain mirror of `scout_access.EvidenceAccessGrant`.
+
+`004_scout_subscriptions_auto_renew.sql` adds the `auto_renew` column to
+`scout_subscriptions` so the indexer can track per-scout auto-renewal opt-in.
+
+`005_dispute_jury.sql` adds jury-escalation columns to `milestone_disputes` and
+creates the `dispute_votes` table for per-validator audit trail.
+
+`005_milestone_flags.sql` adds the `milestone_flags` and `revocation_records`
+tables for the validator-revocation cascade re-review system.
 
 ### Resetting the Indexer Cursor
 
@@ -254,7 +282,7 @@ WHERE id = 1;
 -- 4. Restart the indexer — it will stream events from ledger 0.
 ```
 
-### 7. Seed migrated state (optional)
+### 8. Seed migrated state (optional)
 
 For fresh deployments of an existing production dataset, use the admin-only
 seeding entrypoints to replay exported player/scout profiles without requiring
@@ -285,7 +313,7 @@ stellar contract invoke --id $REGISTRATION_CONTRACT_ID \
 > be used during a controlled migration replay before the contract serves any
 > real wallet-signed registrations.
 
-### 8. Verify indexer consistency
+### 9. Verify indexer consistency
 
 ```bash
 node scripts/reconcile-indexer.js

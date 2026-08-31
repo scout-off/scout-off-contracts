@@ -6,13 +6,13 @@ use soroban_sdk::{contracttype, Address, Env, IntoVal, String};
 #[contracttype]
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum ProgressLevel {
-    /// Level 0 — profile created, no verification yet
+    /// Level 0 - profile created, no verification yet
     Unverified,
-    /// Level 1 — identity confirmed by academy or KYC
+    /// Level 1 - identity confirmed by academy or KYC
     VerifiedIdentity,
-    /// Level 2 — performance milestones verified by approved third party
+    /// Level 2 - performance milestones verified by approved third party
     PerformanceMilestones,
-    /// Level 3 — scout feedback or trial offer logged
+    /// Level 3 - scout feedback or trial offer logged
     EliteTier,
 }
 
@@ -31,6 +31,16 @@ pub struct ContractHealth {
 }
 
 impl ProgressLevel {
+    /// Monotonic ordering used by contracts that compare minimum progress tiers.
+    pub fn rank(&self) -> u8 {
+        match self {
+            ProgressLevel::Unverified => 0,
+            ProgressLevel::VerifiedIdentity => 1,
+            ProgressLevel::PerformanceMilestones => 2,
+            ProgressLevel::EliteTier => 3,
+        }
+    }
+
     /// Returns `Some(next_tier)` for `Unverified`, `VerifiedIdentity`, and
     /// `PerformanceMilestones`, and `None` for `EliteTier`.
     ///
@@ -501,6 +511,36 @@ pub mod safe_math {
             assert_eq!(safe_add_u32(u32::MAX, 1), Err(ArithmeticError));
         }
     }
+}
+
+// ── Shared pagination types ───────────────────────────────────────────────────
+//
+// All list-returning query functions that accept an `offset` + `limit` use one
+// of these page-result structs so callers receive both the requested window of
+// entries **and** the total count (which tells them when to stop paging).
+//
+// Soroban's `#[contracttype]` macro does not support Rust generics, so each
+// per-element type needs its own concrete Page struct.  The naming convention
+// is `<ElementType>Page`.  New structs should be added here rather than
+// reinvented per-contract.
+//
+// The `total` field reflects the size of the underlying collection at the
+// moment the function was called; it is not a ledger-snapshotted value.
+// Callers should treat it as an advisory guide for loop termination rather
+// than a guarantee of consistency across multiple calls.
+
+/// A page of `u64` IDs (e.g. player IDs) returned by a paginated query.
+///
+/// `entries` contains at most `limit` (capped at 50) items starting at
+/// `offset`.  `total` is the total number of items in the underlying
+/// collection at call time — use it to detect when paging is complete.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct U64Page {
+    /// The items in this page, in insertion order.
+    pub entries: soroban_sdk::Vec<u64>,
+    /// Total number of items in the underlying collection.
+    pub total: u32,
 }
 
 ///

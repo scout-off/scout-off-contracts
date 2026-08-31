@@ -1,12 +1,20 @@
 # Fee Configuration Propose-Then-Activate Mechanism (Issue #807)
 
+> **Status: Implemented.** `propose_fee_config` and `activate_fee_config` ship
+> in the `scout_access` contract with error codes 24–26
+> (`NoPendingFeeConfig`, `FeeConfigProposalNotReady`,
+> `PendingFeeConfigAlreadyExists`) and the `fee_config_proposed` event. See
+> [CONTRACT_REFERENCE.md](CONTRACT_REFERENCE.md#scout_access) for the live
+> function reference. The one remaining gap is the proposal-cancellation event
+> (see [Rollback and Edge Cases](#rollback-and-edge-cases)), tracked separately.
+
 ## Overview
 
-This document specifies a timelocked propose-then-activate mechanism for fee changes in the scout_access contract, providing scouts with on-chain-enforced advance notice before any fee increase takes effect.
+This document specifies the timelocked propose-then-activate mechanism for fee changes in the scout_access contract, providing scouts with on-chain-enforced advance notice before any fee increase takes effect.
 
-Currently, `update_fee_config` takes effect atomically in the same transaction it's called in, with zero advance notice. This contrasts sharply with the existing two-step `propose_admin` / `accept_admin` pattern already used for admin rotation, which gives affected parties a chance to react.
+`update_fee_config` takes effect atomically in the same transaction it's called in, with zero advance notice. This contrasts sharply with the existing two-step `propose_admin` / `accept_admin` pattern already used for admin rotation, which gives affected parties a chance to react.
 
-This design introduces `propose_fee_config` and `activate_fee_config` functions to close that gap.
+The `propose_fee_config` and `activate_fee_config` functions close that gap.
 
 ---
 
@@ -102,7 +110,7 @@ pub struct FeeConfigProposal {
 
 **Auth:** Current admin must sign.
 
-**Errors:** `NotInitialized`, `InvalidInput` (validation failure), `AdminNotFound`.
+**Errors:** `NotInitialized`, `InvalidInput` (validation failure), `PendingFeeConfigAlreadyExists`. (Admin auth is enforced by `require_admin`, which fails with `NotInitialized` when no admin is set and otherwise traps on a missing signature.)
 
 **Emits:** `fee_config_proposed` (always); may also emit `fee_config_updated` if activation is immediate (decreases only).
 
@@ -127,7 +135,7 @@ pub struct FeeConfigProposal {
 
 **Auth:** Current admin must sign.
 
-**Errors:** `NotInitialized`, `AdminNotFound`, `NoPendingFeeConfig`, `FeeConfigProposalNotReady`.
+**Errors:** `NotInitialized`, `NoPendingFeeConfig`, `FeeConfigProposalNotReady`, `Overflow`.
 
 **Emits:** `fee_config_updated` with `(admin, old_active_config, newly_activated_config)`.
 
@@ -244,9 +252,10 @@ Emitted **only** by `update_fee_config`, in the same transaction as (and immedia
 
 ---
 
-## CONTRACT_REFERENCE.md Updates
+## CONTRACT_REFERENCE.md Entries
 
-Will add two new function entries under `scout_access`:
+Two function entries are documented under `scout_access` in
+[CONTRACT_REFERENCE.md](CONTRACT_REFERENCE.md#scout_access):
 
 #### `propose_fee_config(fee_config: FeeConfig) -> Result<(), ScoutAccessError>`
 
@@ -255,7 +264,7 @@ Propose a new fee configuration. If all fees are ≤ current fees (decreases onl
 | | |
 |---|---|
 | **Auth** | Current admin must sign |
-| **Errors** | `NotInitialized` · `InvalidInput` (validation failure) · `AdminNotFound` |
+| **Errors** | `NotInitialized` · `InvalidInput` (validation failure) · `PendingFeeConfigAlreadyExists` |
 | **Emits** | `fee_config_proposed` (always if no immediate activation); may also emit `fee_config_updated` for decreases |
 | **Delay** | 7 days (604,800 seconds) for increases; none for decreases |
 
@@ -266,7 +275,7 @@ Activate a pending fee configuration proposal after the 7-day delay has elapsed.
 | | |
 |---|---|
 | **Auth** | Current admin must sign |
-| **Errors** | `NotInitialized` · `AdminNotFound` · `NoPendingFeeConfig` · `FeeConfigProposalNotReady` (delay not yet elapsed) |
+| **Errors** | `NotInitialized` · `NoPendingFeeConfig` · `FeeConfigProposalNotReady` (delay not yet elapsed) · `Overflow` |
 | **Emits** | `fee_config_updated` with `(admin, old_config, new_config)` |
 
 ---
@@ -302,9 +311,14 @@ Attempting to call `propose_fee_config` when a pending proposal already exists r
 
 Admin must either:
 1. Call `activate_fee_config` to finalize the pending proposal, then propose a new one.
-2. Emit a cancellation event (not implemented; future work) or manually clear the pending state (not exposed; requires contract upgrade).
+2. Manually clear the pending state (not exposed; requires contract upgrade).
 
 This prevents confusion about which proposal will be active when.
+
+> **Remaining item:** a proposal-*cancellation* path and its event are not
+> implemented. Today a pending proposal can only be cleared by activating it
+> or by a contract upgrade. This is the sole open gap for this feature and is
+> tracked separately.
 
 ---
 

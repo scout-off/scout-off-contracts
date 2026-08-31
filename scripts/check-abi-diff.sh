@@ -139,6 +139,30 @@ PYEOF
   fi
 }
 
+# Check docs/VERSIONING.md for a matching Version History row added in the diff.
+# Requires a row in the Version History table for MAJOR/MINOR ABI changes.
+check_version_history() {
+  local base_ref="$1"
+  local head_ref="$2"
+  local versioning="docs/VERSIONING.md"
+
+  if [[ ! -f "$versioning" ]]; then
+    echo "    VERSIONING: MISSING — docs/VERSIONING.md not found"
+    return 1
+  fi
+
+  local added_rows
+  added_rows=$(git diff --no-ext-diff --unified=0 "$base_ref" "$head_ref" -- "$versioning" 2>/dev/null || true)
+
+  if echo "$added_rows" | grep -Eq '^\+\|[[:space:]]*v[0-9]+\.[0-9]+\.[0-9]+([[:space:]]*\([^)]+\))?[[:space:]]*\|'; then
+    echo "    VERSIONING: OK (Version History row added)"
+    return 0
+  fi
+
+  echo "    VERSIONING: MISSING — no Version History row added for this MAJOR/MINOR change"
+  return 1
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -192,6 +216,9 @@ for contract in "${CONTRACTS[@]}"; do
     if ! check_changelog "$contract" "MINOR"; then
       overall_fail=1
     fi
+    if ! check_version_history "$BASE_REF" "$HEAD_REF"; then
+      overall_fail=1
+    fi
     continue
   fi
 
@@ -200,6 +227,9 @@ for contract in "${CONTRACTS[@]}"; do
 
   if [[ "$classification" == "MAJOR" ]] || [[ "$classification" == "MINOR" ]]; then
     if ! check_changelog "$contract" "$classification"; then
+      overall_fail=1
+    fi
+    if ! check_version_history "$BASE_REF" "$HEAD_REF"; then
       overall_fail=1
     fi
   fi
