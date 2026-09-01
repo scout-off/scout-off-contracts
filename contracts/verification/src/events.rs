@@ -387,23 +387,31 @@ pub fn revocation_cascade_continued(
     );
 }
 
-/// Emitted when a validator casts a vote on a jury-required dispute.
-/// topics: (event_name, validator)  data: (player_id, milestone_index, for_upheld)
+/// Emitted when a validator casts a vote on a jury-required milestone dispute.
+///
+/// topics: (event_name, validator)  data: (player_id, milestone_index, vote)
+///
+/// `vote` is `true` when the validator votes to uphold the original approval,
+/// `false` when they vote to overturn it.  Matches the shape documented in
+/// docs/DISPUTE_JURY.md and docs/EVENT_AUDIT.md.
 pub fn dispute_vote_cast(
     env: &Env,
     player_id: u64,
     milestone_index: u32,
     validator: &Address,
-    for_upheld: bool,
+    vote: bool,
 ) {
     env.events().publish(
         (Symbol::new(env, DISPUTE_VOTE_CAST), validator.clone()),
-        (player_id, milestone_index, for_upheld),
+        (player_id, milestone_index, vote),
     );
 }
 
-/// Emitted when a jury-required dispute is tallied and resolved.
+/// Emitted when a jury dispute is tallied (closed with a final verdict).
+///
 /// topics: (event_name, player_id)  data: (milestone_index, upheld, votes_for, votes_against)
+///
+/// Matches the shape documented in docs/DISPUTE_JURY.md and docs/EVENT_AUDIT.md.
 pub fn dispute_tallied(
     env: &Env,
     player_id: u64,

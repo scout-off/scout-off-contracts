@@ -21,6 +21,8 @@ pub const FEE_CONFIG_PROPOSED: &str = "fee_config_proposed";
 pub const FEE_CONFIG_UPDATED: &str = "fee_config_updated";
 pub const FEE_CONFIG_DELAY_BYPASSED: &str = "fee_config_delay_bypassed";
 pub const WIRING_UPDATED: &str = "wiring_updated";
+pub const EVIDENCE_ACCESS_GRANTED: &str = "evidence_access_granted";
+pub const EVIDENCE_ACCESS_REVOKED: &str = "evidence_access_revoked";
 
 /// topics: (event_name, admin)  data: admin
 pub fn contract_initialized(env: &Env, admin: &Address) {

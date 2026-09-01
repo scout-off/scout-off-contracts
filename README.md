@@ -775,10 +775,10 @@ Comprehensive event reference is available in [`ai.md`](ai.md#events-reference).
 | `contract_unpaused` | Admin unpauses the contract (circuit breaker deactivated) |
 | `admin_transfer_proposed` | Current admin proposes a replacement address |
 | `admin_transferred` | Pending admin accepts control |
-| `progress_contract_updated` | Admin re-wires the progress contract link |
-| `level_advancement_skipped` | Milestone approval skipped advancement (player already at max level) |
-| `progress_contract_not_set` | Diagnostic: progress contract wiring link is missing (emitted on-chain; check logs) |
-| `progress_call_failed` | Diagnostic: cross-contract call to progress contract failed (diagnostic-only; check receipts) |
+| `dispute_vote_cast` | A validator casts a vote on a jury-required milestone dispute |
+| `dispute_tallied` | A jury dispute is closed with a final verdict (upheld or overturned) |
+| `evidence_access_granted` | An `EvidenceAccessGrant` is issued to a scout via `pay_to_contact` / `batch_contact_players` |
+| `evidence_access_revoked` | Admin revokes a scout's `EvidenceAccessGrant` via `admin_revoke_evidence_access` |
 
 ## Why Stellar
 

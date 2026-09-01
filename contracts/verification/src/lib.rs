@@ -1272,7 +1272,7 @@ impl VerificationContract {
     /// been fully evicted (key absent) and is unrecoverable.
     pub fn restore_validator_record(env: Env, wallet: Address) -> Result<(), VerificationError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
-        let _validator: Validator = env
+        let validator: Validator = env
             .storage()
             .persistent()
             .get(&DataKey::Validator(wallet.clone()))
@@ -1282,6 +1282,29 @@ impl VerificationContract {
             PERSISTENT_TTL_MIN,
             PERSISTENT_TTL_MAX,
         );
+
+        // Re-extend ValidatorVector TTL and re-insert the wallet if active so
+        // get_validators() returns the restored validator.  Revoked validators
+        // are intentionally absent from the vector; only re-add if active.
+        if validator.active {
+            let mut validator_vector: Vec<Address> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::ValidatorVector)
+                .unwrap_or_else(|| Vec::new(&env));
+            if !validator_vector.iter().any(|v| v == wallet) {
+                validator_vector.push_back(wallet.clone());
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::ValidatorVector, &validator_vector);
+            }
+        }
+        env.storage().persistent().extend_ttl(
+            &DataKey::ValidatorVector,
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
+
         events::validator_record_restored(&env, &admin, &wallet);
         Ok(())
     }

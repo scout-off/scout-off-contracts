@@ -150,6 +150,17 @@ Soroban's archival model allows a grace period where a key is archived (not avai
 - If the targeted key is fully evicted (absent), the call fails with a dedicated error (`*RecordEvicted`) rather than silently succeeding, so operators can distinguish "recovered" from "gone".
 - Note: `verification::restore_validator` is a distinct reactivation path (flips `active`/`banned`); `restore_validator_record` only re-extends TTL and leaves status flags untouched.
 
+**Index Restoration (issue #1143):**
+- `registration::restore_player_record` also re-extends and re-inserts the player into all derived
+  index keys so the player reappears in `filter_players` after restoration:
+  - `PlayerLevel(player_id)` TTL is re-extended.
+  - `PlayerIndex` — player is re-inserted if absent, and TTL re-extended.
+  - `PlayersByLevelRegion(level, region)` — player is re-inserted (duplicate-guarded), TTL re-extended.
+  - `PlayersByLevel(level)` — player is re-inserted (duplicate-guarded), TTL re-extended.
+- `verification::restore_validator_record` also re-extends the `ValidatorVector` TTL.  If the
+  validator is active (not revoked), the wallet is re-inserted into `ValidatorVector` so
+  `get_validators()` returns it correctly after restoration.
+
 **Future Enhancement (not in this issue):**
 - Add off-chain monitoring to alert on imminent archival (e.g., when a key's TTL drops below 7 days).
 - See issue #1066 for the implemented restoration architecture.

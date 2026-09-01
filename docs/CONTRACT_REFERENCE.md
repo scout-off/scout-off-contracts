@@ -2363,6 +2363,8 @@ stellar contract invoke --id $VERIFICATION_CONTRACT_ID -- version
 | `milestone_flagged` | event_name, admin (Address) | player_id (u64), milestone_index (u32) | For-cause validator revocation flagged this milestone for re-review |
 | `milestone_disputed` | event_name, player_wallet (Address) | player_id (u64), milestone_index (u32), reason (String) | Player disputes a milestone attribution |
 | `dispute_resolved` | event_name, admin (Address) | player_id (u64), milestone_index (u32), upheld (bool) | Admin resolves a milestone dispute |
+| `dispute_vote_cast` | event_name, validator (Address) | player_id (u64), milestone_index (u32), vote (bool) | Validator casts a vote on a jury-required dispute; `vote=true` means uphold |
+| `dispute_tallied` | event_name, player_id (u64) | milestone_index (u32), upheld (bool), votes_for (u32), votes_against (u32) | Jury dispute closed with final verdict |
 | `progress_contract_updated` | event_name, admin (Address) | progress_contract (Address) | Progress contract re-wired |
 | `contract_paused` | event_name, admin (Address) | () | Circuit breaker engaged |
 | `contract_unpaused` | event_name, admin (Address) | () | Circuit breaker released |
@@ -5099,7 +5101,15 @@ pub struct TrialOffer {
 | 27 | `ScoutNotVerified` | Pro-tier `subscribe()` rejected an unverified (or not-found) scout — see [`docs/SYBIL_MITIGATION_DESIGN.md`](SYBIL_MITIGATION_DESIGN.md) |
 | 28 | `AutoRenewNotEnabled` | `renew_if_due` called for a scout without auto-renewal enabled |
 | 29 | `SubscriptionRecordEvicted` | `restore_subscription_record` targeted a subscription entry whose archival grace period has fully elapsed (evicted, not merely archived) and is unrecoverable |
-| 30 | `PayToContactPaused` | `pay_to_contact` called while the function-scoped pause is active (issue #1056) — the whole-contract `ContractPaused` (3) takes precedence when both are set |
+| 30 | `SubscriptionAlreadyExists` | Migration replay: a `Subscription` already exists for this scout with different content |
+| 31 | `ContactAlreadyExists` | Migration replay: a `ContactRecord` already exists for `(player_id, scout)` with different content |
+| 32 | `TrialOfferAlreadyExists` | Migration replay: a `TrialOffer` already exists at `(player_id, trial_index)` with different content |
+| 33 | `AutoRenewAlreadyExists` | Migration replay: an `AutoRenew` flag already exists for this scout with a different value |
+| 34 | `FeeConfigHistoryAlreadyExists` | Migration replay: a fee-config history entry conflicts with history already stored |
+| 35 | `SubscriptionRecordEvicted` | (see code 29 above — same variant; retained for legacy slot reservation) |
+| 36 | `PayToContactPaused` | `pay_to_contact` called while the function-scoped pause is active (issue #1056) — the whole-contract `ContractPaused` (3) takes precedence when both are set |
+| 37 | `TrialEscrowNotOutstanding` | `admin_refund_trial_escrow` targeted a `(player_id, offer_index)` pair with no outstanding `TrialEscrow` entry |
+| 38 | `GrantNotFound` | `admin_revoke_evidence_access` targeted a `(player_id, scout)` pair for which no `EvidenceAccessGrant` has ever been issued |
 
 ---
 
@@ -5139,6 +5149,8 @@ All events follow the unified `(Symbol, actor)` topic schema introduced in #246.
 | `validator_transferred` | event_name, admin (Address) | old_wallet (Address), new_wallet (Address) | Validator identity migrated to new wallet |
 | `milestone_disputed` | event_name, player_wallet (Address) | player_id (u64), milestone_index (u32), reason (String) | Player disputes a milestone attribution |
 | `dispute_resolved` | event_name, admin (Address) | player_id (u64), milestone_index (u32), upheld (bool) | Admin resolves a milestone dispute |
+| `dispute_vote_cast` | event_name, validator (Address) | player_id (u64), milestone_index (u32), vote (bool) | Validator casts a vote on a jury-required dispute; `vote=true` means uphold |
+| `dispute_tallied` | event_name, player_id (u64) | milestone_index (u32), upheld (bool), votes_for (u32), votes_against (u32) | Jury dispute closed with final verdict |
 | `progress_contract_updated` | event_name, admin (Address) | progress_contract (Address) | Progress contract address re-wired |
 | `contract_paused` | event_name, admin (Address) | () | Circuit breaker engaged |
 | `contract_unpaused` | event_name, admin (Address) | () | Circuit breaker released |

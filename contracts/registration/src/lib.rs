@@ -1182,7 +1182,7 @@ mod tests {
     /// fully evicted (key absent) and is no longer recoverable.
     pub fn restore_player_record(env: Env, player_id: u64) -> Result<(), ScoutChainError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
-        let _profile: PlayerProfile = env
+        let profile: StoredPlayerProfile = env
             .storage()
             .persistent()
             .get(&DataKey::Player(player_id))
@@ -1192,6 +1192,78 @@ mod tests {
             PERSISTENT_TTL_MIN,
             PERSISTENT_TTL_MAX,
         );
+
+        // Re-extend the derived index TTLs so the player remains discoverable
+        // via filter_players after restoration.  The indexes may have archived
+        // on the same schedule as the profile; re-inserting ensures membership
+        // is correct regardless.
+        let level: ProgressLevel = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PlayerLevel(player_id))
+            .unwrap_or(ProgressLevel::Unverified);
+        env.storage().persistent().extend_ttl(
+            &DataKey::PlayerLevel(player_id),
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
+
+        // Re-insert into PlayerIndex (guarded against duplicates).
+        let mut player_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PlayerIndex)
+            .unwrap_or_else(|| Vec::new(&env));
+        if !player_ids.iter().any(|id| id == player_id) {
+            player_ids.push_back(player_id);
+            env.storage()
+                .persistent()
+                .set(&DataKey::PlayerIndex, &player_ids);
+        }
+        env.storage().persistent().extend_ttl(
+            &DataKey::PlayerIndex,
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
+
+        // Re-insert into composite (level, region) index (guarded against duplicates).
+        let composite_key = DataKey::PlayersByLevelRegion(level.clone(), profile.vitals.region.clone());
+        let mut composite_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&composite_key)
+            .unwrap_or_else(|| Vec::new(&env));
+        if !composite_ids.iter().any(|id| id == player_id) {
+            composite_ids.push_back(player_id);
+            env.storage()
+                .persistent()
+                .set(&composite_key, &composite_ids);
+        }
+        env.storage().persistent().extend_ttl(
+            &composite_key,
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
+
+        // Re-insert into per-level index (guarded against duplicates).
+        let level_key = DataKey::PlayersByLevel(level.clone());
+        let mut level_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&level_key)
+            .unwrap_or_else(|| Vec::new(&env));
+        if !level_ids.iter().any(|id| id == player_id) {
+            level_ids.push_back(player_id);
+            env.storage()
+                .persistent()
+                .set(&level_key, &level_ids);
+        }
+        env.storage().persistent().extend_ttl(
+            &level_key,
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
+
         events::player_record_restored(&env, &admin, player_id);
         Ok(())
     }

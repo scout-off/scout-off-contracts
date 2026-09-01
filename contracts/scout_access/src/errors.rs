@@ -131,8 +131,11 @@ pub enum ScoutAccessError {
     TrialEscrowNotOutstanding = 37,
 
     // ── Evidence access grants ──
-    /// `admin_revoke_evidence_access` targeted a (player_id, scout) pair for
-    /// which no `EvidenceAccessGrant` record exists.
+    /// `admin_revoke_evidence_access` or `get_evidence_access_grant` targeted a
+    /// `(player_id, scout)` pair for which no `EvidenceAccessGrant` has ever
+    /// been issued.  Code 38 is the next free append-only slot (codes 1–37 are
+    /// all assigned above; the CHANGELOG v0.3.1 narrative mis-described this as
+    /// 30, which is taken by `SubscriptionAlreadyExists`).
     GrantNotFound = 38,
 }
 
