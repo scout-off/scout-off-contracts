@@ -3358,7 +3358,7 @@ mod tests {
                 &env,
                 (
                     contract_id.clone(),
-                    (Symbol::new(&env, "subscription_created"), scout.clone()).into_val(&env),
+                    (Symbol::new(&env, crate::events::SUBSCRIPTION_CREATED), scout.clone()).into_val(&env),
                     (SubscriptionTier::Basic, sub.subscribed_at, sub.expires_at).into_val(&env)
                 ),
                 (
@@ -3388,7 +3388,7 @@ mod tests {
                 &env,
                 (
                     contract_id.clone(),
-                    (Symbol::new(&env, "subscription_created"), scout.clone()).into_val(&env),
+                    (Symbol::new(&env, crate::events::SUBSCRIPTION_CREATED), scout.clone()).into_val(&env),
                     (SubscriptionTier::Pro, sub.subscribed_at, sub.expires_at).into_val(&env)
                 ),
                 (
@@ -5250,7 +5250,7 @@ mod tests {
                 &env,
                 (
                     contract_id.clone(),
-                    (Symbol::new(&env, "subscription_created"), scout.clone()).into_val(&env),
+                    (Symbol::new(&env, crate::events::SUBSCRIPTION_CREATED), scout.clone()).into_val(&env),
                     (SubscriptionTier::Elite, sub.subscribed_at, sub.expires_at).into_val(&env)
                 ),
                 (
@@ -5294,7 +5294,7 @@ mod tests {
                 &env,
                 (
                     contract_id.clone(),
-                    (Symbol::new(&env, "subscription_renewed"), scout.clone()).into_val(&env),
+                    (Symbol::new(&env, crate::events::SUBSCRIPTION_RENEWED), scout.clone()).into_val(&env),
                     (SubscriptionTier::Basic, sub.subscribed_at, sub.expires_at).into_val(&env)
                 ),
                 (
@@ -5326,7 +5326,7 @@ mod tests {
                 &env,
                 (
                     contract_id.clone(),
-                    (Symbol::new(&env, "subscription_created"), scout.clone()).into_val(&env),
+                    (Symbol::new(&env, crate::events::SUBSCRIPTION_CREATED), scout.clone()).into_val(&env),
                     (SubscriptionTier::Pro, sub.subscribed_at, sub.expires_at).into_val(&env)
                 ),
                 (
