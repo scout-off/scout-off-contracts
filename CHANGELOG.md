@@ -78,19 +78,22 @@ Use the structure below for upcoming MINOR or MAJOR contract changes:
 - Summary: Completed the cross-contract wiring observability rollout (issue #1041). Added `get_wiring_state()` to `registration`, `verification`, and `scout_access` (joining the existing `progress` implementation), sharing a common `WiringLink { address, epoch }` pattern from a new `scoutchain-shared-types` helper (`read_wiring_link`/`write_wiring_link`). Every `set_*_contract`/`update_*_contract` setter across all four contracts now bumps a per-link re-wiring epoch and emits a new `wiring_updated` event on every successful call, in addition to any pre-existing event. `verification`'s two first-call-only setters (`set_progress_contract`, `set_registration_contract`) keep their `AlreadyConfigured` guard unchanged — `update_progress_contract`/`update_registration_contract` remain the deprecated-but-functional re-wiring path — every other setter across all four contracts remains freely re-settable, as before. `scripts/verify-cross-contract-wiring.sh` is rewritten to call `get_wiring_state()` on all four contracts (previously only `progress`), group the platform's eight peer-address pointers by target contract, and classify each group as `FULLY_WIRED` / `NEVER_CONFIGURED` / `PARTIAL` — explicitly detecting a partially-applied re-wiring (some dependents updated, others stale) as a distinct failure mode; a new `--repair` flag prints the exact corrective `stellar contract invoke` command(s). `scripts/full-readiness-check.sh` mirrors the same classification. `scripts/initialize.sh` now wires the three previously-missing links (`verification` → `registration`, `progress` → `scout_access`, `scout_access` → `registration`) and gates its own success on a post-wiring `verify-cross-contract-wiring.sh` run rather than assuming success from the absence of individual invoke errors.
 - Classification: `Non-breaking (MINOR)` — every new storage key is additive (verified via `scripts/check-storage-layout-compat.sh`), and no existing function's signature, error codes, or behavior changed for a caller that doesn't use the new getters/events.
 
+## v0.2.0 - 2026
+
 - Version: `v0.2.0 (verification)`
 - Release date: `2026-07-29`
 - Contracts affected: `verification`
 - Summary: Added `attest_milestone`, an on-chain k-of-n threshold consensus scheme for milestone approval. `attest_milestone(validator_wallet, player_id, description, evidence_hash)` records one independent, asynchronous vote per call; once `threshold` distinct, currently-active validators have voted for the same `(player_id, evidence_hash)` claim within a configurable voting window, the milestone commits and `progress.advance_level` is cross-called exactly once. Also added `set_milestone_threshold`/`get_milestone_threshold`, `set_voting_window_secs`/`get_voting_window_secs`, `get_pending_claim`, `has_attested`, and `is_attestation_window_expired`; three error codes appended (`DuplicateAttestation` 26, `TooManyPendingVotes` 27, `ThresholdModeRequiresAttestation` 28); `revoke_validator`/`batch_revoke_validators` now retroactively strip a revoked validator's still-open vote from any pending claim's tally. `approve_milestone`'s signature and default behavior (`threshold = 1`) are unchanged for existing callers; it is only gated (`ThresholdModeRequiresAttestation`) once an operator opts in via `set_milestone_threshold(n >= 2)`. A follow-up audit closed a gap where `submit_attested_milestone` (the off-chain ed25519-relay commit path) did not check the same threshold gate and remained a single-signature bypass of k-of-n mode; also fixed `has_attested` returning a stale `true` for votes past an unrolled-over expired window, and a `MAX_PENDING_VOTES_PER_VALIDATOR` bookkeeping bug that double-counted a validator's own claim when their revote was what triggered that claim's lazy round-bump.
 - Classification: `Non-breaking (MINOR)`
 
-- Version: `v0.2.0`
+- Version: `v0.2.0 (scout_access)`
 - Release date: `2026-07-28`
 - Contracts affected: `scout_access`
 - Summary: `batch_contact_players` now returns `ProContactLimitReached` (20) instead of `ContactQuotaExceeded` (18) when the Pro-tier monthly contact limit is exceeded. Error code 18 is reserved/deprecated. `check_pro_contact_quota_with_count` unified with `pay_to_contact`'s inline quota check on the same error code.
 - Classification: `Breaking (MAJOR)`
 
 > **Migration guide:** Clients that previously matched `ContactQuotaExceeded` (18) from `batch_contact_players` must update to `ProContactLimitReached` (20). Both `pay_to_contact` and `batch_contact_players` now return the same error code for equivalent quota-exceeded states.
+
 
 ## v0.1.0 - 2025
 
