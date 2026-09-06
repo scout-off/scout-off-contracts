@@ -39,16 +39,9 @@ pub struct Subscription {
     pub scout: Address,
     /// Active subscription tier for authorization and fee checks.
     pub tier: SubscriptionTier,
-    /// Ledger timestamp when the current paid period expires, in Unix seconds.
-    ///
-    /// Auto-renewal anchors the next expiry to `max(prior expires_at, renewal
-    /// ledger timestamp) + FeeConfig::sub_duration_secs`, so late-but-in-window
-    /// renewals extend from the prior expiry and consecutive renewals remain
-    /// contiguous.
+    /// Ledger timestamp when the subscription expires, in Unix seconds.
     pub expires_at: u64,
-    /// Ledger timestamp when the current paid period started, in Unix seconds.
-    /// Auto-renewals set this to the same anchor as `expires_at` minus
-    /// `sub_duration_secs`, keeping `ProContactPeriod` aligned.
+    /// Ledger timestamp when the subscription started, in Unix seconds.
     pub subscribed_at: u64,
 }
 
@@ -82,15 +75,11 @@ pub struct TrialOffer {
 /// subscription period.  `period_start` is the `subscribed_at` timestamp of
 /// the current subscription; when the scout renews, a new record is stored
 /// (keyed by the new `subscribed_at`), effectively resetting the counter.
-/// Auto-renewal anchors `period_start` to `max(prior expires_at, now)`, so
-/// the pro-contact limit period advances by whole subscription durations and
-/// does not drift.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct ProContactPeriod {
     /// `subscribed_at` of the subscription this counter belongs to.
-    /// Used to detect period rollovers on subscription renewal. For
-    /// auto-renewals this equals `max(prior expires_at, renewal timestamp)`.
+    /// Used to detect period rollovers on subscription renewal.
     pub period_start: u64,
     /// Number of contacts made in this period.
     pub count: u32,
@@ -134,11 +123,6 @@ pub struct FeeConfig {
     /// Elite subscription fee in stroops
     pub elite_sub_stroops: i128,
     /// Subscription duration in seconds (default: 30 days)
-    ///
-    /// Auto-renewal uses a grace window of `max(1, sub_duration_secs / 10)`.
-    /// For very short durations the window floors at 1 second; prefer
-    /// `sub_duration_secs >= 10` so the configured window is a true tenth of
-    /// the subscription period.
     pub sub_duration_secs: u64,
     /// Trial offer escrow hold amount in stroops.
     /// Must be > 0 when trial offers are enabled; 0 disables trial offers.
@@ -212,10 +196,6 @@ pub enum DataKey {
     /// Proposed fee configuration awaiting activation after a 7-day delay
     PendingFeeConfig,
     AccumulatedFees,
-    /// Track the total XLM in escrow across all outstanding trial offers.
-    /// Incremented on log_trial_offer, decremented on all escrow release paths.
-    /// Used by withdraw_fees to ensure AccumulatedFees does not exceed balance - EscrowedTotal.
-    EscrowedTotal,
     /// Native XLM token contract address
     XlmToken,
     /// scout wallet → Subscription
@@ -224,6 +204,8 @@ pub enum DataKey {
     ContactRecord(u64, Address),
     /// scout → Vec<u64> of contacted player_ids
     ScoutContacts(Address),
+    /// Monthly contact count for Pro tier: (scout, month_bucket) → count
+    ContactCount(Address, u64),
     /// trial offer counter per player
     TrialCounter(u64),
     /// (player_id, trial_index) → TrialOffer
@@ -272,21 +254,6 @@ pub enum DataKey {
     /// the caller to re-check `Subscription.expires_at` for exact filtering,
     /// which `get_subscriptions_expiring_before` already does.
     ExpiryBucket(u64),
-    /// Earliest (minimum) day for which an `ExpiryBucket` entry is known to be
-    /// populated, i.e. the smallest `day` passed to `add_to_expiry_bucket`
-    /// (or written via `admin_seed_subscription`) so far.
-    ///
-    /// Stored in instance storage (a single scalar). Updated in a monotonic
-    /// downward direction whenever a new, earlier bucket is created. Acts as a
-    /// safe lower bound: buckets for days before this value were never
-    /// populated, so `get_expiring_subscriptions` starts its bucket scan here
-    /// instead of at day 0, keeping the query cost tied to the number of
-    /// populated days rather than to the wall-clock day count since epoch.
-    ///
-    /// This value is intentionally only ever lowered by writes (never raised
-    /// when a bucket later empties), so iterating from it is always correct —
-    /// at worst it starts slightly earlier than strictly necessary.
-    MinExpiryBucketDay,
 
     /// Boolean flag (`true`) written by `open_migration_window`; absent or
     /// `false` means the migration window is closed. All `admin_seed_*`

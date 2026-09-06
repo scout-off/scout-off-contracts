@@ -21,8 +21,6 @@ pub const FEE_CONFIG_PROPOSED: &str = "fee_config_proposed";
 pub const FEE_CONFIG_UPDATED: &str = "fee_config_updated";
 pub const FEE_CONFIG_DELAY_BYPASSED: &str = "fee_config_delay_bypassed";
 pub const WIRING_UPDATED: &str = "wiring_updated";
-pub const EVIDENCE_ACCESS_GRANTED: &str = "evidence_access_granted";
-pub const EVIDENCE_ACCESS_REVOKED: &str = "evidence_access_revoked";
 
 /// topics: (event_name, admin)  data: admin
 pub fn contract_initialized(env: &Env, admin: &Address) {
@@ -73,7 +71,13 @@ pub fn trial_offer_expired(env: &Env, player_id: u64, scout: &Address, index: u3
 }
 
 /// topics: (event_name, to)  data: (player_id, index, amount)
-pub fn trial_escrow_admin_refunded(env: &Env, player_id: u64, index: u32, to: &Address, amount: i128) {
+pub fn trial_escrow_admin_refunded(
+    env: &Env,
+    player_id: u64,
+    index: u32,
+    to: &Address,
+    amount: i128,
+) {
     env.events().publish(
         (Symbol::new(env, TRIAL_ESCROW_ADMIN_REFUNDED), to.clone()),
         (player_id, index, amount),
@@ -330,7 +334,12 @@ pub fn subscription_record_restored(env: &Env, admin: &Address, scout: &Address)
 /// `batch_contact_players` call, when an `EvidenceAccessGrant` is written.
 /// The frontend/backend key-wrapping service watches this event to deliver
 /// a viewer-specific wrapped decryption key — see `docs/EVIDENCE_PRIVACY.md`.
-pub fn evidence_access_granted(env: &Env, player_id: u64, scout: &Address, tier: &SubscriptionTier) {
+pub fn evidence_access_granted(
+    env: &Env,
+    player_id: u64,
+    scout: &Address,
+    tier: &SubscriptionTier,
+) {
     env.events().publish(
         (Symbol::new(env, EVIDENCE_ACCESS_GRANTED), scout.clone()),
         (player_id, tier.clone()),
@@ -347,17 +356,5 @@ pub fn evidence_access_revoked(env: &Env, player_id: u64, scout: &Address, admin
     env.events().publish(
         (Symbol::new(env, EVIDENCE_ACCESS_REVOKED), scout.clone()),
         (player_id, admin.clone()),
-    );
-}
-
-pub const REGIONAL_CONTACT_LIMIT_SET: &str = "regional_contact_limit_set";
-
-/// topics: (event_name, admin)  data: (region, limit)
-///
-/// Emitted when an admin sets or updates a per-region Pro-tier contact limit override.
-pub fn regional_contact_limit_set(env: &Env, admin: &Address, region: &soroban_sdk::String, limit: u32) {
-    env.events().publish(
-        (Symbol::new(env, REGIONAL_CONTACT_LIMIT_SET), admin.clone()),
-        (region.clone(), limit),
     );
 }

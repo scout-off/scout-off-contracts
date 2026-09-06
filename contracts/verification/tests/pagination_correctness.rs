@@ -89,7 +89,11 @@ fn test_milestones_empty_page_past_end() {
     // offset=4 == total → empty
     let page = client.get_validator_milestones_page_v2(&validator, &4u32, &10u32);
     assert_eq!(page.total, 4);
-    assert_eq!(page.entries.len(), 0, "offset past end must return empty entries");
+    assert_eq!(
+        page.entries.len(),
+        0,
+        "offset past end must return empty entries"
+    );
 
     // offset > total
     let page_far = client.get_validator_milestones_page_v2(&validator, &100u32, &10u32);
@@ -168,8 +172,7 @@ fn test_milestones_walk_all_pages() {
     loop {
         let page = client.get_validator_milestones_page_v2(&validator, &offset, &limit);
         assert_eq!(
-            page.total,
-            TOTAL as u32,
+            page.total, TOTAL as u32,
             "total must be consistent across pages"
         );
         if page.entries.is_empty() {
@@ -228,7 +231,11 @@ fn test_players_empty_page_past_end() {
 
     let page = client.get_validator_players_page(&validator, &4u32, &10u32);
     assert_eq!(page.total, 4);
-    assert_eq!(page.entries.len(), 0, "offset past end must return empty entries");
+    assert_eq!(
+        page.entries.len(),
+        0,
+        "offset past end must return empty entries"
+    );
 
     let page_far = client.get_validator_players_page(&validator, &100u32, &10u32);
     assert_eq!(page_far.total, 4);
@@ -291,8 +298,7 @@ fn test_players_walk_all_pages() {
     loop {
         let page = client.get_validator_players_page(&validator, &offset, &limit);
         assert_eq!(
-            page.total,
-            TOTAL as u32,
+            page.total, TOTAL as u32,
             "total must be consistent across pages"
         );
         if page.entries.is_empty() {

@@ -1,1 +1,0 @@
-const N u64=1_0000000000;fn f(o:u64,m:u64,s:u64,w:u64)->u64{let s=s*N;let w=w*N;if m>=o&&m-o<=w{o+}else{m+}}#{cf(test)]mod t{use super::*const S:u64=30*24*60*60;const W:u64=S/10;#[test]fn a(){assert_eq!(f(1,1+3600*N,S,W),1+S*N);}#[test]fn b(){let mut e=0;for _ in 0..12{e=f(e,e+2*24*60*60*N,S,W);}assert_eq!(e,12*S*N);}}

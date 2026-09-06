@@ -35,7 +35,9 @@
 //!   entry — isolating the global-index write cost from the (legitimate but
 //!   separate) O(n) growth of per-validator milestone history.
 
-use scoutchain_verification::{GlobalMilestoneEntry, VerificationContract, VerificationContractClient};
+use scoutchain_verification::{
+    GlobalMilestoneEntry, VerificationContract, VerificationContractClient,
+};
 use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
 
 /// Pool size for fill validators.  Must be < MAX_VALIDATORS (100) to leave
@@ -98,12 +100,7 @@ fn cid_for(env: &Env, seed: u64) -> String {
 /// Validator: `pool[seed % POOL_SIZE]`  Player: `seed + 1` (unique per seed).
 /// Since (validator, player_id) is unique for each seed, neither the
 /// validator-count cap nor the per-player-per-validator milestone cap is hit.
-fn fill(
-    env: &Env,
-    client: &VerificationContractClient<'_>,
-    pool: &[Address],
-    seed: u64,
-) {
+fn fill(env: &Env, client: &VerificationContractClient<'_>, pool: &[Address], seed: u64) {
     let validator = &pool[(seed % POOL_SIZE) as usize];
     let player_id = seed + 1;
     client.approve_milestone(
@@ -117,10 +114,7 @@ fn fill(
 
 /// Collect every (player_id, milestone_index) the global index currently
 /// holds by draining pages until empty.
-fn drain_index(
-    _env: &Env,
-    client: &VerificationContractClient<'_>,
-) -> std::vec::Vec<(u64, u32)> {
+fn drain_index(_env: &Env, client: &VerificationContractClient<'_>) -> std::vec::Vec<(u64, u32)> {
     let mut out = std::vec::Vec::new();
     let mut offset: u32 = 0;
     loop {
@@ -204,12 +198,16 @@ fn cost_global_milestone_index_write_is_flat() {
         env.cost_estimate().budget().cpu_instruction_cost()
     }
 
-    let cost_early     = measure_at_fill(10);
-    let cost_full      = measure_at_fill(500);
+    let cost_early = measure_at_fill(10);
+    let cost_full = measure_at_fill(500);
     let cost_post_wrap = measure_at_fill(1_000);
 
-    println!("ring_buffer budget flatness: cost_early  (fill ~10)    = {cost_early} cpu instructions");
-    println!("ring_buffer budget flatness: cost_full   (fill ~500)   = {cost_full} cpu instructions");
+    println!(
+        "ring_buffer budget flatness: cost_early  (fill ~10)    = {cost_early} cpu instructions"
+    );
+    println!(
+        "ring_buffer budget flatness: cost_full   (fill ~500)   = {cost_full} cpu instructions"
+    );
     println!("ring_buffer budget flatness: cost_wrap   (fill ~1000)  = {cost_post_wrap} cpu instructions");
 
     // The ring-buffer global-index write is O(1): one instance read
@@ -293,7 +291,8 @@ fn test_wraparound_boundary_pagination() {
         assert!(
             curr.player_id > prev.player_id,
             "entries out of order at position {i}: {} followed by {}",
-            prev.player_id, curr.player_id
+            prev.player_id,
+            curr.player_id
         );
     }
 
@@ -301,9 +300,9 @@ fn test_wraparound_boundary_pagination() {
     // Surviving entries: seeds 20..519 → player_ids 21..520.
     // offset=470 skips 470 → player_ids 21+470=491 .. 520.
     let expected_first = EXTRA + 1 + 470; // 491
-    let expected_last  = EXTRA + 1 + 499; // 520
+    let expected_last = EXTRA + 1 + 499; // 520
     let first_pid: GlobalMilestoneEntry = page.entries.get(0).unwrap();
-    let last_pid:  GlobalMilestoneEntry = page.entries.get(page.entries.len() - 1).unwrap();
+    let last_pid: GlobalMilestoneEntry = page.entries.get(page.entries.len() - 1).unwrap();
     assert_eq!(
         first_pid.player_id, expected_first,
         "first entry in wraparound page should be player_id {expected_first}"
@@ -315,25 +314,42 @@ fn test_wraparound_boundary_pagination() {
 
     // Full drain: 500 distinct ordered entries, oldest first.
     let all = drain_index(&env, &client);
-    assert_eq!(all.len(), CAP as usize, "full drain should return exactly {CAP} entries");
+    assert_eq!(
+        all.len(),
+        CAP as usize,
+        "full drain should return exactly {CAP} entries"
+    );
 
     let mut all_pids: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
     for &(pid, _) in &all {
-        assert!(all_pids.insert(pid), "duplicate player_id {pid} in full drain");
+        assert!(
+            all_pids.insert(pid),
+            "duplicate player_id {pid} in full drain"
+        );
     }
 
     for i in 1..all.len() {
         assert!(
             all[i].0 > all[i - 1].0,
             "full drain not ordered at position {i}: {} followed by {}",
-            all[i - 1].0, all[i].0
+            all[i - 1].0,
+            all[i].0
         );
     }
 
     // Oldest surviving = seed 20 → player_id 21.
-    assert_eq!(all[0].0, EXTRA + 1, "oldest surviving entry should be player_id {}", EXTRA + 1);
+    assert_eq!(
+        all[0].0,
+        EXTRA + 1,
+        "oldest surviving entry should be player_id {}",
+        EXTRA + 1
+    );
     // Newest surviving = seed 519 → player_id 520.
-    assert_eq!(all[CAP as usize - 1].0, TOTAL, "newest surviving entry should be player_id {TOTAL}");
+    assert_eq!(
+        all[CAP as usize - 1].0,
+        TOTAL,
+        "newest surviving entry should be player_id {TOTAL}"
+    );
 }
 
 // ─── test 3: oldest-entry eviction ───────────────────────────────────────────
@@ -362,7 +378,10 @@ fn test_oldest_entry_evicted_when_buffer_full() {
     let before = client.get_global_milestone_index(&0u32, &1u32);
     assert_eq!(before.total, CAP);
     let oldest_before: GlobalMilestoneEntry = before.entries.get(0).unwrap();
-    assert_eq!(oldest_before.player_id, 1, "oldest before eviction should be player_id 1");
+    assert_eq!(
+        oldest_before.player_id, 1,
+        "oldest before eviction should be player_id 1"
+    );
 
     // 501st write: seed=500 → player_id 501.
     let eviction_seed: u64 = CAP as u64;
@@ -382,7 +401,11 @@ fn test_oldest_entry_evicted_when_buffer_full() {
 
     // Full drain: player_id 1 must not appear.
     let all = drain_index(&env, &client);
-    assert_eq!(all.len(), CAP as usize, "full drain should return {CAP} entries after eviction");
+    assert_eq!(
+        all.len(),
+        CAP as usize,
+        "full drain should return {CAP} entries after eviction"
+    );
 
     assert!(
         !all.iter().any(|&(pid, _)| pid == 1),
@@ -391,7 +414,8 @@ fn test_oldest_entry_evicted_when_buffer_full() {
 
     // The newest entry should be the 501st write.
     assert_eq!(
-        all.last().unwrap().0, new_player_id,
+        all.last().unwrap().0,
+        new_player_id,
         "newest entry should be player_id {new_player_id}"
     );
 }

@@ -20,11 +20,11 @@
 //! 11. Adversarial: tied exactly at quorum refuses early-close; deadline resolves false
 //! 12. Vote tallies tracked correctly across multiple voters
 
+use scoutchain_shared_types::ProgressLevel;
 use scoutchain_verification::{
     RegPlayerProfile, RegPlayerVitals, RevocationSeverity, VerificationContract,
     VerificationContractClient, VerificationError,
 };
-use scoutchain_shared_types::ProgressLevel;
 use soroban_sdk::{
     contract, contractimpl, contracttype,
     testutils::{Address as _, Ledger},
@@ -162,9 +162,21 @@ fn test_set_jury_config_updates_values() {
 fn test_dispute_below_threshold_is_admin_path() {
     let (env, client, _admin, player) = setup();
     let v = reg_validator(&env, &client, CREDENTIALS);
-    client.approve_milestone(&v, &1u64, &String::from_str(&env, "goal"), &String::from_str(&env, CID_1), &None);
+    client.approve_milestone(
+        &v,
+        &1u64,
+        &String::from_str(&env, "goal"),
+        &String::from_str(&env, CID_1),
+        &None,
+    );
 
-    client.dispute_milestone(&player, &1u64, &1u32, &String::from_str(&env, REASON), &50u32);
+    client.dispute_milestone(
+        &player,
+        &1u64,
+        &1u32,
+        &String::from_str(&env, REASON),
+        &50u32,
+    );
 
     let d = client.get_dispute(&1u64, &1u32);
     assert!(!d.jury_required);
@@ -175,9 +187,21 @@ fn test_dispute_below_threshold_is_admin_path() {
 fn test_dispute_at_threshold_is_jury_path() {
     let (env, client, _admin, player) = setup();
     let v = reg_validator(&env, &client, CREDENTIALS);
-    client.approve_milestone(&v, &1u64, &String::from_str(&env, "goal"), &String::from_str(&env, CID_1), &None);
+    client.approve_milestone(
+        &v,
+        &1u64,
+        &String::from_str(&env, "goal"),
+        &String::from_str(&env, CID_1),
+        &None,
+    );
 
-    client.dispute_milestone(&player, &1u64, &1u32, &String::from_str(&env, REASON), &100u32);
+    client.dispute_milestone(
+        &player,
+        &1u64,
+        &1u32,
+        &String::from_str(&env, REASON),
+        &100u32,
+    );
 
     let d = client.get_dispute(&1u64, &1u32);
     assert!(d.jury_required);
@@ -195,17 +219,35 @@ fn test_jury_config_snapshotted_at_filing() {
     client.set_jury_config(&100u32, &3u32, &604_800u64);
 
     let v = reg_validator(&env, &client, CREDENTIALS);
-    client.approve_milestone(&v, &1u64, &String::from_str(&env, "goal"), &String::from_str(&env, CID_1), &None);
+    client.approve_milestone(
+        &v,
+        &1u64,
+        &String::from_str(&env, "goal"),
+        &String::from_str(&env, CID_1),
+        &None,
+    );
 
-    client.dispute_milestone(&player, &1u64, &1u32, &String::from_str(&env, REASON), &100u32);
+    client.dispute_milestone(
+        &player,
+        &1u64,
+        &1u32,
+        &String::from_str(&env, REASON),
+        &100u32,
+    );
     let before = client.get_dispute(&1u64, &1u32);
 
     // Admin changes config mid-dispute
     client.set_jury_config(&50u32, &10u32, &86_400u64);
 
     let after = client.get_dispute(&1u64, &1u32);
-    assert_eq!(after.quorum, before.quorum, "quorum must remain snapshotted");
-    assert_eq!(after.voting_deadline, before.voting_deadline, "deadline must remain snapshotted");
+    assert_eq!(
+        after.quorum, before.quorum,
+        "quorum must remain snapshotted"
+    );
+    assert_eq!(
+        after.voting_deadline, before.voting_deadline,
+        "deadline must remain snapshotted"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -228,7 +270,11 @@ fn test_eligibility_revoked_validator_rejected() {
     setup_jury_dispute(&env, &client, &player);
 
     let voter = reg_validator(&env, &client, CRED2);
-    client.revoke_validator(&voter, &RevocationSeverity::Routine, &Some(String::from_str(&env, "misconduct")));
+    client.revoke_validator(
+        &voter,
+        &RevocationSeverity::Routine,
+        &Some(String::from_str(&env, "misconduct")),
+    );
 
     let result = client.try_cast_dispute_vote(&voter, &1u64, &1u32, &true);
     assert_eq!(result, Err(Ok(VerificationError::ValidatorInactive)));
@@ -261,10 +307,22 @@ fn test_eligibility_already_voted() {
 fn test_eligibility_not_jury_dispute() {
     let (env, client, _admin, player) = setup();
     let v = reg_validator(&env, &client, CREDENTIALS);
-    client.approve_milestone(&v, &1u64, &String::from_str(&env, "goal"), &String::from_str(&env, CID_1), &None);
+    client.approve_milestone(
+        &v,
+        &1u64,
+        &String::from_str(&env, "goal"),
+        &String::from_str(&env, CID_1),
+        &None,
+    );
 
     // impact_score < threshold → admin path, not jury
-    client.dispute_milestone(&player, &1u64, &1u32, &String::from_str(&env, REASON), &10u32);
+    client.dispute_milestone(
+        &player,
+        &1u64,
+        &1u32,
+        &String::from_str(&env, REASON),
+        &10u32,
+    );
 
     let voter = reg_validator(&env, &client, CRED2);
     let result = client.try_cast_dispute_vote(&voter, &1u64, &1u32, &true);
@@ -337,8 +395,20 @@ fn test_tally_tie_break_resolves_not_upheld() {
     // quorum=2 so we can test a tie with minimal voters
     client.set_jury_config(&100u32, &2u32, &604_800u64);
     let v = reg_validator(&env, &client, CREDENTIALS);
-    client.approve_milestone(&v, &1u64, &String::from_str(&env, "goal"), &String::from_str(&env, CID_1), &None);
-    client.dispute_milestone(&player, &1u64, &1u32, &String::from_str(&env, REASON), &100u32);
+    client.approve_milestone(
+        &v,
+        &1u64,
+        &String::from_str(&env, "goal"),
+        &String::from_str(&env, CID_1),
+        &None,
+    );
+    client.dispute_milestone(
+        &player,
+        &1u64,
+        &1u32,
+        &String::from_str(&env, REASON),
+        &100u32,
+    );
 
     let v1 = reg_validator(&env, &client, CRED2);
     let v2 = reg_validator(&env, &client, CRED3);
@@ -440,9 +510,21 @@ fn test_resolve_dispute_blocked_for_jury_dispute() {
 fn test_resolve_dispute_works_for_non_jury_dispute() {
     let (env, client, _admin, player) = setup();
     let v = reg_validator(&env, &client, CREDENTIALS);
-    client.approve_milestone(&v, &1u64, &String::from_str(&env, "goal"), &String::from_str(&env, CID_1), &None);
+    client.approve_milestone(
+        &v,
+        &1u64,
+        &String::from_str(&env, "goal"),
+        &String::from_str(&env, CID_1),
+        &None,
+    );
 
-    client.dispute_milestone(&player, &1u64, &1u32, &String::from_str(&env, REASON), &10u32);
+    client.dispute_milestone(
+        &player,
+        &1u64,
+        &1u32,
+        &String::from_str(&env, REASON),
+        &10u32,
+    );
 
     client.resolve_dispute(&1u64, &1u32, &true);
 
@@ -462,8 +544,20 @@ fn test_adversarial_tied_at_quorum_refuses_early_close_then_resolves_false() {
     client.set_jury_config(&100u32, &4u32, &604_800u64);
 
     let v = reg_validator(&env, &client, CREDENTIALS);
-    client.approve_milestone(&v, &1u64, &String::from_str(&env, "goal"), &String::from_str(&env, CID_1), &None);
-    client.dispute_milestone(&player, &1u64, &1u32, &String::from_str(&env, REASON), &100u32);
+    client.approve_milestone(
+        &v,
+        &1u64,
+        &String::from_str(&env, "goal"),
+        &String::from_str(&env, CID_1),
+        &None,
+    );
+    client.dispute_milestone(
+        &player,
+        &1u64,
+        &1u32,
+        &String::from_str(&env, REASON),
+        &100u32,
+    );
 
     let v1 = reg_validator(&env, &client, CRED2);
     let v2 = reg_validator(&env, &client, CRED3);
@@ -549,8 +643,20 @@ fn test_tally_already_resolved_fails() {
 fn test_tally_non_jury_dispute_fails() {
     let (env, client, _admin, player) = setup();
     let v = reg_validator(&env, &client, CREDENTIALS);
-    client.approve_milestone(&v, &1u64, &String::from_str(&env, "goal"), &String::from_str(&env, CID_1), &None);
-    client.dispute_milestone(&player, &1u64, &1u32, &String::from_str(&env, REASON), &10u32);
+    client.approve_milestone(
+        &v,
+        &1u64,
+        &String::from_str(&env, "goal"),
+        &String::from_str(&env, CID_1),
+        &None,
+    );
+    client.dispute_milestone(
+        &player,
+        &1u64,
+        &1u32,
+        &String::from_str(&env, REASON),
+        &10u32,
+    );
 
     let result = client.try_tally_dispute(&1u64, &1u32);
     assert_eq!(result, Err(Ok(VerificationError::NotJuryDispute)));

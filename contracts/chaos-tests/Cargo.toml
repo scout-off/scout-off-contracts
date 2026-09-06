@@ -7,7 +7,7 @@ edition.workspace = true
 autotests = false
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [[test]]
 name = "chaos_schedules"

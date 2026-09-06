@@ -18,20 +18,10 @@ pub const ADMIN_TRANSFER_PROPOSED: &str = "admin_transfer_proposed";
 pub const ADMIN_TRANSFERRED: &str = "admin_transferred";
 pub const ATTESTATION_RECORDED: &str = "attestation_recorded";
 pub const ATTESTATION_WINDOW_EXPIRED: &str = "attestation_window_expired";
-pub const VALIDATOR_VOTES_INVALIDATED: &str = "validator_votes_invalidated";
+pub const VALIDATOR_PENDING_VOTES_INVALIDATED: &str = "validator_votes_invalidated";
 pub const WIRING_UPDATED: &str = "wiring_updated";
 pub const DISPUTE_VOTE_CAST: &str = "dispute_vote_cast";
 pub const DISPUTE_TALLIED: &str = "dispute_tallied";
-pub const MILESTONE_DISPUTED: &str = "milestone_disputed";
-pub const LEVEL_ADVANCEMENT_SKIPPED: &str = "level_advancement_skipped";
-pub const PROGRESS_CONTRACT_NOT_SET: &str = "progress_contract_not_set";
-pub const PROGRESS_CALL_FAILED: &str = "progress_call_failed";
-pub const VALIDATOR_RECORD_RESTORED: &str = "validator_record_restored";
-pub const MILESTONE_RECORD_RESTORED: &str = "milestone_record_restored";
-pub const MILESTONE_FLAGGED: &str = "milestone_flagged";
-pub const MILESTONE_FLAG_CLEARED: &str = "milestone_flag_cleared";
-pub const REVOCATION_CASCADE_COMPLETE: &str = "revocation_cascade_complete";
-pub const REVOCATION_CASCADE_CONTINUED: &str = "revocation_cascade_continued";
 
 /// topics: (event_name, old_admin)  data: new_admin
 pub fn admin_transfer_proposed(env: &Env, old_admin: &Address, new_admin: &Address) {
@@ -199,7 +189,7 @@ pub fn milestone_disputed(
 ) {
     env.events().publish(
         (
-            Symbol::new(env, MILESTONE_DISPUTED),
+            Symbol::new(env, "milestone_disputed"),
             player_wallet.clone(),
         ),
         (player_id, milestone_index, reason.clone()),
@@ -221,14 +211,13 @@ pub fn dispute_resolved(
     );
 }
 
-/// Emitted when a milestone is recorded but level advancement is skipped.
-/// The milestone itself is still persisted; only the cross-contract
-/// advance_level call is omitted. `reason` is either "AlreadyAtMaxLevel"
-/// (player already at EliteTier) or "DiversityGateNotMet" (the attesting set
-/// failed the affiliation-diversity or region-quorum requirement).
+/// Emitted when a milestone is recorded but level advancement is skipped because
+/// the player is already at the maximum level (EliteTier).  The milestone itself
+/// is still persisted; only the cross-contract advance_level call is omitted.
+/// `reason` is always "AlreadyAtMaxLevel".
 pub fn level_advancement_skipped(env: &Env, player_id: u64, reason: &String) {
     env.events().publish(
-        (Symbol::new(env, LEVEL_ADVANCEMENT_SKIPPED), player_id),
+        (Symbol::new(env, "level_advancement_skipped"), player_id),
         reason.clone(),
     );
 }
@@ -239,7 +228,7 @@ pub fn level_advancement_skipped(env: &Env, player_id: u64, reason: &String) {
 /// indexer should alert on it.  The milestone is still persisted.
 pub fn progress_contract_not_set(env: &Env, player_id: u64) {
     env.events().publish(
-        (Symbol::new(env, PROGRESS_CONTRACT_NOT_SET), player_id),
+        (Symbol::new(env, "progress_contract_not_set"), player_id),
         (),
     );
 }
@@ -279,7 +268,7 @@ pub fn attestation_window_expired(
 /// Emitted when `revoke_validator` retroactively strips a revoked
 /// validator's contribution from still-pending (sub-threshold) claims.
 /// topics: (event_name, admin)  data: (wallet, invalidated_count)
-pub fn validator_votes_invalidated(
+pub fn validator_pending_votes_invalidated(
     env: &Env,
     admin: &Address,
     wallet: &Address,
@@ -287,7 +276,7 @@ pub fn validator_votes_invalidated(
 ) {
     env.events().publish(
         (
-            Symbol::new(env, VALIDATOR_VOTES_INVALIDATED),
+            Symbol::new(env, VALIDATOR_PENDING_VOTES_INVALIDATED),
             admin.clone(),
         ),
         (wallet.clone(), invalidated_count),
@@ -301,7 +290,7 @@ pub fn validator_votes_invalidated(
 /// Payload is the raw error discriminant returned by try_advance_level.
 pub fn progress_call_failed(env: &Env, player_id: u64, error_code: u32) {
     env.events().publish(
-        (Symbol::new(env, PROGRESS_CALL_FAILED), player_id),
+        (Symbol::new(env, "progress_call_failed"), player_id),
         error_code,
     );
 }
@@ -311,7 +300,7 @@ pub fn progress_call_failed(env: &Env, player_id: u64, error_code: u32) {
 /// topics: (event_name, admin)  data: wallet
 pub fn validator_record_restored(env: &Env, admin: &Address, wallet: &Address) {
     env.events().publish(
-        (Symbol::new(env, VALIDATOR_RECORD_RESTORED), admin.clone()),
+        (Symbol::new(env, "validator_record_restored"), admin.clone()),
         wallet.clone(),
     );
 }
@@ -321,7 +310,7 @@ pub fn validator_record_restored(env: &Env, admin: &Address, wallet: &Address) {
 /// topics: (event_name, admin)  data: (player_id, index)
 pub fn milestone_record_restored(env: &Env, admin: &Address, player_id: u64, index: u32) {
     env.events().publish(
-        (Symbol::new(env, MILESTONE_RECORD_RESTORED), admin.clone()),
+        (Symbol::new(env, "milestone_record_restored"), admin.clone()),
         (player_id, index),
     );
 }
@@ -330,14 +319,14 @@ pub fn milestone_record_restored(env: &Env, admin: &Address, player_id: u64, ind
 /// (issue #1039).
 ///
 /// topics: (event_name, validator)  data: (player_id, milestone_index)
-pub fn milestone_flagged(
+pub fn milestone_flagged_for_rereview(
     env: &Env,
     validator: &Address,
     player_id: u64,
     milestone_index: u32,
 ) {
     env.events().publish(
-        (Symbol::new(env, MILESTONE_FLAGGED), validator.clone()),
+        (Symbol::new(env, "milestone_flagged"), validator.clone()),
         (player_id, milestone_index),
     );
 }
@@ -348,7 +337,7 @@ pub fn milestone_flagged(
 /// topics: (event_name, reviewer)  data: (player_id, milestone_index)
 pub fn milestone_flag_cleared(env: &Env, reviewer: &Address, player_id: u64, milestone_index: u32) {
     env.events().publish(
-        (Symbol::new(env, MILESTONE_FLAG_CLEARED), reviewer.clone()),
+        (Symbol::new(env, "milestone_flag_cleared"), reviewer.clone()),
         (player_id, milestone_index),
     );
 }
@@ -361,7 +350,7 @@ pub fn milestone_flag_cleared(env: &Env, reviewer: &Address, player_id: u64, mil
 pub fn revocation_cascade_complete(env: &Env, validator: &Address, total_flagged: u32) {
     env.events().publish(
         (
-            Symbol::new(env, REVOCATION_CASCADE_COMPLETE),
+            Symbol::new(env, "revocation_cascade_complete"),
             validator.clone(),
         ),
         total_flagged,
@@ -380,38 +369,30 @@ pub fn revocation_cascade_continued(
 ) {
     env.events().publish(
         (
-            Symbol::new(env, REVOCATION_CASCADE_CONTINUED),
+            Symbol::new(env, "revocation_cascade_continued"),
             validator.clone(),
         ),
         (next_cursor, flagged_this_call),
     );
 }
 
-/// Emitted when a validator casts a vote on a jury-required milestone dispute.
-///
-/// topics: (event_name, validator)  data: (player_id, milestone_index, vote)
-///
-/// `vote` is `true` when the validator votes to uphold the original approval,
-/// `false` when they vote to overturn it.  Matches the shape documented in
-/// docs/DISPUTE_JURY.md and docs/EVENT_AUDIT.md.
+/// Emitted when a validator casts a vote on a jury-required dispute.
+/// topics: (event_name, validator)  data: (player_id, milestone_index, for_upheld)
 pub fn dispute_vote_cast(
     env: &Env,
     player_id: u64,
     milestone_index: u32,
     validator: &Address,
-    vote: bool,
+    for_upheld: bool,
 ) {
     env.events().publish(
         (Symbol::new(env, DISPUTE_VOTE_CAST), validator.clone()),
-        (player_id, milestone_index, vote),
+        (player_id, milestone_index, for_upheld),
     );
 }
 
-/// Emitted when a jury dispute is tallied (closed with a final verdict).
-///
+/// Emitted when a jury-required dispute is tallied and resolved.
 /// topics: (event_name, player_id)  data: (milestone_index, upheld, votes_for, votes_against)
-///
-/// Matches the shape documented in docs/DISPUTE_JURY.md and docs/EVENT_AUDIT.md.
 pub fn dispute_tallied(
     env: &Env,
     player_id: u64,

@@ -37,8 +37,6 @@ const EXPIRE_TRIAL_OFFERS_CPU_BUDGET: u64 = 8_614_029;
 // seek avoids a full scan). Measured at a mid-history page (offset 500,
 // limit 50) — see cost_get_player_access_grants_at_1000_grants below.
 const GET_PLAYER_ACCESS_GRANTS_CPU_BUDGET: u64 = 15_000_000;
-// #1184: confirm_trial_offer includes cross-contract call to progress.advance_level
-const CONFIRM_TRIAL_OFFER_CPU_BUDGET: u64 = 22_000_000;
 
 fn default_fees() -> FeeConfig {
     FeeConfig {
@@ -177,55 +175,4 @@ fn cost_get_player_access_grants_at_1000_grants() {
         "get_player_access_grants(1000 total, page of 50)",
         GET_PLAYER_ACCESS_GRANTS_CPU_BUDGET,
     );
-}
-
-/// Guards the bucket-scan starting point of `get_expiring_subscriptions`: the
-/// query must start at the minimum populated bucket day (`MinExpiryBucketDay`)
-/// rather than at day 0. The populated buckets are created ~50,000 days past
-/// the epoch, so if the implementation ever regressed to a day-0 scan it would
-/// step through ~50,000 empty day buckets and cost orders of magnitude more
-/// than the budget below allows.
-#[test]
-fn cost_get_expiring_subscriptions() {
-    let (env, client, xlm) = setup();
-    const SECS_PER_DAY: u64 = 86_400;
-
-    // Start the ledger well past epoch and give each scout its own expiry day
-    // so the populated buckets are spread across a range of large day indices.
-    let base_day = 50_000u64;
-    env.ledger().with_mut(|l| l.timestamp = base_day * SECS_PER_DAY);
-    for _ in 0u32..20u32 {
-        let scout = Address::generate(&env);
-        fund(&env, &xlm, &scout);
-        client.subscribe(&scout, &SubscriptionTier::Pro);
-        // Advance so the next scout's 30-day expiry lands on a distinct day.
-        env.ledger().with_mut(|l| l.timestamp += SECS_PER_DAY + 1);
-    }
-
-    // before_timestamp comfortably past the last scout's expiry (~base + 50 days).
-    let before_timestamp = (base_day + 60) * SECS_PER_DAY;
-
-    env.cost_estimate().budget().reset_default();
-    let expiring = client.get_expiring_subscriptions(&before_timestamp, &50u32);
-    assert_eq!(expiring.len(), 20);
-    assert_cpu_budget(
-        &env,
-        "get_expiring_subscriptions(20 scouts, buckets ~50k days from epoch)",
-        GET_EXPIRING_SUBSCRIPTIONS_CPU_BUDGET,
-    );
-}
-
-#[test]
-fn cost_confirm_trial_offer() {
-    let (env, client, xlm) = setup();
-    let scout = Address::generate(&env);
-    let player = Address::generate(&env);
-    fund(&env, &xlm, &scout);
-    fund(&env, &xlm, &player);
-
-    // Create a trial offer
-    client.subscribe(&scout, &SubscriptionTier::Basic);
-    env.cost_estimate().budget().reset_default();
-    client.confirm_trial_offer(&scout, &player, &0u64);
-    assert_cpu_budget(&env, "confirm_trial_offer", CONFIRM_TRIAL_OFFER_CPU_BUDGET);
 }

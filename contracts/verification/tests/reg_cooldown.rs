@@ -7,7 +7,8 @@
 
 use scoutchain_verification::{VerificationContract, VerificationContractClient};
 use soroban_sdk::{
-    testutils::Address as _, vec, Address, Env, String, Vec,
+    testutils::{Address as _, Ledger as _},
+    vec, Address, Env, String, Vec,
 };
 
 const CREDENTIALS: &str = "UEFA-B-License-2026";
@@ -60,7 +61,9 @@ fn test_register_validator_respects_cooldown() {
     assert!(
         matches!(
             result,
-            Err(Ok(scoutchain_verification::VerificationError::RegistrationCooldown))
+            Err(Ok(
+                scoutchain_verification::VerificationError::RegistrationCooldown
+            ))
         ),
         "re-registration within cooldown must return RegistrationCooldown: {result:?}"
     );
@@ -89,7 +92,8 @@ fn test_register_validator_cooldown_expires() {
     );
 
     // Advance past the cooldown window.
-    env.ledger().with_mut(|l| l.timestamp = START + COOLDOWN_SECS + 1);
+    env.ledger()
+        .with_mut(|l| l.timestamp = START + COOLDOWN_SECS + 1);
 
     let result = client.try_register_validator(
         &wallet,
@@ -100,7 +104,9 @@ fn test_register_validator_cooldown_expires() {
     assert!(
         matches!(
             result,
-            Err(Ok(scoutchain_verification::VerificationError::ValidatorAlreadyRegistered))
+            Err(Ok(
+                scoutchain_verification::VerificationError::ValidatorAlreadyRegistered
+            ))
         ),
         "after cooldown the wallet is detected as already registered: {result:?}"
     );
@@ -131,7 +137,9 @@ fn test_batch_register_validators_respects_cooldown() {
     assert!(
         matches!(
             result,
-            Err(Ok(scoutchain_verification::VerificationError::RegistrationCooldown))
+            Err(Ok(
+                scoutchain_verification::VerificationError::RegistrationCooldown
+            ))
         ),
         "batch with a cooldown-locked wallet must return RegistrationCooldown: {result:?}"
     );

@@ -17,7 +17,9 @@
 //! `get_validator_milestones_page_v2` and `get_validator_players_page` in
 //! `contracts/verification/tests/pagination_correctness.rs`.
 
-use scoutchain_scout_access::{FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier};
+use scoutchain_scout_access::{
+    FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
+};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
     token::StellarAssetClient,
@@ -109,7 +111,11 @@ fn test_exact_boundary_offset_plus_limit_eq_total() {
     // offset=4, limit=2 → entries at indices 4 and 5 (player IDs 5 and 6)
     let page = h.client.get_scout_contacts_page(&scout, &4u32, &2u32);
     assert_eq!(page.total, 6);
-    assert_eq!(page.entries.len(), 2, "should return exactly 2 entries at boundary");
+    assert_eq!(
+        page.entries.len(),
+        2,
+        "should return exactly 2 entries at boundary"
+    );
     assert_eq!(page.entries.get(0).unwrap(), 5u64);
     assert_eq!(page.entries.get(1).unwrap(), 6u64);
 }
@@ -132,7 +138,11 @@ fn test_limit_clamped_at_50() {
         "entries must never exceed the 50-entry cap (got {})",
         page.entries.len()
     );
-    assert_eq!(page.entries.len(), 50, "first 50 entries returned for offset=0");
+    assert_eq!(
+        page.entries.len(),
+        50,
+        "first 50 entries returned for offset=0"
+    );
 }
 
 /// Walk all pages with limit=10 and confirm every player ID is seen exactly

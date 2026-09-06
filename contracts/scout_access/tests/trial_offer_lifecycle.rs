@@ -152,7 +152,12 @@ fn advance_player(h: &Harness, player_id: u64, levels: u32) {
 /// `evidence_hash` must be a unique CID per call.
 fn approve_milestone(h: &Harness, player_id: u64, evidence_hash: &str) {
     let validator = Address::generate(&h.env);
-    h.verification.register_validator(&validator, &String::from_str(&h.env, "UEFA-B-License"), &String::from_str(&h.env, "Default Academy"), &String::from_str(&h.env, "Default Region"), &soroban_sdk::Vec::new(&h.env));
+    h.verification.register_validator(
+        &validator,
+        &String::from_str(&h.env, "UEFA-B-License"),
+        &String::from_str(&h.env, "Default Academy"),
+        &soroban_sdk::Vec::new(&h.env),
+    );
     h.verification.approve_milestone(
         &validator,
         &player_id,
@@ -578,7 +583,10 @@ fn test_admin_refund_trial_escrow_rejects_non_outstanding_targets() {
     let never_logged = h
         .scout_access
         .try_admin_refund_trial_escrow(&999u64, &1u32, &rescue_to);
-    assert!(never_logged.is_err(), "refunding a never-created escrow must fail");
+    assert!(
+        never_logged.is_err(),
+        "refunding a never-created escrow must fail"
+    );
 
     // Already confirmed via confirm_trial_offer.
     let player_confirmed: u64 = 31;
@@ -586,11 +594,15 @@ fn test_admin_refund_trial_escrow_rejects_non_outstanding_targets() {
     advance_player(&h, player_confirmed, 2);
     let scout_a = setup_elite_scout(&h, player_confirmed);
     let index_a = log_offer(&h, &scout_a, player_confirmed, CID_3, CID_4);
-    h.scout_access
-        .confirm_trial_offer(&player_wallet, &player_confirmed, &index_a, &None::<String>);
-    let already_confirmed = h
-        .scout_access
-        .try_admin_refund_trial_escrow(&player_confirmed, &index_a, &rescue_to);
+    h.scout_access.confirm_trial_offer(
+        &player_wallet,
+        &player_confirmed,
+        &index_a,
+        &None::<String>,
+    );
+    let already_confirmed =
+        h.scout_access
+            .try_admin_refund_trial_escrow(&player_confirmed, &index_a, &rescue_to);
     assert!(
         already_confirmed.is_err(),
         "refunding an already-confirmed escrow must fail"
@@ -603,9 +615,9 @@ fn test_admin_refund_trial_escrow_rejects_non_outstanding_targets() {
     let index_b = log_offer(&h, &scout_b, player_double, CID_5, CID_6);
     h.scout_access
         .admin_refund_trial_escrow(&player_double, &index_b, &rescue_to);
-    let already_refunded = h
-        .scout_access
-        .try_admin_refund_trial_escrow(&player_double, &index_b, &rescue_to);
+    let already_refunded =
+        h.scout_access
+            .try_admin_refund_trial_escrow(&player_double, &index_b, &rescue_to);
     assert!(
         already_refunded.is_err(),
         "a second admin_refund_trial_escrow on the same entry must fail, not double-pay"

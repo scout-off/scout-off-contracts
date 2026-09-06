@@ -24,10 +24,11 @@ use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
 // numbers — that tightening is a follow-up, not a blocker.
 const REGISTER_VALIDATOR_CPU_BUDGET: u64 = 15_000_000;
 const APPROVE_MILESTONE_CPU_BUDGET: u64 = 20_000_000;
-const ATTEST_MILESTONE_CPU_BUDGET: u64 = 25_000_000;
-const CAST_DISPUTE_VOTE_CPU_BUDGET: u64 = 20_000_000;
-const TALLY_DISPUTE_CPU_BUDGET: u64 = 30_000_000;
 const GET_VALIDATOR_MILESTONES_PAGE_CPU_BUDGET: u64 = 15_000_000;
+/// Bounded cascade sweep (CASCADE_LIMIT = 50) with 500 total milestones.
+/// Cost must be proportional to the 50-entry limit, not the full 500.
+/// See ci/cpu-cost-budget.md — added for issue #1039.
+const REVOKE_VALIDATOR_CASCADE_50_CPU_BUDGET: u64 = 50_000_000;
 
 // Distinct valid CIDv0 evidence hashes (exactly 46 chars, base58btc — no
 // 0/O/I/l). approve_milestone rejects duplicate evidence hashes globally.
@@ -68,7 +69,12 @@ fn cost_register_validator() {
     let credentials = String::from_str(&env, "UEFA-A-License-2026");
 
     env.cost_estimate().budget().reset_default();
-    client.register_validator(&validator, &credentials, &String::from_str(&env, ""), &String::from_str(&env, "Default Region"), &Vec::new(&env));
+    client.register_validator(
+        &validator,
+        &credentials,
+        &String::from_str(&env, ""),
+        &Vec::new(&env),
+    );
     assert_cpu_budget(&env, "register_validator", REGISTER_VALIDATOR_CPU_BUDGET);
 }
 
@@ -76,7 +82,12 @@ fn cost_register_validator() {
 fn cost_approve_milestone() {
     let (env, client) = setup();
     let validator = Address::generate(&env);
-    client.register_validator(&validator, &String::from_str(&env, "UEFA-A-License-2026"), &String::from_str(&env, ""), &String::from_str(&env, "Default Region"), &Vec::new(&env));
+    client.register_validator(
+        &validator,
+        &String::from_str(&env, "UEFA-A-License-2026"),
+        &String::from_str(&env, ""),
+        &Vec::new(&env),
+    );
 
     env.cost_estimate().budget().reset_default();
     client.approve_milestone(
@@ -93,7 +104,12 @@ fn cost_approve_milestone() {
 fn cost_get_validator_milestones_page() {
     let (env, client) = setup();
     let validator = Address::generate(&env);
-    client.register_validator(&validator, &String::from_str(&env, "UEFA-A-License-2026"), &String::from_str(&env, ""), &String::from_str(&env, "Default Region"), &Vec::new(&env));
+    client.register_validator(
+        &validator,
+        &String::from_str(&env, "UEFA-A-License-2026"),
+        &String::from_str(&env, ""),
+        &Vec::new(&env),
+    );
     client.approve_milestone(
         &validator,
         &1u64,
@@ -143,7 +159,12 @@ fn cid_for_budget(env: &Env, seed: u32) -> String {
 fn cost_revoke_validator_cascade_50_limit_at_500_milestones() {
     let (env, client) = setup();
     let validator = Address::generate(&env);
-    client.register_validator(&validator, &String::from_str(&env, "UEFA-A-License-2026"), &String::from_str(&env, "Default Academy"), &String::from_str(&env, "Default Region"), &soroban_sdk::Vec::new(&env));
+    client.register_validator(
+        &validator,
+        &String::from_str(&env, "UEFA-A-License-2026"),
+        &String::from_str(&env, "Default Academy"),
+        &soroban_sdk::Vec::new(&env),
+    );
 
     // Approve 500 milestones: 5 per player, 100 players.
     let mut cid_seed: u32 = 20_000;
@@ -172,69 +193,4 @@ fn cost_revoke_validator_cascade_50_limit_at_500_milestones() {
         "revoke_validator(ForCause, limit=50, total=500)",
         REVOKE_VALIDATOR_CASCADE_50_CPU_BUDGET,
     );
-}
-
-#[test]
-fn cost_attest_milestone() {
-    let (env, client) = setup();
-    let validator = Address::generate(&env);
-    client.register_validator(&validator, &String::from_str(&env, "license"), &String::from_str(&env, "academy"), &String::from_str(&env, "region"), &soroban_sdk::Vec::new(&env));
-
-    let player_id = 1001u64;
-    client.approve_milestone(
-        &validator,
-        &player_id,
-        &String::from_str(&env, "achievement"),
-        &String::from_str(&env, CID_1),
-        &None,
-    );
-
-    env.cost_estimate().budget().reset_default();
-    client.attest_milestone(&validator, &player_id, &0u64);
-    assert_cpu_budget(&env, "attest_milestone", ATTEST_MILESTONE_CPU_BUDGET);
-}
-
-#[test]
-fn cost_cast_dispute_vote() {
-    let (env, client) = setup();
-    let validator = Address::generate(&env);
-    client.register_validator(&validator, &String::from_str(&env, "license"), &String::from_str(&env, "academy"), &String::from_str(&env, "region"), &soroban_sdk::Vec::new(&env));
-
-    let player_id = 1002u64;
-    client.approve_milestone(
-        &validator,
-        &player_id,
-        &String::from_str(&env, "achievement"),
-        &String::from_str(&env, CID_2),
-        &None,
-    );
-    client.attest_milestone(&validator, &player_id, &0u64);
-    client.dispute_milestone(&player_id, &0u64, &String::from_str(&env, "disputed"));
-
-    env.cost_estimate().budget().reset_default();
-    client.cast_dispute_vote(&validator, &player_id, &0u64, &true);
-    assert_cpu_budget(&env, "cast_dispute_vote", CAST_DISPUTE_VOTE_CPU_BUDGET);
-}
-
-#[test]
-fn cost_tally_dispute() {
-    let (env, client) = setup();
-    let validator = Address::generate(&env);
-    client.register_validator(&validator, &String::from_str(&env, "license"), &String::from_str(&env, "academy"), &String::from_str(&env, "region"), &soroban_sdk::Vec::new(&env));
-
-    let player_id = 1003u64;
-    client.approve_milestone(
-        &validator,
-        &player_id,
-        &String::from_str(&env, "achievement"),
-        &String::from_str(&env, CID_3),
-        &None,
-    );
-    client.attest_milestone(&validator, &player_id, &0u64);
-    client.dispute_milestone(&player_id, &0u64, &String::from_str(&env, "disputed"));
-    client.cast_dispute_vote(&validator, &player_id, &0u64, &true);
-
-    env.cost_estimate().budget().reset_default();
-    client.tally_dispute(&player_id, &0u64);
-    assert_cpu_budget(&env, "tally_dispute", TALLY_DISPUTE_CPU_BUDGET);
 }

@@ -179,7 +179,12 @@ mod tests {
         let admin = Address::generate(&env);
         let validator = Address::generate(&env);
         client.initialize(&admin);
-        client.register_validator(&validator, &String::from_str(&env, "UEFA B License"), &String::from_str(&env, "Default Academy"), &String::from_str(&env, "Default Region"), &Vec::new(&env));
+        client.register_validator(
+            &validator,
+            &String::from_str(&env, "UEFA B License"),
+            &String::from_str(&env, "Default Academy"),
+            &Vec::new(&env),
+        );
 
         let description_256 = String::from_str(&env, &"a".repeat(256));
         let evidence = String::from_str(&env, VALID_CID_V0);
@@ -195,7 +200,12 @@ mod tests {
         let admin = Address::generate(&env);
         let validator = Address::generate(&env);
         client.initialize(&admin);
-        client.register_validator(&validator, &String::from_str(&env, "UEFA B License"), &String::from_str(&env, "Default Academy"), &String::from_str(&env, "Default Region"), &Vec::new(&env));
+        client.register_validator(
+            &validator,
+            &String::from_str(&env, "UEFA B License"),
+            &String::from_str(&env, "Default Academy"),
+            &Vec::new(&env),
+        );
 
         let description_257 = String::from_str(&env, &"a".repeat(257));
         let evidence = String::from_str(&env, VALID_CID_V0);

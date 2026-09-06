@@ -64,7 +64,12 @@ fn setup() -> Harness {
     let contract = ScoutAccessContractClient::new(&env, &id);
     contract.initialize(&admin, &xlm, &default_fees());
 
-    Harness { env, xlm, admin, contract }
+    Harness {
+        env,
+        xlm,
+        admin,
+        contract,
+    }
 }
 
 fn fund(h: &Harness, addr: &Address, amount: i128) {
@@ -171,10 +176,17 @@ fn batch_contact_players_does_not_duplicate_grant_for_already_contacted_player()
     // Re-contact player 1 (already contacted) alongside a genuinely new player 2.
     let player_ids = soroban_sdk::vec![&h.env, 1u64, 2u64];
     let new_contacts = h.contract.batch_contact_players(&scout, &player_ids);
-    assert_eq!(new_contacts, 1, "player 1 was already contacted, only player 2 is new");
+    assert_eq!(
+        new_contacts, 1,
+        "player 1 was already contacted, only player 2 is new"
+    );
 
     let grants = h.contract.get_player_access_grants(&1u64, &0u32, &10u32);
-    assert_eq!(grants.len(), 1, "no duplicate grant for the already-contacted player");
+    assert_eq!(
+        grants.len(),
+        1,
+        "no duplicate grant for the already-contacted player"
+    );
     assert_eq!(grants.get(0).unwrap().granted_at, first_grant.granted_at);
 }
 
@@ -196,10 +208,19 @@ fn pay_to_contact_already_contacted_does_not_duplicate_grant_or_event() {
         .unwrap();
 
     let result = h.contract.try_pay_to_contact(&scout, &player_id);
-    assert!(result.is_err(), "second contact must be rejected as AlreadyContacted");
+    assert!(
+        result.is_err(),
+        "second contact must be rejected as AlreadyContacted"
+    );
 
-    let grants = h.contract.get_player_access_grants(&player_id, &0u32, &10u32);
-    assert_eq!(grants.len(), 1, "AlreadyContacted must not issue a second grant");
+    let grants = h
+        .contract
+        .get_player_access_grants(&player_id, &0u32, &10u32);
+    assert_eq!(
+        grants.len(),
+        1,
+        "AlreadyContacted must not issue a second grant"
+    );
     assert_eq!(
         grants.get(0).unwrap().granted_at,
         first_grant.granted_at,
@@ -303,7 +324,10 @@ fn grant_survives_subscription_expiry() {
 
     // The grant this scout already earned is not revoked by expiry.
     assert!(h.contract.has_evidence_access(&player_id, &scout));
-    let grant = h.contract.get_evidence_access_grant(&player_id, &scout).unwrap();
+    let grant = h
+        .contract
+        .get_evidence_access_grant(&player_id, &scout)
+        .unwrap();
     assert!(!grant.revoked);
 }
 
@@ -344,18 +368,29 @@ fn get_player_access_grants_pagination() {
         scouts.push(scout);
     }
 
-    let page1 = h.contract.get_player_access_grants(&player_id, &0u32, &2u32);
+    let page1 = h
+        .contract
+        .get_player_access_grants(&player_id, &0u32, &2u32);
     assert_eq!(page1.len(), 2);
-    let page2 = h.contract.get_player_access_grants(&player_id, &2u32, &2u32);
+    let page2 = h
+        .contract
+        .get_player_access_grants(&player_id, &2u32, &2u32);
     assert_eq!(page2.len(), 2);
-    let page3 = h.contract.get_player_access_grants(&player_id, &4u32, &2u32);
+    let page3 = h
+        .contract
+        .get_player_access_grants(&player_id, &4u32, &2u32);
     assert_eq!(page3.len(), 1);
-    let page4 = h.contract.get_player_access_grants(&player_id, &5u32, &2u32);
+    let page4 = h
+        .contract
+        .get_player_access_grants(&player_id, &5u32, &2u32);
     assert_eq!(page4.len(), 0);
 
     // Grants come back oldest-first, in issuance order.
     for (i, scout) in scouts.iter().enumerate() {
-        let expected = h.contract.get_evidence_access_grant(&player_id, scout).unwrap();
+        let expected = h
+            .contract
+            .get_evidence_access_grant(&player_id, scout)
+            .unwrap();
         let got = if i < 2 {
             page1.get(i as u32).unwrap()
         } else if i < 4 {
@@ -370,7 +405,9 @@ fn get_player_access_grants_pagination() {
 #[test]
 fn get_player_access_grants_empty_for_unknown_player() {
     let h = setup();
-    let grants = h.contract.get_player_access_grants(&12345u64, &0u32, &10u32);
+    let grants = h
+        .contract
+        .get_player_access_grants(&12345u64, &0u32, &10u32);
     assert_eq!(grants.len(), 0);
 }
 
@@ -401,7 +438,9 @@ fn admin_revoke_evidence_access_flips_revoked_and_keeps_record() {
     assert_eq!(grant.revoked_at, Some(h.env.ledger().timestamp()));
 
     // Still enumerable — a revoked grant remains part of the audit trail.
-    let grants = h.contract.get_player_access_grants(&player_id, &0u32, &10u32);
+    let grants = h
+        .contract
+        .get_player_access_grants(&player_id, &0u32, &10u32);
     assert_eq!(grants.len(), 1);
     assert!(grants.get(0).unwrap().revoked);
 }
@@ -441,7 +480,10 @@ fn admin_revoke_evidence_access_grant_not_found() {
     let err = result
         .expect_err("revoking a grant that was never issued must fail")
         .expect("must be a contract error, not a host error");
-    assert_eq!(err, scoutchain_scout_access::ScoutAccessError::GrantNotFound);
+    assert_eq!(
+        err,
+        scoutchain_scout_access::ScoutAccessError::GrantNotFound
+    );
 }
 
 #[test]
@@ -460,10 +502,18 @@ fn admin_revoke_evidence_access_is_idempotent() {
         .revoked_at;
 
     h.env.ledger().with_mut(|l| l.timestamp += 1);
-    let result = h.contract.try_admin_revoke_evidence_access(&player_id, &scout);
-    assert!(result.is_ok(), "revoking an already-revoked grant must be a graceful no-op");
+    let result = h
+        .contract
+        .try_admin_revoke_evidence_access(&player_id, &scout);
+    assert!(
+        result.is_ok(),
+        "revoking an already-revoked grant must be a graceful no-op"
+    );
 
-    let grant = h.contract.get_evidence_access_grant(&player_id, &scout).unwrap();
+    let grant = h
+        .contract
+        .get_evidence_access_grant(&player_id, &scout)
+        .unwrap();
     assert_eq!(
         grant.revoked_at, first_revoked_at,
         "re-revoking must not overwrite the original revocation timestamp"
@@ -482,7 +532,10 @@ fn admin_revoke_evidence_access_requires_initialized_contract() {
 
     let result = contract.try_admin_revoke_evidence_access(&1u64, &scout);
     let err = result.expect_err("uninitialized contract has no admin to authorize the call");
-    assert!(err.is_err() || err.is_ok(), "either representation is fine — just must not succeed");
+    assert!(
+        err.is_err() || err.is_ok(),
+        "either representation is fine — just must not succeed"
+    );
 }
 
 /// Type import sanity: `EvidenceAccessGrant` is exported from the crate root
