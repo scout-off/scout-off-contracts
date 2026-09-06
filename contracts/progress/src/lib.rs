@@ -35,10 +35,14 @@ mod registration_contract {
     use scoutchain_shared_types::ProgressLevel;
     use soroban_sdk::{contractclient, contracterror, Env};
 
+    // Named uniquely (not `Error`) so the `stellar contract bindings
+    // typescript` generator — which maps every `#[contracterror]` enum to a
+    // TS const called `Errors` — does not emit two clashing `Errors`
+    // declarations for this contract's two cross-contract client stubs.
     #[contracterror]
     #[derive(Copy, Clone, Debug, PartialEq)]
     #[repr(u32)]
-    pub enum Error {
+    pub enum RegClientError {
         PlayerNotFound = 3,
         Unauthorized = 10,
     }
@@ -46,7 +50,11 @@ mod registration_contract {
     #[contractclient(name = "Client")]
     #[allow(dead_code)]
     pub trait RegistrationContractClient {
-        fn set_player_level(env: Env, player_id: u64, level: ProgressLevel) -> Result<(), Error>;
+        fn set_player_level(
+            env: Env,
+            player_id: u64,
+            level: ProgressLevel,
+        ) -> Result<(), RegClientError>;
     }
 }
 
@@ -56,10 +64,12 @@ mod registration_contract {
 mod verification_contract {
     use soroban_sdk::{contractclient, contracterror, Env};
 
+    // Named uniquely (not `Error`) — see the note in `mod
+    // registration_contract` above about the TS bindings generator.
     #[contracterror]
     #[derive(Copy, Clone, Debug, PartialEq)]
     #[repr(u32)]
-    pub enum Error {
+    pub enum VerClientError {
         MilestoneNotFound = 14,
     }
 

@@ -26,10 +26,14 @@ mod progress_contract {
     use scoutchain_shared_types::ProgressLevel;
     use soroban_sdk::{contractclient, contracterror, Address, Env};
 
+    // Named uniquely (not `Error`) so the `stellar contract bindings
+    // typescript` generator — which maps every `#[contracterror]` enum to a
+    // TS const called `Errors` — does not emit two clashing `Errors`
+    // declarations for this contract's two cross-contract client stubs.
     #[contracterror]
     #[derive(Copy, Clone, Debug, PartialEq)]
     #[repr(u32)]
-    pub enum Error {
+    pub enum ProgClientError {
         AlreadyAtMaxLevel = 6,
     }
 
@@ -41,7 +45,7 @@ mod progress_contract {
             caller: Address,
             player_id: u64,
             milestone_ref: u32,
-        ) -> Result<ProgressLevel, Error>;
+        ) -> Result<ProgressLevel, ProgClientError>;
     }
 }
 
@@ -70,17 +74,19 @@ mod registration_contract {
         pub method: Option<String>,
     }
 
+    // Named uniquely (not `Error`) — see the note in `mod progress_contract`
+    // above about the TS bindings generator.
     #[contracterror]
     #[derive(Copy, Clone, Debug, PartialEq)]
     #[repr(u32)]
-    pub enum Error {
+    pub enum RegClientError {
         ScoutNotFound = 12,
     }
 
     #[contractclient(name = "Client")]
     #[allow(dead_code)]
     pub trait RegistrationContractClient {
-        fn get_scout_by_wallet(env: Env, wallet: Address) -> Result<ScoutProfile, Error>;
+        fn get_scout_by_wallet(env: Env, wallet: Address) -> Result<ScoutProfile, RegClientError>;
     }
 }
 
