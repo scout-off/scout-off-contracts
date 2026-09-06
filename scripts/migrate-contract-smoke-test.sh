@@ -85,8 +85,10 @@ fi
 # 2. Register the local network + fund identities.
 # ---------------------------------------------------------------------------
 echo "==> Registering local network with Stellar CLI..."
-stellar network add "$NETWORK" --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" --overwrite \
-  || stellar network add "$NETWORK" --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE"
+# `stellar network add` on a name that already exists is a no-op-ish success
+# in current CLIs and errored on older ones; tolerate either.
+stellar network add "$NETWORK" --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" \
+  || true
 
 echo "==> Generating + funding admin identity..."
 stellar keys generate smoke-admin --network "$NETWORK" --overwrite >/dev/null 2>&1 \
@@ -136,7 +138,8 @@ OLD_REG_ID="$(grep -E '^REGISTRATION_CONTRACT_ID=' .env.contracts | cut -d= -f2-
 # ---------------------------------------------------------------------------
 echo "==> Seeding a validator on the OLD verification contract (admin-signed)..."
 stellar contract invoke --id "$OLD_VER_ID" --source smoke-admin --network "$NETWORK" \
-  -- register_validator --wallet "$ADMIN_ADDRESS" --credentials "smoke-test-credentials-0001"
+  -- register_validator --wallet "$ADMIN_ADDRESS" --credentials "smoke-test-credentials-0001" \
+  --affiliation "Smoke Test Academy" --specializations '[]'
 
 echo "==> Seeding a player on the OLD registration contract (player-signed)..."
 stellar contract invoke --id "$OLD_REG_ID" --source smoke-player --network "$NETWORK" \
@@ -149,8 +152,8 @@ stellar contract invoke --id "$OLD_REG_ID" --source smoke-player --network "$NET
 # 5. BEFORE snapshot of OLD state.
 # ---------------------------------------------------------------------------
 echo "==> Capturing BEFORE state (old contracts)..."
-BEFORE_VALIDATORS="$(stellar contract invoke --id "$OLD_VER_ID" --network "$NETWORK" -- get_validators | jq -S '.')"
-BEFORE_PLAYER_COUNT="$(stellar contract invoke --id "$OLD_REG_ID" --network "$NETWORK" -- get_player_count | tr -dc '0-9')"
+BEFORE_VALIDATORS="$(stellar contract invoke --id "$OLD_VER_ID" --source smoke-admin --network "$NETWORK" -- get_validators | jq -S '.')"
+BEFORE_PLAYER_COUNT="$(stellar contract invoke --id "$OLD_REG_ID" --source smoke-admin --network "$NETWORK" -- get_player_count | tr -dc '0-9')"
 echo "    OLD validators   : $BEFORE_VALIDATORS"
 echo "    OLD player_count : $BEFORE_PLAYER_COUNT"
 
@@ -167,8 +170,8 @@ NEW_REG_ID="$(grep -E '^REGISTRATION_CONTRACT_ID=' .env.contracts | cut -d= -f2-
 # 7. AFTER snapshot of NEW state + comparison.
 # ---------------------------------------------------------------------------
 echo "==> Capturing AFTER state (new contracts)..."
-AFTER_VALIDATORS="$(stellar contract invoke --id "$NEW_VER_ID" --network "$NETWORK" -- get_validators | jq -S '.')"
-AFTER_PLAYER_COUNT="$(stellar contract invoke --id "$NEW_REG_ID" --network "$NETWORK" -- get_player_count | tr -dc '0-9')"
+AFTER_VALIDATORS="$(stellar contract invoke --id "$NEW_VER_ID" --source smoke-admin --network "$NETWORK" -- get_validators | jq -S '.')"
+AFTER_PLAYER_COUNT="$(stellar contract invoke --id "$NEW_REG_ID" --source smoke-admin --network "$NETWORK" -- get_player_count | tr -dc '0-9')"
 echo "    NEW validators   : $AFTER_VALIDATORS"
 echo "    NEW player_count : $AFTER_PLAYER_COUNT"
 

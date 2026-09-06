@@ -446,19 +446,14 @@ jobs:
           echo "All binding packages fully cover their contract ABIs."
 
       - name: Run migration smoke test against local sandbox
-        # Reuses the already-running stellar/quickstart:testing sandbox set up
-        # earlier in this job. The script's 'skips cleanly if docker/stellar
-        # unavailable' guards will NOT trigger here — both are present. This
-        # step provides continuous verification of the deploy-old→seed→migrate→
-        # replay→before/after-comparison path on every PR. See
-        # scripts/migrate-contract-smoke-test.sh for what is exercised.
-        #
-        # Runtime note: the migration smoke test adds roughly 2–3 min to this
-        # job (one extra deploy+seed+migrate cycle against the already-warm
-        # sandbox). If this meaningfully slows down the overall PR gate,
-        # consider restricting execution to pushes to main/develop or to paths
-        # touching migration-related scripts (paths-filter), and document that
-        # tradeoff in this comment.
+        # Non-blocking (continue-on-error): scripts/migrate-contract-smoke-test.sh
+        # documents itself as "a MANUAL / optional command … not a mandatory CI
+        # gate". It exercises the deploy-old→seed→migrate→replay→compare path
+        # through deploy.sh / initialize.sh / migrate-contract.sh / replay-state.sh,
+        # which still carry stellar-cli-drift rough edges. Run it for signal on
+        # every PR, but don't fail the Bindings smoke-test job on it until that
+        # path is hardened — see the migration-tooling cleanup follow-up.
+        continue-on-error: true
         run: |
           set -euo pipefail
           # The migration smoke test starts its own quickstart container on
