@@ -461,11 +461,10 @@ jobs:
         # tradeoff in this comment.
         run: |
           set -euo pipefail
-          export DEPLOYER_SECRET="$(stellar keys show ci-deployer 2>/dev/null || true)"
-          # The smoke test spins its own container internally; signal it to
-          # reuse the already-running network registration rather than
-          # re-registering, by exporting the passphrase so the script can
-          # skip the `stellar network add` step if the network is already known.
+          # The migration smoke test starts its own quickstart container on
+          # port 8000, so free the port the earlier "Start Soroban local
+          # sandbox" step is still holding.
+          docker rm -f stellar-local >/dev/null 2>&1 || true
           bash scripts/migrate-contract-smoke-test.sh
 
       - name: Stop local sandbox

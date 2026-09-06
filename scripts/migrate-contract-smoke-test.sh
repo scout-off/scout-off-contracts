@@ -25,6 +25,8 @@ NETWORK="local"
 CONTAINER="scoutchain-migrate-smoke"
 RPC_URL="http://localhost:8000/soroban/rpc"
 PASSPHRASE="Standalone Network ; February 2017"
+# Fallback only — replaced below with the id of the native-asset SAC this
+# script actually deploys onto the fresh local network.
 XLM_TOKEN_ADDRESS="CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA"
 WORKDIR="$(mktemp -d)"
 
@@ -95,6 +97,14 @@ for _ in $(seq 1 30); do
 done
 ADMIN_ADDRESS="$(stellar keys address smoke-admin)"
 DEPLOYER_SECRET="$(stellar keys show smoke-admin)"
+
+# Deploy the native-asset Stellar Asset Contract on this fresh local network
+# and use its real id — scout_access.initialize probes the token with a
+# read-only decimals() call, which fails against an id that was never
+# actually deployed.
+XLM_TOKEN_ADDRESS="$(stellar contract asset deploy \
+  --asset native --source smoke-admin --network "$NETWORK" 2>/dev/null \
+  || stellar contract id asset --asset native --network "$NETWORK")"
 export ADMIN_ADDRESS DEPLOYER_SECRET XLM_TOKEN_ADDRESS
 
 echo "==> Generating + funding a player identity (holds its own key — required"
