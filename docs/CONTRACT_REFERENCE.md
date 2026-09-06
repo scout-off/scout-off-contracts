@@ -732,6 +732,20 @@ registration is permitted; duplicate prevention is enforced per role only.
 
 ---
 
+### Additional Functions (migration seeding, record recovery & status)
+
+| Function | Auth | Description |
+|----------|------|-------------|
+| `admin_seed_player(wallet, vitals, ipfs_hashes, level, player_id, registered_at, updated_at) -> Result<u64, ScoutChainError>` | admin | Seed a historical player profile at a fixed `player_id` and timestamps during a migration window. |
+| `admin_seed_scout(wallet, region, scout_id, registered_at, verified) -> Result<u64, ScoutChainError>` | admin | Seed a historical scout profile at a fixed `scout_id` during a migration window. |
+| `restore_player_record(player_id) -> Result<(), ScoutChainError>` | admin | Re-extend the TTL of an archived player record and re-insert it into the filter indexes before it is permanently evicted. Errors `PlayerRecordEvicted` if the key is already gone. |
+| `restore_scout_record(scout_id) -> Result<(), ScoutChainError>` | admin | Re-extend the TTL of an archived scout record before it is permanently evicted. Errors `ScoutRecordEvicted` if the key is already gone. |
+| `is_player_deactivated(player_id) -> bool` | none | Whether the player is currently soft-hidden from `filter_players` results. |
+| `get_player_status(player_id) -> Result<PlayerStatus, ScoutChainError>` | none | Combined existence / deactivation status for a player. |
+| `get_scout_status(scout_id) -> ScoutStatus` | none | Registration / verification status for a scout (`NotRegistered`, `Registered`, `Verified`). |
+
+---
+
 ## verification
 
 Manages the trusted validator registry and milestone approvals. Cross-calls
@@ -2348,6 +2362,33 @@ stellar contract invoke --id $VERIFICATION_CONTRACT_ID -- version
 
 ---
 
+### Additional Functions (attestation, batch, quorum, pausing, migration & recovery)
+
+| Function | Auth | Description |
+|----------|------|-------------|
+| `set_min_region_quorum(min_regions: u32) -> Result<(), VerificationError>` | admin | Set the minimum number of distinct approver regions required for a Level-2+ advance. |
+| `get_min_region_quorum() -> u32` | none | Read the current minimum region quorum. |
+| `set_reg_cooldown(cooldown_secs: u64) -> Result<(), VerificationError>` | admin | Per-wallet validator re-registration cooldown, in seconds. `0` disables it. |
+| `get_reg_cooldown() -> u64` | none | Read the current validator registration cooldown. |
+| `batch_register_validators(entries: Vec<(Address, String, String, Vec<String>)>) -> Result<(), VerificationError>` | admin | Register up to the batch cap of validators atomically; any invalid or cooldown-locked entry rejects the whole batch. |
+| `restore_validator_record(wallet) -> Result<(), VerificationError>` | admin | Re-extend the TTL of an archived validator record before permanent eviction. |
+| `restore_milestone_record(player_id, index) -> Result<(), VerificationError>` | admin | Re-extend the TTL of an archived milestone record before permanent eviction. |
+| `pause_approve_milestone() -> Result<(), VerificationError>` | admin | Function-scoped circuit breaker: block `approve_milestone` / `attest_milestone` / `submit_attested_milestone` while leaving the rest of the contract live. Emits `approve_milestone_paused`. |
+| `unpause_approve_milestone() -> Result<(), VerificationError>` | admin | Release the `approve_milestone` function-scoped breaker. Emits `approve_milestone_unpaused`. |
+| `register_attestation_key(wallet, public_key: BytesN<32>) -> Result<(), VerificationError>` | self | A validator registers the ed25519 public key used to verify their off-chain-signed attestations. |
+| `submit_attested_milestone(relayer, attestation: MilestoneAttestation, signature: BytesN<64>) -> Result<u32, VerificationError>` | relayer | Relayer submits a validator's off-chain-signed milestone attestation; the relayer pays fees but holds no privilege. |
+| `get_attestation_nonce(wallet) -> u64` | none | Current replay-protection nonce for a validator's attestation key. |
+| `get_attestation_key(wallet) -> Result<BytesN<32>, VerificationError>` | none | Read a validator's registered attestation public key. |
+| `get_milestone_with_status(player_id, index) -> Result<MilestoneWithValidatorStatus, VerificationError>` | none | A milestone plus whether its approving validator is still active. |
+| `get_milestones_by_validator_page(wallet, offset: u32, limit: u32) -> Vec<Milestone>` | none | Paginated list of milestones approved by a given validator. |
+| `open_migration_window() -> Result<(), VerificationError>` | admin | Open the admin-only window during which `admin_seed_*` may write historical records. |
+| `close_migration_window() -> Result<(), VerificationError>` | admin | Close the migration window. |
+| `migration_window_is_open() -> bool` | none | Whether the migration window is currently open. |
+| `admin_seed_milestone(player_id, milestone_index, milestone: Milestone, validator) -> Result<(), VerificationError>` | admin | Seed a historical milestone at a fixed index during a migration window. |
+| `admin_seed_dispute(player_id, milestone_index, dispute: MilestoneDispute) -> Result<(), VerificationError>` | admin | Seed a historical milestone dispute during a migration window. |
+
+---
+
 ### Events
 
 | Event | Topics | Data | Description |
@@ -2951,6 +2992,19 @@ Return the deployed contract version string (from `Cargo.toml` at build time).
 ```bash
 stellar contract invoke --id $PROGRESS_CONTRACT_ID -- version
 ```
+
+---
+
+### Additional Functions (history pagination, migration & recovery)
+
+| Function | Auth | Description |
+|----------|------|-------------|
+| `restore_player_level_record(player_id) -> Result<(), ProgressError>` | admin | Re-extend the TTL of an archived `PlayerLevel` entry before it is permanently evicted (otherwise the level silently reverts to `Unverified`). |
+| `admin_seed_history(player_id, history_index: u32, entry: ProgressEntry, expected_root: Option<BytesN<32>>) -> Result<(), ProgressError>` | admin | Seed a historical `ProgressEntry` at a fixed contiguous index during a migration window; the recomputed Merkle root must match `expected_root` or the call rolls back. |
+| `get_history_page_with_cursor(player_id, cursor_snapshot: Option<u32>, cursor_next_index: Option<u32>, limit: u32) -> (Vec<ProgressEntry>, u32, u32)` | none | Stable cursor-based history pagination: returns the page, the next-index cursor, and the snapshot count so a consumer paging through sees every entry exactly once even while `advance_level` runs concurrently. |
+| `open_migration_window() -> Result<(), ProgressError>` | admin | Open the admin-only window during which `admin_seed_history` may write historical records. |
+| `close_migration_window() -> Result<(), ProgressError>` | admin | Close the migration window. |
+| `migration_window_is_open() -> bool` | none | Whether the migration window is currently open. |
 
 ### Events
 
@@ -4656,6 +4710,19 @@ Manages the trusted validator registry and milestone approvals.
 | `pause_contract()` / `unpause_contract()` | admin | Circuit breaker |
 | `health()` | — | Returns true if initialized |
 
+### Additional Functions (trial-escrow admin, migration seeding)
+
+| Function | Auth | Description |
+|----------|------|-------------|
+| `admin_refund_trial_escrow(player_id, offer_index: u32, to: Address) -> Result<(), ScoutAccessError>` | admin | Admin-forced refund of a stuck trial-offer escrow to a scout, for dispute resolution / recovery. Emits `trial_escrow_admin_refunded`. |
+| `get_trial_escrow(player_id, index: u32) -> Option<TrialEscrow>` | none | Read the escrow record backing a pending trial offer, if any. |
+| `admin_seed_subscription(subscription: Subscription) -> Result<(), ScoutAccessError>` | admin | Seed a historical subscription record during a migration window. |
+| `admin_seed_contact(contact: ContactRecord) -> Result<(), ScoutAccessError>` | admin | Seed a historical contact-unlock record during a migration window. |
+| `admin_seed_trial_offer(player_id, trial_index: u32, offer: TrialOffer, escrow: Option<TrialEscrow>) -> Result<(), ScoutAccessError>` | admin | Seed a historical trial offer (and optional escrow) at a fixed index during a migration window. |
+| `admin_seed_auto_renew(scout: Address, enabled: bool) -> Result<(), ScoutAccessError>` | admin | Seed a scout's auto-renew preference during a migration window. |
+| `admin_seed_fee_config(config: FeeConfig, history: Vec<FeeConfigHistoryEntry>) -> Result<(), ScoutAccessError>` | admin | Seed the active fee configuration and its full ring-buffer history during a migration window. |
+| `admin_seed_fee_config_history(history: Vec<FeeConfigHistoryEntry>) -> Result<(), ScoutAccessError>` | admin | Seed only the fee-config history ring buffer during a migration window. |
+
 ### Events
 
 | Event | Topics | Data | Description |
@@ -5068,6 +5135,11 @@ pub struct TrialOffer {
 | 8 | `Overflow` | History counter overflowed |
 | 9 | `RegistrationCallFailed` | Cross-contract call to registration contract failed when syncing player level |
 | 10 | `PendingAdminNotSet` | `accept_admin` called without a pending proposal |
+| 11 | `MigrationNotActive` | Seeding attempted while the migration window is closed; call `open_migration_window` first |
+| 12 | `HistoryAlreadyExists` | A `HistoryEntry` already exists at `(player_id, history_index)` with different content (identical replays are no-ops) |
+| 13 | `MerkleRootMismatch` | Merkle root recomputed from the seeded history does not match the caller-supplied `expected_root`; the transaction is rolled back |
+| 14 | `InvalidHistoryIndex` | Seeded `history_index` is zero, non-contiguous, or would displace an existing entry |
+| 15 | `PlayerLevelRecordEvicted` | `restore_player_level_record` targeted a player-level entry whose archival grace period has fully elapsed |
 
 ### `ScoutAccessError` (scout_access contract)
 
@@ -5100,13 +5172,13 @@ pub struct TrialOffer {
 | 26 | `PendingFeeConfigAlreadyExists` | `propose_fee_config` called while a pending proposal already exists |
 | 27 | `ScoutNotVerified` | Pro-tier `subscribe()` rejected an unverified (or not-found) scout — see [`docs/SYBIL_MITIGATION_DESIGN.md`](SYBIL_MITIGATION_DESIGN.md) |
 | 28 | `AutoRenewNotEnabled` | `renew_if_due` called for a scout without auto-renewal enabled |
-| 29 | `SubscriptionRecordEvicted` | `restore_subscription_record` targeted a subscription entry whose archival grace period has fully elapsed (evicted, not merely archived) and is unrecoverable |
+| 29 | `MigrationNotActive` | Seeding attempted while the migration window is closed; call `open_migration_window` first |
 | 30 | `SubscriptionAlreadyExists` | Migration replay: a `Subscription` already exists for this scout with different content |
 | 31 | `ContactAlreadyExists` | Migration replay: a `ContactRecord` already exists for `(player_id, scout)` with different content |
 | 32 | `TrialOfferAlreadyExists` | Migration replay: a `TrialOffer` already exists at `(player_id, trial_index)` with different content |
 | 33 | `AutoRenewAlreadyExists` | Migration replay: an `AutoRenew` flag already exists for this scout with a different value |
 | 34 | `FeeConfigHistoryAlreadyExists` | Migration replay: a fee-config history entry conflicts with history already stored |
-| 35 | `SubscriptionRecordEvicted` | (see code 29 above — same variant; retained for legacy slot reservation) |
+| 35 | `SubscriptionRecordEvicted` | `restore_subscription_record` targeted a subscription entry whose archival grace period has fully elapsed (evicted, not merely archived) and is unrecoverable |
 | 36 | `PayToContactPaused` | `pay_to_contact` called while the function-scoped pause is active (issue #1056) — the whole-contract `ContractPaused` (3) takes precedence when both are set |
 | 37 | `TrialEscrowNotOutstanding` | `admin_refund_trial_escrow` targeted a `(player_id, offer_index)` pair with no outstanding `TrialEscrow` entry |
 | 38 | `GrantNotFound` | `admin_revoke_evidence_access` targeted a `(player_id, scout)` pair for which no `EvidenceAccessGrant` has ever been issued |
@@ -5134,6 +5206,11 @@ All events follow the unified `(Symbol, actor)` topic schema introduced in #246.
 | `admin_transfer_proposed` | event_name, old_admin (Address) | new_admin (Address) | Current admin proposes a replacement |
 | `admin_transferred` | event_name, old_admin (Address) | new_admin (Address) | Pending admin accepts control |
 | `wiring_updated` | event_name, admin (Address), link (Symbol) | new_address (Address), new_epoch (u32) | `set_progress_contract` re-wired the `progress_contract` peer link (issue #1041 — see [Cross-Contract Wiring](#cross-contract-wiring) below) |
+| `scout_deactivated` | event_name, admin (Address) | scout_id (u64) | Admin soft-hides a scout |
+| `scout_reactivated` | event_name, admin (Address) | scout_id (u64) | Admin restores a soft-hidden scout |
+| `player_record_restored` | event_name, admin (Address) | player_id (u64) | `restore_player_record` re-extended an archived player record's TTL |
+| `scout_record_restored` | event_name, admin (Address) | scout_id (u64) | `restore_scout_record` re-extended an archived scout record's TTL |
+| `migration_redeemed` | event_name, wallet (Address) | role (MigrationRole), profile_id (u64), new_contract_hint (Address) | A relayer-driven `redeem_migration_*` call seeded a historical player/scout profile |
 
 ### verification
 
@@ -5158,6 +5235,18 @@ All events follow the unified `(Symbol, actor)` topic schema introduced in #246.
 | `attestation_window_expired` | event_name, player_id (u64) | evidence_hash (String), new_round (u32) | A sub-threshold claim's voting window elapsed; the next vote starts a fresh round |
 | `validator_votes_invalidated` | event_name, admin (Address) | wallet (Address), invalidated_count (u32) | `revoke_validator` retroactively stripped this validator's pending votes |
 | `wiring_updated` | event_name, admin (Address), link (Symbol) | new_address (Address), new_epoch (u32) | `set_progress_contract` / `update_progress_contract` / `set_registration_contract` / `update_registration_contract` re-wired a peer link — `link` is `"progress_contract"` or `"registration_contract"` (issue #1041 — see [Cross-Contract Wiring](#cross-contract-wiring) below) |
+| `approve_milestone_paused` | event_name, admin (Address) | () | Function-scoped breaker for `approve_milestone` / `attest_milestone` / `submit_attested_milestone` engaged |
+| `approve_milestone_unpaused` | event_name, admin (Address) | () | Function-scoped breaker released |
+| `validator_revoked_for_cause` | event_name, admin (Address) | wallet (Address), reason (String) | `revoke_validator` invoked with the for-cause path (issue #1039), which also flags the validator's milestones for re-review |
+| `milestone_flagged` | event_name, validator (Address) | player_id (u64), milestone_index (u32) | A milestone was flagged for re-review during a for-cause revocation cascade |
+| `milestone_flag_cleared` | event_name, reviewer (Address) | player_id (u64), milestone_index (u32) | An active validator cleared a pending re-review flag via `rereview_milestone` |
+| `revocation_cascade_continued` | event_name, validator (Address) | next_cursor (u32), flagged_this_call (u32) | A for-cause revocation cascade was paginated; more milestones remain to flag |
+| `revocation_cascade_complete` | event_name, validator (Address) | total_flagged (u32) | A for-cause revocation cascade finished flagging all of a validator's milestones |
+| `validator_record_restored` | event_name, admin (Address) | wallet (Address) | `restore_validator_record` re-extended an archived validator record's TTL |
+| `milestone_record_restored` | event_name, admin (Address) | player_id (u64), index (u32) | `restore_milestone_record` re-extended an archived milestone record's TTL |
+| `level_advancement_skipped` | event_name, player_id (u64) | reason (String) | A milestone was recorded but the Level-2+ advance was gated (region-quorum / affiliation-diversity not met) |
+| `progress_contract_not_set` | event_name, player_id (u64) | () | Diagnostic: `approve_milestone` reached the cross-call point with no `progress_contract` wired |
+| `progress_call_failed` | event_name, player_id (u64) | error_code (u32) | Diagnostic (transaction receipt only): the cross-contract `advance_level` call returned an error, which aborts the whole transaction |
 
 ### progress
 
@@ -5170,6 +5259,7 @@ All events follow the unified `(Symbol, actor)` topic schema introduced in #246.
 | `contract_paused` | event_name, admin (Address) | () | Circuit breaker engaged |
 | `contract_unpaused` | event_name, admin (Address) | () | Circuit breaker released |
 | `wiring_updated` | event_name, admin (Address), link (Symbol) | new_address (Address), new_epoch (u32) | `set_registration_contract` / `set_verification_contract` / `set_scout_access_contract` re-wired a peer link — `link` is `"registration_contract"`, `"verification_contract"`, or `"scout_access_contract"` (issue #1041 — see [Cross-Contract Wiring](#cross-contract-wiring) below) |
+| `player_level_record_restored` | event_name, admin (Address) | player_id (u64) | `restore_player_level_record` re-extended an archived `PlayerLevel` entry's TTL |
 
 ### scout_access
 
@@ -5199,6 +5289,12 @@ All events follow the unified `(Symbol, actor)` topic schema introduced in #246.
 | `subscription_record_restored` | event_name, admin (Address) | scout (Address) | `restore_subscription_record` re-extends an archived or expired subscription entry's TTL back to the policy value |
 | `evidence_access_granted` | event_name, scout (Address) | player_id (u64), tier_at_grant (SubscriptionTier) | `pay_to_contact` / `batch_contact_players` atomically authorizes this scout to request the wrapped decryption key for this player's evidence — see [EVIDENCE_PRIVACY.md](EVIDENCE_PRIVACY.md) |
 | `evidence_access_revoked` | event_name, scout (Address) | player_id (u64), admin (Address) | `admin_revoke_evidence_access` — off-chain key-wrapping service should stop honoring *future* requests for this pair |
+| `auto_renew_set` | event_name, scout (Address) | enabled (bool) | Scout toggled auto-renewal of their subscription |
+| `subscription_auto_renewed` | event_name, scout (Address) | tier (SubscriptionTier), subscribed_at (u64), expires_at (u64) | `renew_if_due` auto-renewed a scout's subscription |
+| `trial_escrow_admin_refunded` | event_name, to (Address) | player_id (u64), index (u32), amount (i128) | `admin_refund_trial_escrow` force-refunded a stuck trial-offer escrow to a scout |
+| `registration_contract_updated` | event_name, admin (Address) | registration_contract (Address) | Registration contract address re-wired |
+| `progress_contract_not_set` | event_name, player_id (u64) | () | Diagnostic: `confirm_trial_offer` reached the cross-call point with no `progress_contract` wired |
+| `progress_call_failed` | event_name, player_id (u64) | error_code (u32) | Diagnostic (transaction receipt only): the cross-contract `advance_level` call from `confirm_trial_offer` returned an error, aborting the whole transaction |
 
 ---
 

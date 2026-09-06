@@ -1519,6 +1519,7 @@ impl VerificationContract {
         milestone_category: Option<String>,
     ) -> Result<u32, VerificationError> {
         Self::require_not_paused(&env)?;
+        Self::require_initialized(&env)?;
         Self::require_approve_milestone_not_paused(&env)?;
         validator_wallet.require_auth();
 
@@ -1624,6 +1625,7 @@ impl VerificationContract {
         evidence_hash: String,
     ) -> Result<AttestationStatus, VerificationError> {
         Self::require_not_paused(&env)?;
+        Self::require_initialized(&env)?;
         Self::require_approve_milestone_not_paused(&env)?;
         validator_wallet.require_auth();
 
@@ -1878,8 +1880,8 @@ impl VerificationContract {
         wallet: Address,
         public_key: BytesN<32>,
     ) -> Result<(), VerificationError> {
-        Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
+        Self::require_initialized(&env)?;
         // Self-authorized: the validator registers their own attestation key.
         wallet.require_auth();
 
@@ -1962,6 +1964,7 @@ impl VerificationContract {
         signature: BytesN<64>,
     ) -> Result<u32, VerificationError> {
         Self::require_not_paused(&env)?;
+        Self::require_initialized(&env)?;
         Self::require_approve_milestone_not_paused(&env)?;
         // Relayer authorizes fee payment only — holds no special privilege.
         relayer.require_auth();
