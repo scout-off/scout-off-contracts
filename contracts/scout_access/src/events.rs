@@ -15,6 +15,8 @@ pub const ADMIN_TRANSFER_PROPOSED: &str = "admin_transfer_proposed";
 pub const CONTRACT_PAUSED: &str = "contract_paused";
 pub const CONTRACT_UNPAUSED: &str = "contract_unpaused";
 pub const SUBSCRIPTION_REFUNDED: &str = "subscription_refunded";
+pub const SUBSCRIPTION_CREATED: &str = "subscription_created";
+pub const SUBSCRIPTION_RENEWED: &str = "subscription_renewed";
 pub const PROGRESS_CONTRACT_UPDATED: &str = "progress_contract_updated";
 pub const REGISTRATION_CONTRACT_UPDATED: &str = "registration_contract_updated";
 pub const FEE_CONFIG_PROPOSED: &str = "fee_config_proposed";
@@ -148,7 +150,7 @@ pub fn subscription_created(
     expires_at: u64,
 ) {
     env.events().publish(
-        (Symbol::new(env, "subscription_created"), scout.clone()),
+        (Symbol::new(env, SUBSCRIPTION_CREATED), scout.clone()),
         (tier.clone(), subscribed_at, expires_at),
     );
 }
@@ -162,7 +164,7 @@ pub fn subscription_renewed(
     expires_at: u64,
 ) {
     env.events().publish(
-        (Symbol::new(env, "subscription_renewed"), scout.clone()),
+        (Symbol::new(env, SUBSCRIPTION_RENEWED), scout.clone()),
         (tier.clone(), subscribed_at, expires_at),
     );
 }
