@@ -225,7 +225,8 @@ for name in "${CONTRACTS[@]}"; do
   else
     # First time: ensure the README ends with exactly one newline, then append
     # the section (no extra blank line so a second run is idempotent).
-    sed -i -e '$a\' "$readme"   # ensure trailing newline
+    # ensure the file ends with exactly one newline before we append
+    [ -z "$(tail -c1 "$readme")" ] || printf '\n' >> "$readme"
     printf '\n' >> "$readme"    # one blank separator line
     cat "$tmpfile" >> "$readme"
     echo "    Added function list to $readme"
