@@ -77,7 +77,9 @@ stellar contract invoke \
   --id "$VER_ID" --source "$DEPLOYER" --network "$NETWORK" \
   -- register_validator \
   --wallet "$ADMIN" \
-  --credentials "Smoke Test Coach"
+  --credentials "Smoke Test Coach" \
+  --affiliation "Smoke Test Academy" \
+  --specializations '[]'
 
 # 7. Approve a milestone (this triggers the cross-contract call)
 echo ""

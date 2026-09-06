@@ -110,12 +110,12 @@ invoke_idempotent 1 "scout_access initialize" \
   --admin "$ADMIN" \
   --xlm_token "$XLM_TOKEN" \
   --fee_config '{
-    "contact_fee_stroops": 1000000,
-    "basic_sub_stroops": 10000000,
-    "pro_sub_stroops": 30000000,
-    "elite_sub_stroops": 70000000,
+    "contact_fee_stroops": "1000000",
+    "basic_sub_stroops": "10000000",
+    "pro_sub_stroops": "30000000",
+    "elite_sub_stroops": "70000000",
     "sub_duration_secs": 2592000,
-    "trial_offer_escrow_stroops": 5000000,
+    "trial_offer_escrow_stroops": "5000000",
     "trial_offer_expiry_secs": 604800,
     "pro_contact_limit": 10
   }'
