@@ -130,11 +130,15 @@ fail() { [[ $REPAIR -eq 0 ]] && echo "  ❌ $*"; FAIL=$((FAIL + 1)); }
 warn() { [[ $REPAIR -eq 0 ]] && echo "  ⚠️  $*"; WARN=$((WARN + 1)); }
 
 invoke() {
+    # stdout carries the function's JSON return value; stellar-cli writes
+    # progress lines ("Simulating transaction…") to stderr. Keep them apart
+    # so a successful read is clean, parseable JSON — merging them (2>&1)
+    # makes every `json.loads` below fail and every link read as UNCONFIGURED.
     stellar contract invoke \
         --id "$1" \
         --source "$SOURCE_ACCOUNT" \
         --network "$NETWORK" \
-        -- "$2" 2>&1
+        -- "$2" 2>/dev/null
 }
 
 if [[ $REPAIR -eq 0 ]]; then
@@ -153,7 +157,7 @@ if [[ $REPAIR -eq 0 ]]; then
   do
       label="${label_id%%:*}"
       contract_id="${label_id##*:}"
-      if resp=$(invoke "$contract_id" health 2>&1); then
+      if resp=$(invoke "$contract_id" health); then
           initialized=$(echo "$resp" | python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if d.get('initialized') else 'no')" 2>/dev/null || echo "unknown")
           paused=$(echo "$resp"      | python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if d.get('paused') else 'no')" 2>/dev/null || echo "unknown")
           if [[ "$paused" == "yes" ]]; then
@@ -173,7 +177,7 @@ fi
 [[ $REPAIR -eq 0 ]] && { echo ""; echo "--- Wiring state ---"; }
 
 fetch_wiring_state() {
-  invoke "$1" get_wiring_state 2>&1
+  invoke "$1" get_wiring_state
 }
 
 REG_STATE=$(fetch_wiring_state "$REGISTRATION_CONTRACT_ID") && REG_OK=1 || REG_OK=0
@@ -227,9 +231,12 @@ sa_id = os.environ["SCOUT_ACCESS_CONTRACT_ID"]
 def load(ok, env_key):
     if not ok:
         return None
+    raw = os.environ.get(env_key, "")
     try:
-        return json.loads(os.environ.get(env_key, ""))
-    except Exception:
+        return json.loads(raw)
+    except Exception as e:
+        import sys
+        print(f"WARN: could not parse {env_key} as JSON ({e}): {raw!r}", file=sys.stderr)
         return None
 
 reg = load(reg_ok, "REG_STATE")

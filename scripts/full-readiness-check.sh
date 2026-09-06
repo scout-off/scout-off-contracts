@@ -88,11 +88,13 @@ record_warn() {
 }
 
 invoke() {
+    # stdout = the function's JSON return value; stellar-cli progress lines
+    # go to stderr. Keep them apart so a successful read parses as JSON.
     stellar contract invoke \
         --id "$1" \
         --source "$SOURCE_ACCOUNT" \
         --network "$NETWORK" \
-        -- "$2" 2>&1
+        -- "$2" 2>/dev/null
 }
 
 echo "============================================"
@@ -122,22 +124,37 @@ for name in "${HEALTH_CONTRACT_ORDER[@]}"; do
     echo "==> health() on ${name} (${id})..."
     check_label="health:${name}"
 
-    if response=$(invoke "$id" health 2>&1); then
+    if response=$(invoke "$id" health); then
         echo "    Response: $response"
 
-        if echo "$response" | grep -q '"initialized":false'; then
-            echo "    ❌ FAIL: ${name} returned initialized: false"
-            record_fail "$check_label" "initialized: false — run initialize.sh"
-        elif echo "$response" | grep -q '"paused":true'; then
-            echo "    ❌ FAIL: ${name} returned paused: true"
-            record_fail "$check_label" "paused: true — call unpause_contract to resume"
-        elif echo "$response" | grep -q '"initialized":true'; then
-            echo "    ✅ OK: ${name} is healthy"
-            record_pass "$check_label" "initialized: true, paused: false"
-        else
-            echo "    ❌ FAIL: ${name} returned unexpected health response"
-            record_fail "$check_label" "unexpected health response: ${response}"
-        fi
+        # Parse the ContractHealth struct as JSON rather than grepping a
+        # whitespace-sensitive substring — the CLI's formatting is not
+        # guaranteed to be compact.
+        hstatus=$(echo "$response" | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("UNPARSEABLE"); sys.exit()
+print("NOT_INITIALIZED" if not d.get("initialized")
+      else "PAUSED" if d.get("paused")
+      else "OK")
+' 2>/dev/null || echo "UNPARSEABLE")
+
+        case "$hstatus" in
+            OK)
+                echo "    ✅ OK: ${name} is healthy"
+                record_pass "$check_label" "initialized: true, paused: false" ;;
+            NOT_INITIALIZED)
+                echo "    ❌ FAIL: ${name} returned initialized: false"
+                record_fail "$check_label" "initialized: false — run initialize.sh" ;;
+            PAUSED)
+                echo "    ❌ FAIL: ${name} returned paused: true"
+                record_fail "$check_label" "paused: true — call unpause_contract to resume" ;;
+            *)
+                echo "    ❌ FAIL: ${name} returned unexpected health response"
+                record_fail "$check_label" "unexpected health response: ${response}" ;;
+        esac
     else
         echo "    ❌ FAIL: ${name} health() call failed — ${response}"
         record_fail "$check_label" "health() invocation failed: ${response}"
@@ -160,10 +177,10 @@ echo ""
 echo "--- Section 2: Cross-contract wiring (all 8 links) ---"
 
 REG_WIRING_OK=0; VER_WIRING_OK=0; PROG_WIRING_OK=0; SA_WIRING_OK=0
-REG_STATE=$(invoke "$REGISTRATION_CONTRACT_ID" get_wiring_state 2>&1) && REG_WIRING_OK=1
-VER_STATE=$(invoke "$VERIFICATION_CONTRACT_ID" get_wiring_state 2>&1) && VER_WIRING_OK=1
-PROG_STATE=$(invoke "$PROGRESS_CONTRACT_ID" get_wiring_state 2>&1) && PROG_WIRING_OK=1
-SA_STATE=$(invoke "$SCOUT_ACCESS_CONTRACT_ID" get_wiring_state 2>&1) && SA_WIRING_OK=1
+REG_STATE=$(invoke "$REGISTRATION_CONTRACT_ID" get_wiring_state) && REG_WIRING_OK=1
+VER_STATE=$(invoke "$VERIFICATION_CONTRACT_ID" get_wiring_state) && VER_WIRING_OK=1
+PROG_STATE=$(invoke "$PROGRESS_CONTRACT_ID" get_wiring_state) && PROG_WIRING_OK=1
+SA_STATE=$(invoke "$SCOUT_ACCESS_CONTRACT_ID" get_wiring_state) && SA_WIRING_OK=1
 
 for entry in \
   "registration:$REG_WIRING_OK" "verification:$VER_WIRING_OK" \
@@ -192,9 +209,12 @@ prog_id, sa_id = os.environ["PROGRESS_CONTRACT_ID"], os.environ["SCOUT_ACCESS_CO
 def load(ok, key):
     if not ok:
         return None
+    raw = os.environ.get(key, "")
     try:
-        return json.loads(os.environ.get(key, ""))
-    except Exception:
+        return json.loads(raw)
+    except Exception as e:
+        import sys
+        print(f"WARN: could not parse {key} as JSON ({e}): {raw!r}", file=sys.stderr)
         return None
 
 reg, ver, prog, sa = load(reg_ok, "REG_STATE"), load(ver_ok, "VER_STATE"), load(prog_ok, "PROG_STATE"), load(sa_ok, "SA_STATE")
