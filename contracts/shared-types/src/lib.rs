@@ -41,7 +41,15 @@ impl ProgressLevel {
         }
     }
 
-    /// Returns the next valid level, or None if already at the top.
+    /// Returns `Some(next_tier)` for `Unverified`, `VerifiedIdentity`, and
+    /// `PerformanceMilestones`, and `None` for `EliteTier`.
+    ///
+    /// `progress::advance_level` uses this to compute the next tier and maps
+    /// the `None` case to `ProgressError::AlreadyAtMaxLevel`, signalling that
+    /// a player is already at the top tier.
+    ///
+    /// This is the canonical implementation of the four-tier progression model
+    /// described in `docs/GLOSSARY.md`.
     pub fn next(&self) -> Option<ProgressLevel> {
         match self {
             ProgressLevel::Unverified => Some(ProgressLevel::VerifiedIdentity),
