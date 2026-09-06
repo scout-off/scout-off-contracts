@@ -28,6 +28,16 @@ set -euo pipefail
 
 NETWORK="${1:-testnet}"
 
+# `stellar contract invoke` requires a --source-account even for the
+# read-only health()/get_wiring_state() probes below. Any funded account
+# works for a simulation-only read; callers set STELLAR_SOURCE_ACCOUNT
+# (identity name or secret key), falling back to DEPLOYER_SECRET.
+SOURCE_ACCOUNT="${STELLAR_SOURCE_ACCOUNT:-${DEPLOYER_SECRET:-}}"
+if [[ -z "$SOURCE_ACCOUNT" ]]; then
+    echo "ERROR: set STELLAR_SOURCE_ACCOUNT (or DEPLOYER_SECRET) to a Stellar identity or secret key." >&2
+    exit 1
+fi
+
 # ---------------------------------------------------------------------------
 # Load contract IDs from .env.contracts
 # ---------------------------------------------------------------------------
@@ -80,6 +90,7 @@ record_warn() {
 invoke() {
     stellar contract invoke \
         --id "$1" \
+        --source "$SOURCE_ACCOUNT" \
         --network "$NETWORK" \
         -- "$2" 2>&1
 }

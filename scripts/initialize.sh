@@ -263,6 +263,7 @@ for entry in \
   id="${entry#*:}"
   version=$(stellar contract invoke \
     --id "$id" \
+    --source "$DEPLOYER" \
     --network "$NETWORK" \
     -- version)
   echo "    $name version => $version"

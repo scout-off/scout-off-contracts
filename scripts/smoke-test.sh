@@ -85,7 +85,7 @@ stellar contract invoke \
 echo ""
 echo "==> Approving milestone (cross-contract call)..."
 stellar contract invoke \
-  --id "$VER_ID" --source "$ADMIN" --network "$NETWORK" \
+  --id "$VER_ID" --source "$DEPLOYER" --network "$NETWORK" \
   -- approve_milestone \
   --validator_wallet "$ADMIN" \
   --player_id 1 \
@@ -96,7 +96,7 @@ stellar contract invoke \
 echo ""
 echo "==> Verifying cross-contract call succeeded..."
 LEVEL=$(stellar contract invoke \
-  --id "$PROG_ID" --network "$NETWORK" \
+  --id "$PROG_ID" --source "$DEPLOYER" --network "$NETWORK" \
   -- get_level \
   --player_id 1)
 

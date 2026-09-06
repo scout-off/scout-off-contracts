@@ -100,6 +100,17 @@ for arg in "$@"; do
   esac
 done
 
+# `stellar contract invoke` requires a --source-account even for the
+# read-only `get_wiring_state()` / `health()` probes below. Any funded
+# account works for a simulation-only read; callers set
+# STELLAR_SOURCE_ACCOUNT (identity name or secret key), falling back to
+# DEPLOYER_SECRET.
+SOURCE_ACCOUNT="${STELLAR_SOURCE_ACCOUNT:-${DEPLOYER_SECRET:-}}"
+if [[ -z "$SOURCE_ACCOUNT" ]]; then
+  echo "ERROR: set STELLAR_SOURCE_ACCOUNT (or DEPLOYER_SECRET) to a Stellar identity or secret key." >&2
+  exit 1
+fi
+
 # shellcheck source=/dev/null
 [[ -f .env.contracts ]] && source .env.contracts
 for var in REGISTRATION_CONTRACT_ID VERIFICATION_CONTRACT_ID PROGRESS_CONTRACT_ID SCOUT_ACCESS_CONTRACT_ID; do
@@ -121,6 +132,7 @@ warn() { [[ $REPAIR -eq 0 ]] && echo "  ⚠️  $*"; WARN=$((WARN + 1)); }
 invoke() {
     stellar contract invoke \
         --id "$1" \
+        --source "$SOURCE_ACCOUNT" \
         --network "$NETWORK" \
         -- "$2" 2>&1
 }
