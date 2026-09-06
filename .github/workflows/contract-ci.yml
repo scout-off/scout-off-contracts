@@ -152,7 +152,7 @@ jobs:
       - name: Install Stellar CLI (pinned)
         run: |
           # Keep in sync with: docs/CONTRIBUTING.md, scripts/generate-bindings.sh, and the abi-export CI step
-          STELLAR_CLI_VERSION="25.2.0"
+          STELLAR_CLI_VERSION="28.0.0"
           curl -sSL "https://raw.githubusercontent.com/stellar/stellar-cli/v${STELLAR_CLI_VERSION}/install.sh" | bash
           echo "$HOME/.stellar/bin" >> "$GITHUB_PATH"
 
@@ -503,7 +503,7 @@ jobs:
       - name: Install Stellar CLI (pinned)
         run: |
           # Keep in sync with: docs/CONTRIBUTING.md, scripts/generate-bindings.sh, and the bindings-smoke-test CI step
-          STELLAR_CLI_VERSION="25.2.0"
+          STELLAR_CLI_VERSION="28.0.0"
           curl -sSL "https://raw.githubusercontent.com/stellar/stellar-cli/v${STELLAR_CLI_VERSION}/install.sh" | bash
           echo "$HOME/.stellar/bin" >> "$GITHUB_PATH"
 

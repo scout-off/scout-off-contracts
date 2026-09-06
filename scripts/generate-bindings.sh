@@ -4,21 +4,27 @@
 # Requires .env.contracts to exist (written by deploy.sh)
 set -euo pipefail
 
-# Pin the stellar-cli version to ensure reproducible bindings.
-# Keep in sync with: docs/CONTRIBUTING.md and .github/workflows/contract-ci.yml
-REQUIRED_STELLAR_CLI_VERSION="25.2.0"
+# Reference stellar-cli version the generated bindings were last validated
+# against. Keep in sync with: docs/CONTRIBUTING.md and
+# .github/workflows/contract-ci.yml.
+#
+# This is advisory, not enforced: the upstream `install.sh` always installs
+# the latest release regardless of the tag it is fetched from, and the
+# "Verify ABI function coverage in generated bindings" CI step structurally
+# checks the output against the WASM ABI. A different CLI version only
+# warns — set STRICT_STELLAR_CLI_VERSION=1 to make it fatal.
+REFERENCE_STELLAR_CLI_VERSION="28.0.0"
 
 actual_version=$(stellar --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
-if [[ "$actual_version" != "$REQUIRED_STELLAR_CLI_VERSION" ]]; then
-  echo "ERROR: stellar-cli version mismatch."
-  echo "       Required: $REQUIRED_STELLAR_CLI_VERSION"
-  echo "       Found:    ${actual_version:-<not installed>}"
-  echo ""
-  echo "Install the correct version:"
-  echo "  curl -sSL https://raw.githubusercontent.com/stellar/stellar-cli/v${REQUIRED_STELLAR_CLI_VERSION}/install.sh | bash"
-  echo ""
-  echo "See docs/CONTRIBUTING.md for setup instructions."
-  exit 1
+if [[ "$actual_version" != "$REFERENCE_STELLAR_CLI_VERSION" ]]; then
+  echo "WARNING: stellar-cli version differs from the reference used to validate bindings."
+  echo "         Reference: $REFERENCE_STELLAR_CLI_VERSION"
+  echo "         Found:     ${actual_version:-<not installed>}"
+  if [[ "${STRICT_STELLAR_CLI_VERSION:-0}" == "1" ]]; then
+    echo "ERROR: STRICT_STELLAR_CLI_VERSION=1 — aborting on version mismatch." >&2
+    exit 1
+  fi
+  echo "         Continuing; re-validate the generated bindings if this looks wrong."
 fi
 
 NETWORK="${1:-testnet}"
