@@ -275,15 +275,18 @@ jobs:
           source .env.contracts
           ADMIN_ADDRESS=$(stellar keys address ci-deployer)
           export ADMIN_ADDRESS
-          # Use a fixed XLM token placeholder for the local sandbox.
-          XLM_TOKEN_ADDRESS="$(stellar contract invoke \
-            --id "$REGISTRATION_CONTRACT_ID" \
-            --source ci-deployer \
-            --network local \
-            -- version 2>/dev/null | tr -d '"' || echo 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA')"
-          # Re-use the native token address known for the local quickstart sandbox.
-          XLM_TOKEN_ADDRESS="CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA"
+          # scout_access.initialize probes the supplied xlm_token with a
+          # read-only `decimals()` call, so the native-asset Stellar Asset
+          # Contract must actually be deployed on this fresh local network
+          # first (a hard-coded id points at an instance that doesn't exist
+          # yet -> Error(Storage, MissingValue) -> InvalidInput). `asset
+          # deploy` errors if it is already deployed, so fall back to the
+          # deterministic id.
+          XLM_TOKEN_ADDRESS="$(stellar contract asset deploy \
+            --asset native --source ci-deployer --network local 2>/dev/null \
+            || stellar contract id asset --asset native --network local)"
           export XLM_TOKEN_ADDRESS
+          echo "Native asset SAC: $XLM_TOKEN_ADDRESS"
           DEPLOYER_SECRET="$(stellar keys show ci-deployer 2>/dev/null || true)"
           export DEPLOYER_SECRET
           bash scripts/initialize.sh local
