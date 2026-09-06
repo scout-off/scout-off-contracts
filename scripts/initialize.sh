@@ -115,6 +115,8 @@ invoke_idempotent 1 "scout_access initialize" \
     "pro_sub_stroops": 30000000,
     "elite_sub_stroops": 70000000,
     "sub_duration_secs": 2592000,
+    "trial_offer_escrow_stroops": 5000000,
+    "trial_offer_expiry_secs": 604800,
     "pro_contact_limit": 10
   }'
 
