@@ -165,7 +165,12 @@ jobs:
             --name stellar-local \
             -p 8000:8000 \
             stellar/quickstart:testing \
-            --local
+            --local \
+            --limits unlimited
+          # `--limits unlimited` raises the local network's Soroban resource
+          # ceilings. The stellar-core default limits are extremely low and
+          # reject the upload of `verification`'s ~134 KB optimized WASM with
+          # `HostError: Error(Budget, ExceededLimit)` at simulation time.
           # Poll getLatestLedger until the DB is initialised and returns
           # a real ledger sequence (not just an open TCP port).
           echo "Waiting for Soroban RPC to be ready..."

@@ -57,7 +57,9 @@ trap cleanup EXIT
 # ---------------------------------------------------------------------------
 echo "==> Starting Soroban local sandbox ($CONTAINER)..."
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-docker run -d --name "$CONTAINER" -p 8000:8000 stellar/quickstart:testing --local >/dev/null
+# --limits unlimited: the stellar-core default Soroban resource ceilings are
+# extremely low and reject the upload of verification's ~134 KB optimized WASM.
+docker run -d --name "$CONTAINER" -p 8000:8000 stellar/quickstart:testing --local --limits unlimited >/dev/null
 
 echo "==> Waiting for Soroban RPC to be ready..."
 LEDGER=0
