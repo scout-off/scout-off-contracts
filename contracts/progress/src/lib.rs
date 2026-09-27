@@ -7,6 +7,10 @@ use types::{DataKey, ProgressEntry, ProgressLevel};
 
 use soroban_sdk::{contract, contractimpl, Address, Env};
 
+// ~30 days at 5 s/ledger; extend when TTL drops below half that.
+const PERSISTENT_TTL_MIN: u32 = 259_200;
+const PERSISTENT_TTL_MAX: u32 = 518_400;
+
 #[contract]
 pub struct ProgressContract;
 
@@ -102,6 +106,10 @@ impl ProgressContract {
             .persistent()
             .set(&DataKey::PlayerLevel(player_id), &new_level);
 
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::PlayerLevel(player_id), PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+
         events::progress_updated(&env, player_id, &new_level, &caller);
         Ok(new_level)
     }
@@ -129,7 +137,7 @@ impl ProgressContract {
         env.storage()
             .persistent()
             .get(&DataKey::HistoryEntry(player_id, index))
-            .ok_or(ProgressError::PlayerNotFound)
+            .ok_or(ProgressError::HistoryEntryNotFound)
     }
 
     pub fn health(env: Env) -> bool {
@@ -278,5 +286,53 @@ mod tests {
         // Clear mocks — old admin auth no longer stored, so pause must fail
         env.mock_auths(&[]);
         client.pause_contract();
+    }
+
+    // -----------------------------------------------------------------------
+    // Issue #1439 — advance_level must extend PlayerLevel TTL after write
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_advance_level_extends_player_level_ttl() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        let contract_id = client.address.clone();
+        client.initialize(&admin);
+
+        let validator = Address::generate(&env);
+        let player_id = 42u64;
+
+        client.advance_level(&validator, &player_id, &1u32);
+
+        // Verify the TTL of PlayerLevel(player_id) is at least PERSISTENT_TTL_MIN
+        env.as_contract(&contract_id, || {
+            let ttl = env
+                .storage()
+                .persistent()
+                .get_ttl(&DataKey::PlayerLevel(player_id));
+            assert!(
+                ttl >= PERSISTENT_TTL_MIN,
+                "PlayerLevel TTL {ttl} is below PERSISTENT_TTL_MIN {PERSISTENT_TTL_MIN}"
+            );
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Issue #1437 — get_history_entry must return HistoryEntryNotFound for
+    // an out-of-range index, not PlayerNotFound
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_get_history_entry_returns_history_entry_not_found() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let player_id = 99u64;
+        // Player has no history at all — any index should return HistoryEntryNotFound
+        let result = client.try_get_history_entry(&player_id, &1u32);
+        assert_eq!(
+            result,
+            Err(Ok(ProgressError::HistoryEntryNotFound)),
+            "expected HistoryEntryNotFound for missing history index"
+        );
     }
 }
