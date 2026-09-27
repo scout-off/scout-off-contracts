@@ -102,6 +102,11 @@ pub struct ScoutProfile {
     pub region: String,
     /// Whether the scout has been verified by the platform.
     pub verified: bool,
+    /// The admin address that verified this scout. `None` until `verify_scout` is called.
+    pub verified_by: Option<Address>,
+    /// Ledger timestamp (Unix seconds) when the scout was verified.
+    /// `None` until `verify_scout` is called.
+    pub verified_at: Option<u64>,
     /// Ledger timestamp when the scout was registered, in Unix seconds.
     pub registered_at: u64,
 }
