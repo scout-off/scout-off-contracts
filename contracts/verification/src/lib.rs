@@ -3006,7 +3006,7 @@ impl VerificationContract {
         // Check if dispute already exists
         let dispute_key = DataKey::MilestoneDispute(player_id, milestone_index);
         if env.storage().persistent().has(&dispute_key) {
-            return Err(VerificationError::InvalidInput);
+            return Err(VerificationError::DisputeAlreadyExists);
         }
 
         // Snapshot the jury configuration at filing time so later admin
@@ -7110,5 +7110,60 @@ mod tests {
             &None,
         );
         assert_eq!(idx, 1);
+    }
+
+    // -------------------------------------------------------------------------
+    // dispute_milestone: DisputeAlreadyExists test (#1452)
+    // -------------------------------------------------------------------------
+
+    /// Filing a second dispute on the same (player_id, milestone_index) must
+    /// return `DisputeAlreadyExists` (code 32), not the generic `InvalidInput`.
+    #[test]
+    fn test_duplicate_dispute_returns_dispute_already_exists() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        let player_wallet = Address::generate(&env);
+        client.initialize(&admin);
+        setup_with_registration(&env, &client, &player_wallet);
+
+        let validator = Address::generate(&env);
+        client.register_validator(
+            &validator,
+            &String::from_str(&env, "UEFA-B-License"),
+            &String::from_str(&env, "Default Academy"),
+            &Vec::new(&env),
+        );
+
+        client.approve_milestone(
+            &validator,
+            &1u64,
+            &String::from_str(&env, "First milestone"),
+            &String::from_str(&env, VALID_CID_V0),
+            &None,
+        );
+
+        // First dispute — should succeed.
+        client.dispute_milestone(
+            &player_wallet,
+            &1u64,
+            &1u32,
+            &String::from_str(&env, "I dispute this"),
+            &0u32,
+        );
+
+        // Second dispute on the same (player_id=1, milestone_index=1) must
+        // return the distinct DisputeAlreadyExists error, not InvalidInput.
+        let result = client.try_dispute_milestone(
+            &player_wallet,
+            &1u64,
+            &1u32,
+            &String::from_str(&env, "Trying again"),
+            &0u32,
+        );
+        assert_eq!(
+            result,
+            Err(Ok(VerificationError::DisputeAlreadyExists)),
+            "duplicate dispute must return DisputeAlreadyExists (code 32)"
+        );
     }
 }

@@ -2110,7 +2110,7 @@ Authorization works in two steps:
 | | |
 |---|---|
 | **Auth** | `player_wallet` must sign, and must match the wallet on record for `player_id` in the registration contract |
-| **Errors** | `ContractPaused` · `NotInitialized` · `MilestoneNotFound` · `Unauthorized` · `InvalidInput` (dispute already exists) · `RegistrationCallFailed` · `Overflow` |
+| **Errors** | `ContractPaused` · `NotInitialized` · `MilestoneNotFound` · `Unauthorized` · `DisputeAlreadyExists` (duplicate dispute for this milestone) · `RegistrationCallFailed` · `Overflow` |
 
 ```bash
 stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
