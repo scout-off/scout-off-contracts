@@ -1,6 +1,6 @@
 #![allow(deprecated, dead_code)]
 use crate::types::SubscriptionTier;
-use soroban_sdk::{Address, Env, Symbol};
+use soroban_sdk::{Address, BytesN, Env, Symbol};
 
 pub const CONTRACT_INITIALIZED: &str = "contract_initialized";
 pub const SCOUT_SUBSCRIBED: &str = "scout_subscribed";
@@ -15,6 +15,7 @@ pub const CONTRACT_PAUSED: &str = "contract_paused";
 pub const CONTRACT_UNPAUSED: &str = "contract_unpaused";
 pub const SUBSCRIPTION_REFUNDED: &str = "subscription_refunded";
 pub const PROGRESS_CONTRACT_UPDATED: &str = "progress_contract_updated";
+pub const CONTRACT_UPGRADED: &str = "contract_upgraded";
 
 /// topics: (event_name, admin)  data: admin
 pub fn contract_initialized(env: &Env, admin: &Address) {
@@ -180,5 +181,14 @@ pub fn progress_call_failed(env: &Env, player_id: u64, error_code: u32) {
     env.events().publish(
         (Symbol::new(env, "progress_call_failed"), player_id),
         error_code,
+    );
+}
+
+/// Emitted before `update_current_contract_wasm` — attributed to the old code version.
+/// topics: (event_name, admin)  data: new_wasm_hash
+pub fn contract_upgraded(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>) {
+    env.events().publish(
+        (Symbol::new(env, CONTRACT_UPGRADED), admin.clone()),
+        new_wasm_hash.clone(),
     );
 }

@@ -1,5 +1,5 @@
 #![allow(deprecated, dead_code)]
-use soroban_sdk::{Address, Env, Symbol};
+use soroban_sdk::{Address, BytesN, Env, Symbol};
 
 pub const PLAYER_REGISTERED: &str = "player_registered";
 pub const SCOUT_REGISTERED: &str = "scout_registered";
@@ -11,6 +11,7 @@ pub const PLAYER_LEVEL_SYNCED: &str = "player_level_synced";
 pub const SCOUT_VERIFIED: &str = "scout_verified";
 pub const ADMIN_TRANSFER_PROPOSED: &str = "admin_transfer_proposed";
 pub const ADMIN_TRANSFERRED: &str = "admin_transferred";
+pub const CONTRACT_UPGRADED: &str = "contract_upgraded";
 
 /// topics: (event_name, old_admin)  data: new_admin
 pub fn admin_transfer_proposed(env: &Env, old_admin: &Address, new_admin: &Address) {
@@ -93,5 +94,14 @@ pub fn scout_verified(env: &Env, scout_id: u64, wallet: &Address) {
     env.events().publish(
         (Symbol::new(env, "scout_verified"), wallet.clone()),
         scout_id,
+    );
+}
+
+/// Emitted before `update_current_contract_wasm` — attributed to the old code version.
+/// topics: (event_name, admin)  data: new_wasm_hash
+pub fn contract_upgraded(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>) {
+    env.events().publish(
+        (Symbol::new(env, CONTRACT_UPGRADED), admin.clone()),
+        new_wasm_hash.clone(),
     );
 }
