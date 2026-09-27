@@ -1098,11 +1098,25 @@ impl VerificationContract {
             .get(&DataKey::ValidatorVector)
             .unwrap_or_else(|| Vec::new(&env));
 
+        // Read counters once before the loop; the validation pass guarantees
+        // none of the entries will fail, so we can safely add `batch_len` to
+        // each and write back once after the loop rather than once per entry.
+        let active_count_before: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ActiveValidatorCount)
+            .unwrap_or(0u32);
+        let total_count_before: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalValidatorCount)
+            .unwrap_or(0u32);
+
         for i in 0..entries.len() {
             let (wallet, credentials, affiliation, specializations) = entries.get(i).unwrap();
-            if affiliation.len() > MAX_CREDENTIALS_LEN {
-                return Err(VerificationError::InvalidInput);
-            }
+            // NOTE: the redundant affiliation length check that was previously
+            // duplicated here has been removed; the validation pass above
+            // already enforces this constraint before any state is mutated.
             let validator = Validator {
                 wallet: wallet.clone(),
                 credentials: credentials.clone(),
@@ -1122,30 +1136,20 @@ impl VerificationContract {
             );
             validator_vector.push_back(wallet.clone());
 
-            // Increment active validator count.
-            let active_count: u32 = env
-                .storage()
-                .instance()
-                .get(&DataKey::ActiveValidatorCount)
-                .unwrap_or(0u32);
-            env.storage().instance().set(
-                &DataKey::ActiveValidatorCount,
-                &safe_add_u32(active_count, 1).map_err(|_| VerificationError::Overflow)?,
-            );
-
-            // Increment total validator count.
-            let total_count: u32 = env
-                .storage()
-                .instance()
-                .get(&DataKey::TotalValidatorCount)
-                .unwrap_or(0u32);
-            env.storage().instance().set(
-                &DataKey::TotalValidatorCount,
-                &safe_add_u32(total_count, 1).map_err(|_| VerificationError::Overflow)?,
-            );
-
             events::validator_registered(&env, &wallet, &validator.credentials);
         }
+
+        // Write both counters once for the entire batch.
+        env.storage().instance().set(
+            &DataKey::ActiveValidatorCount,
+            &safe_add_u32(active_count_before, batch_len)
+                .map_err(|_| VerificationError::Overflow)?,
+        );
+        env.storage().instance().set(
+            &DataKey::TotalValidatorCount,
+            &safe_add_u32(total_count_before, batch_len)
+                .map_err(|_| VerificationError::Overflow)?,
+        );
 
         // Persist updated vector.
         env.storage()
