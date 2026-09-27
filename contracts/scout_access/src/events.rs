@@ -18,6 +18,7 @@ pub const SUBSCRIPTION_REFUNDED: &str = "subscription_refunded";
 pub const PROGRESS_CONTRACT_UPDATED: &str = "progress_contract_updated";
 pub const REGISTRATION_CONTRACT_UPDATED: &str = "registration_contract_updated";
 pub const FEE_CONFIG_PROPOSED: &str = "fee_config_proposed";
+pub const FEE_CONFIG_PROPOSAL_CANCELLED: &str = "fee_config_proposal_cancelled";
 pub const FEE_CONFIG_UPDATED: &str = "fee_config_updated";
 pub const FEE_CONFIG_DELAY_BYPASSED: &str = "fee_config_delay_bypassed";
 pub const WIRING_UPDATED: &str = "wiring_updated";
@@ -241,6 +242,20 @@ pub fn fee_config_updated(
     env.events().publish(
         (Symbol::new(env, "fee_config_updated"), admin.clone()),
         (old_config.clone(), new_config.clone()),
+    );
+}
+
+/// topics: (event_name, admin)  data: ()
+///
+/// Emitted when a pending fee config proposal is cancelled via
+/// `cancel_fee_config_proposal`, or cleared implicitly by `update_fee_config`.
+pub fn fee_config_proposal_cancelled(env: &Env, admin: &Address) {
+    env.events().publish(
+        (
+            Symbol::new(env, "fee_config_proposal_cancelled"),
+            admin.clone(),
+        ),
+        (),
     );
 }
 
