@@ -87,8 +87,10 @@ pub enum ScoutAccessError {
     PendingFeeConfigAlreadyExists = 26,
 
     // ── Sybil resistance ──
-    /// Scout is not verified; cannot subscribe to Pro tier.
+    /// Scout is not verified; cannot subscribe to Pro or Elite tier.
     ScoutNotVerified = 27,
+    /// Registration contract is not wired; Pro/Elite subscriptions require it.
+    RegistrationContractNotSet = 28,
 
     // ── Auto-renewal ──
     /// `renew_if_due` was called but auto-renewal is not enabled for this scout.

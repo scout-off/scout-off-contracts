@@ -587,28 +587,32 @@ impl ScoutAccessContract {
             }
         }
 
-        // Sybil resistance: gate Pro-tier subscriptions to verified scouts only.
-        // Basic and Elite tiers remain unrestricted.
-        if tier == SubscriptionTier::Pro {
-            if let Some(reg_contract_addr) = env
+        // Sybil resistance: gate Pro and Elite tier subscriptions to verified
+        // scouts only. Basic tier remains open. Fails closed — if the
+        // registration contract is not wired, Pro and Elite access is denied
+        // rather than silently allowed. (#1417)
+        let tier_requires_verification = tier == SubscriptionTier::Pro
+            || tier == SubscriptionTier::Elite;
+
+        if tier_requires_verification {
+            let reg_contract_addr = env
                 .storage()
                 .instance()
                 .get::<DataKey, Address>(&DataKey::RegistrationContract)
-            {
-                let reg_client = registration_contract::Client::new(&env, &reg_contract_addr);
-                match reg_client.try_get_scout_by_wallet(&scout) {
-                    Ok(Ok(scout_profile)) => {
-                        if !scout_profile.verification.verified {
-                            return Err(ScoutAccessError::ScoutNotVerified);
-                        }
-                    }
-                    _ => {
-                        // Scout not found in registration contract; deny Pro-tier access
+                .ok_or(ScoutAccessError::RegistrationContractNotSet)?;
+
+            let reg_client = registration_contract::Client::new(&env, &reg_contract_addr);
+            match reg_client.try_get_scout_by_wallet(&scout) {
+                Ok(Ok(scout_profile)) => {
+                    if !scout_profile.verification.verified {
                         return Err(ScoutAccessError::ScoutNotVerified);
                     }
                 }
+                _ => {
+                    // Scout not found or call failed — deny access.
+                    return Err(ScoutAccessError::ScoutNotVerified);
+                }
             }
-            // If registration contract is not wired, allow Pro-tier subscription (graceful degradation)
         }
 
         let config = Self::fee_config(&env);
