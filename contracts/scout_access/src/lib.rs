@@ -1518,6 +1518,12 @@ impl ScoutAccessContract {
         match progress_client.try_advance_level(&env.current_contract_address(), &player_id, &index)
         {
             Ok(_) => {}
+            Err(Ok(progress_contract::ProgClientError::AlreadyAtMaxLevel)) => {
+                // #1419: Player is already at the maximum level — treat this as
+                // a successful confirmation. No level change is needed, but the
+                // trial offer should still be recorded as accepted and the
+                // escrow released to avoid locking funds indefinitely.
+            }
             Err(e) => {
                 // Extract numeric error code from the contract error, if any.
                 let code = match &e {
