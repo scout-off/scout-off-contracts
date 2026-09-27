@@ -487,20 +487,21 @@ Error codes are **per-contract**. The same numeric code can mean different thing
 | 26 | `DuplicateAttestation` | Same validator already attested to this claim in current round |
 | 27 | `TooManyPendingVotes` | Validator has MAX_PENDING_VOTES_PER_VALIDATOR outstanding votes |
 | 28 | `ThresholdModeRequiresAttestation` | threshold >= 2, must use attest_milestone bypass |
-| 29 | `MigrationNotActive` | Migration window not currently active |
-| 30 | `MilestoneAlreadyExists` | Milestone already exists at (player_id, milestone_index) with different content |
-| 31 | `DisputeAlreadyExists` | Dispute already exists at (player_id, milestone_index) with different content |
-| 32 | `ValidatorRecordEvicted` | Validator record fully evicted, unrecoverable |
-| 33 | `MilestoneRecordEvicted` | Milestone record fully evicted, unrecoverable |
-| 34 | `NotEligibleToReReview` | Caller is not a currently-active validator |
-| 35 | `MilestoneNotFlagged` | Milestone not currently flagged as pending re-review |
-| 36 | `DisputeRequiresJury` | resolve_dispute called on a dispute requiring jury resolution |
-| 37 | `NotJuryDispute` | cast_dispute_vote/tally_dispute called on non-jury dispute |
-| 38 | `VotingWindowClosed` | cast_dispute_vote called after voting window closed |
-| 39 | `ConflictOfInterest` | cast_dispute_vote called by the validator who approved the disputed milestone |
-| 40 | `AlreadyVoted` | cast_dispute_vote called by a validator who already voted on this dispute |
-| 41 | `VotingWindowOpen` | tally_dispute called before voting window closes, vote count is tied |
-| 42 | `QuorumNotReached` | tally_dispute called before quorum of votes has been reached |
+| 29 | `RegistrationCallFailed` | Cross-contract call to the registration contract failed |
+| 30 | `MigrationNotActive` | Migration window not currently active |
+| 31 | `MilestoneAlreadyExists` | Milestone already exists at (player_id, milestone_index) with different content |
+| 32 | `DisputeAlreadyExists` | Dispute already exists at (player_id, milestone_index) with different content |
+| 33 | `ValidatorRecordEvicted` | Validator record fully evicted, unrecoverable |
+| 34 | `MilestoneRecordEvicted` | Milestone record fully evicted, unrecoverable |
+| 35 | `NotEligibleToReReview` | Caller is not a currently-active validator |
+| 36 | `MilestoneNotFlagged` | Milestone not currently flagged as pending re-review |
+| 37 | `DisputeRequiresJury` | resolve_dispute called on a dispute requiring jury resolution — use tally_dispute instead |
+| 38 | `NotJuryDispute` | cast_dispute_vote/tally_dispute called on non-jury dispute |
+| 39 | `VotingWindowClosed` | cast_dispute_vote called after voting window closed |
+| 40 | `ConflictOfInterest` | cast_dispute_vote called by the validator who approved the disputed milestone |
+| 41 | `AlreadyVoted` | cast_dispute_vote called by a validator who already voted on this dispute |
+| 42 | `VotingWindowOpen` | tally_dispute called before voting window closes, vote count is tied |
+| 43 | `QuorumNotReached` | tally_dispute called before quorum of votes has been reached |
 
 ### `ProgressError` (progress)
 
