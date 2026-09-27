@@ -1,6 +1,6 @@
 use soroban_sdk::{contracttype, Address, BytesN};
 
-pub use scoutchain_shared_types::ProgressLevel;
+pub use scoutchain_shared_types::{ProgressLevel, WiringLink};
 
 /// One step of a Merkle inclusion proof for [`ProgressEntry`] history
 /// commitments (see [`DataKey::HistoryRoot`]).
@@ -40,33 +40,29 @@ pub struct ProgressEntry {
 /// Snapshot of all cross-contract peer addresses held by the progress
 /// contract. Returned by [`ProgressContract::get_wiring_state`].
 ///
-/// Use this to verify — without inspecting storage keys directly — that all
-/// three peer links are configured. See `docs/WIRING_REGISTRY_DESIGN.md` for
-/// the full design rationale and the recommended migration path.
+/// Each field is a [`WiringLink`] (from `scoutchain_shared_types`), matching
+/// the pattern used by `registration`, `verification`, and `scout_access`.
+/// This replaces the previous flat representation (issue #1412) where each
+/// peer was split into separate `*_contract: Option<Address>` and `*_epoch:
+/// u32` fields. The shared type makes generic tooling (scripts, off-chain
+/// indexers) work uniformly across all four contracts without special-casing
+/// progress.
+///
+/// See `docs/WIRING_REGISTRY_DESIGN.md` for the full design rationale and
+/// the recommended migration path.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProgressWiringState {
-    /// Address of the registration contract, if set via
-    /// `set_registration_contract`. Required for `advance_level` to validate
-    /// player existence via the registration contract.
-    pub registration_contract: Option<Address>,
-    /// Address of the verification contract, if set via
-    /// `set_verification_contract`. Only this address may call `advance_level`
-    /// (primary authorised caller).
-    pub verification_contract: Option<Address>,
-    /// Address of the scout_access contract, if set via
-    /// `set_scout_access_contract`. Whitelisted as the secondary authorised
-    /// caller of `advance_level` for trial-offer Level-3 advances.
-    pub scout_access_contract: Option<Address>,
-    /// Re-wiring epoch for `registration_contract` — bumped on every
-    /// `set_registration_contract` call. `0` iff `registration_contract` is
-    /// `None`. Added additively (issue #1041); see
-    /// `scoutchain_shared_types::WiringLink` for what epoch is for.
-    pub registration_epoch: u32,
-    /// Re-wiring epoch for `verification_contract`.
-    pub verification_epoch: u32,
-    /// Re-wiring epoch for `scout_access_contract`.
-    pub scout_access_epoch: u32,
+    /// Link to the registration contract, set via `set_registration_contract`.
+    /// Required for `advance_level` to validate player existence.
+    pub registration_contract: WiringLink,
+    /// Link to the verification contract, set via `set_verification_contract`.
+    /// Only this address may call `advance_level` (primary authorised caller).
+    pub verification_contract: WiringLink,
+    /// Link to the scout_access contract, set via `set_scout_access_contract`.
+    /// Whitelisted as the secondary authorised caller of `advance_level` for
+    /// trial-offer Level-3 advances.
+    pub scout_access_contract: WiringLink,
 }
 
 impl ProgressWiringState {
@@ -74,9 +70,9 @@ impl ProgressWiringState {
     /// A return value of `false` means `advance_level` may fail because at
     /// least one expected caller or dependency address is missing.
     pub fn is_fully_wired(&self) -> bool {
-        self.registration_contract.is_some()
-            && self.verification_contract.is_some()
-            && self.scout_access_contract.is_some()
+        self.registration_contract.is_configured()
+            && self.verification_contract.is_configured()
+            && self.scout_access_contract.is_configured()
     }
 }
 

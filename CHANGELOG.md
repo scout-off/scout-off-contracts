@@ -28,6 +28,24 @@ Use the structure below for upcoming MINOR or MAJOR contract changes:
 
 > **Breaking-change classification rules:** See [docs/VERSIONING.md — What Constitutes a Breaking Change](VERSIONING.md#what-constitutes-a-breaking-change) for the full criteria (storage layout changes, function signature changes, error code renumbering, event schema changes, cross-contract interface changes).
 
+---
+
+### [Unreleased] — fix/1412-progress-wiring-state-use-wiring-link
+
+- Contracts affected: `progress`
+- Summary: `progress::get_wiring_state()` now returns `ProgressWiringState`
+  with three `WiringLink { address, epoch }` fields (`registration_contract`,
+  `verification_contract`, `scout_access_contract`) instead of the previous
+  flat representation that had separate `Option<Address>` and `u32` epoch
+  fields. This aligns `progress` with the shared `WiringLink` pattern used
+  by the other three contracts and removes the need for the `flat_link`
+  special-case in `scripts/verify-cross-contract-wiring.sh`.
+- Classification: **Breaking (MAJOR)** — ABI change: callers reading
+  `registration_contract`, `verification_contract`, or `scout_access_contract`
+  as plain addresses (or reading the separate `*_epoch` fields) must update to
+  read `link.address` / `link.epoch` from the returned `WiringLink` object.
+  TypeScript bindings must be regenerated. Fixes #1412.
+
 - Version: `v0.4.0`
 - Release date: `2026-08-19`
 - Contracts affected: `verification`

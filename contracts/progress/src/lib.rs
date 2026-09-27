@@ -6,7 +6,8 @@ mod types;
 
 pub use errors::ProgressError;
 use scoutchain_shared_types::{
-    require_admin, safe_math::safe_add_u32, write_wiring_link, ContractHealth, ProgressLevel,
+    read_wiring_link, require_admin, safe_math::safe_add_u32, write_wiring_link, ContractHealth,
+    ProgressLevel,
 };
 pub use types::{DataKey, HistoryProofStep, ProgressEntry, ProgressWiringState};
 
@@ -992,40 +993,25 @@ impl ProgressContract {
     /// the recommended migration path for already-deployed contracts.
     pub fn get_wiring_state(env: Env) -> ProgressWiringState {
         Self::bump_instance_ttl(&env);
-        let registration_contract = env
-            .storage()
-            .instance()
-            .get::<DataKey, Address>(&DataKey::RegistrationContract);
-        let verification_contract = env
-            .storage()
-            .instance()
-            .get::<DataKey, Address>(&DataKey::VerificationContract);
-        let scout_access_contract = env
-            .storage()
-            .instance()
-            .get::<DataKey, Address>(&DataKey::ScoutAccessContract);
-        let registration_epoch = env
-            .storage()
-            .instance()
-            .get::<DataKey, u32>(&DataKey::RegistrationContractEpoch)
-            .unwrap_or(0);
-        let verification_epoch = env
-            .storage()
-            .instance()
-            .get::<DataKey, u32>(&DataKey::VerificationContractEpoch)
-            .unwrap_or(0);
-        let scout_access_epoch = env
-            .storage()
-            .instance()
-            .get::<DataKey, u32>(&DataKey::ScoutAccessContractEpoch)
-            .unwrap_or(0);
+        let registration_contract = read_wiring_link(
+            &env,
+            &DataKey::RegistrationContract,
+            &DataKey::RegistrationContractEpoch,
+        );
+        let verification_contract = read_wiring_link(
+            &env,
+            &DataKey::VerificationContract,
+            &DataKey::VerificationContractEpoch,
+        );
+        let scout_access_contract = read_wiring_link(
+            &env,
+            &DataKey::ScoutAccessContract,
+            &DataKey::ScoutAccessContractEpoch,
+        );
         ProgressWiringState {
             registration_contract,
             verification_contract,
             scout_access_contract,
-            registration_epoch,
-            verification_epoch,
-            scout_access_epoch,
         }
     }
 
@@ -2518,5 +2504,77 @@ mod tests {
 
         // Verify that subsequent reads also work (keep-alive is continuous).
         assert_eq!(client.get_level(&1u64), ProgressLevel::EliteTier);
+    }
+
+    // -------------------------------------------------------------------------
+    // get_wiring_state — WiringLink shape (issue #1412)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_get_wiring_state_initially_unconfigured() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register(ProgressContract, ());
+        let client = ProgressContractClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let state = client.get_wiring_state();
+        // All three links must be unconfigured (no address, epoch == 0).
+        assert!(state.registration_contract.address.is_none());
+        assert_eq!(state.registration_contract.epoch, 0);
+        assert!(state.verification_contract.address.is_none());
+        assert_eq!(state.verification_contract.epoch, 0);
+        assert!(state.scout_access_contract.address.is_none());
+        assert_eq!(state.scout_access_contract.epoch, 0);
+        assert!(!state.is_fully_wired());
+    }
+
+    #[test]
+    fn test_get_wiring_state_reflects_wiring_link_fields() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register(ProgressContract, ());
+        let client = ProgressContractClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        let reg_addr = Address::generate(&env);
+        let ver_addr = Address::generate(&env);
+        let sa_addr = Address::generate(&env);
+        client.initialize(&admin);
+
+        client.set_registration_contract(&reg_addr);
+        client.set_verification_contract(&ver_addr);
+        client.set_scout_access_contract(&sa_addr);
+
+        let state = client.get_wiring_state();
+        // Each link must carry the correct address and epoch == 1.
+        assert_eq!(state.registration_contract.address, Some(reg_addr));
+        assert_eq!(state.registration_contract.epoch, 1);
+        assert_eq!(state.verification_contract.address, Some(ver_addr));
+        assert_eq!(state.verification_contract.epoch, 1);
+        assert_eq!(state.scout_access_contract.address, Some(sa_addr));
+        assert_eq!(state.scout_access_contract.epoch, 1);
+        assert!(state.is_fully_wired());
+    }
+
+    #[test]
+    fn test_get_wiring_state_epoch_increments_on_rewire() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register(ProgressContract, ());
+        let client = ProgressContractClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        let reg_addr1 = Address::generate(&env);
+        let reg_addr2 = Address::generate(&env);
+        client.initialize(&admin);
+
+        client.set_registration_contract(&reg_addr1);
+        assert_eq!(client.get_wiring_state().registration_contract.epoch, 1);
+
+        // Re-wiring bumps the epoch to 2.
+        client.set_registration_contract(&reg_addr2);
+        let state = client.get_wiring_state();
+        assert_eq!(state.registration_contract.address, Some(reg_addr2));
+        assert_eq!(state.registration_contract.epoch, 2);
     }
 }
