@@ -88,12 +88,29 @@ where
     Ok(admin)
 }
 
-/// Validate that a string is a plausible IPFS/Arweave CID.
+/// Lightweight syntactic validation for IPFS CIDs used as evidence and media references.
 ///
-/// Rules:
-/// - CIDv0: starts with "Qm", exactly 46 characters, base58btc charset
-///   (no 0, O, I, l characters).
-/// - CIDv1 (base32): starts with "bafy", 59–128 characters.
+/// Performs a format sanity check on the supplied CID string. This is **not** a
+/// full CID decoder — it does not parse the multibase prefix, multicodec, or
+/// multihash the way a real CID library would. It only rejects obviously wrong
+/// input (wrong prefix, wrong length, or bytes outside the expected alphabet).
+/// A CID that passes this check but is still malformed will fail to resolve
+/// against the downstream IPFS/Arweave gateway, which acts as the real source
+/// of truth for CID validity.
+///
+/// # Rules
+///
+/// - **CIDv0**: starts with `"Qm"`, exactly 46 characters, base58btc charset
+///   (no `0`, `O`, `I`, or `l` characters).
+/// - **CIDv1 (base32)**: starts with `"bafy"`, 59–128 characters, RFC 4648
+///   lowercase base32 alphabet (`a`–`z`, `2`–`7`).
+///
+/// # Errors
+///
+/// Returns `Err(&'static str)` with a human-readable message describing the
+/// validation failure. These messages are intended for tests and debugging;
+/// callers should map them to the appropriate contract error variant (e.g.
+/// `InvalidInput`) rather than surfacing the raw string to end users.
 pub fn validate_cid(hash: &String) -> Result<(), &'static str> {
     let hash_len = hash.len();
     let bytes = hash.to_bytes();
