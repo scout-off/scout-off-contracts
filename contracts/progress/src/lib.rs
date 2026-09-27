@@ -418,8 +418,10 @@ impl ProgressContract {
     }
 
     /// Return all history entries for a player in chronological order (index 1..=N).
-    /// Reads a single persistent storage key (`HistoryVec`) regardless of entry count,
-    /// reducing gas cost from O(N) individual reads to O(1).
+    /// Reads each entry individually from `HistoryEntry(player_id, i)` keys using
+    /// the `HistoryCounter` to determine the total count. History is stored in
+    /// per-entry persistent keys (page-shard layout); there is no single
+    /// `HistoryVec` key read.
     /// Returns an empty Vec if the player has no history.
     pub fn get_progress_history(env: Env, player_id: u64) -> Vec<ProgressEntry> {
         let vec_key = DataKey::HistoryVec(player_id);
@@ -562,7 +564,10 @@ impl ProgressContract {
 
     /// Query history entries for a player since a given Unix timestamp.
     /// Returns all entries where `updated_at >= since_timestamp`.
-    /// Uses the HistoryVec for O(1) lookup, filters in-memory.
+    /// Reads each entry individually from `HistoryEntry(player_id, i)` keys
+    /// using the `HistoryCounter` to determine the total count. History lives
+    /// in per-entry persistent keys (page-shard layout); `record_progress_entry`
+    /// does not write a monolithic `HistoryVec`.
     pub fn get_history_since(env: Env, player_id: u64, since_timestamp: u64) -> Vec<ProgressEntry> {
         let vec_key = DataKey::HistoryVec(player_id);
         let history: Vec<ProgressEntry> = env
@@ -640,11 +645,10 @@ impl ProgressContract {
     /// - Simple, O(1) counter read for `get_history_count`.
     /// - Two storage ops per `advance_level` call (read + write counter).
     ///
-    /// **Alternative A — inline counter in HistoryVec:**
-    /// Store the count as `history.len()`. Eliminates the separate counter key
-    /// entirely, saving one persistent read + write per call. However,
-    /// `get_history_count` would require loading the full Vec just to read
-    /// its length, which becomes expensive as history grows.
+    /// **Alternative A — inline counter in page shard:**
+    /// Store the count derived from the shard structure. Eliminates the
+    /// separate counter key entirely, but `get_history_count` would need
+    /// to traverse shard metadata, which becomes expensive as history grows.
     ///
     /// **Alternative B — batch accumulation:**
     /// If batch milestone approval is implemented, accumulate counter
