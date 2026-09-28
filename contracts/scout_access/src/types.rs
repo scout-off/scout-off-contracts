@@ -255,6 +255,13 @@ pub enum DataKey {
     /// which `get_subscriptions_expiring_before` already does.
     ExpiryBucket(u64),
 
+    /// Earliest day bucket (expires_at / 86_400) that may contain live
+    /// subscriptions. Updated on `add_to_expiry_bucket` and lazily advanced
+    /// when buckets are found empty during scans. Stored in instance storage
+    /// to avoid a persistent read per query. Defaults to u64::MAX when no
+    /// subscriptions exist.
+    ExpiryMinDay,
+
     /// Boolean flag (`true`) written by `open_migration_window`; absent or
     /// `false` means the migration window is closed. All `admin_seed_*`
     /// functions on this contract check this flag before writing any state.
