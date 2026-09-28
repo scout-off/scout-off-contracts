@@ -53,6 +53,10 @@ const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 // to prevent race conditions / double-charging on rapid upgrades.
 const MIN_UPGRADE_INTERVAL_SECS: u64 = 3600;
 
+// Bump applied to the admin key on every privileged call, so the admin address
+// cannot lapse out of persistent storage between privileged calls.
+const ADMIN_BUMP_LEDGERS: u32 = 100_000;
+
 #[contract]
 pub struct ScoutAccessContract;
 

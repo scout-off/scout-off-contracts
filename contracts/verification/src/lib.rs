@@ -30,6 +30,10 @@ const MAX_CREDENTIALS_LEN: u32 = 256;
 /// is bounded by Soroban's 64 KB per-entry limit.
 const MAX_VALIDATORS: u32 = 100;
 
+// Bump applied to the admin key on every privileged call, so the admin address
+// cannot lapse out of persistent storage between privileged calls.
+const ADMIN_BUMP_LEDGERS: u32 = 100_000;
+
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // Generated client for the progress contract — used for cross-contract calls.
@@ -786,7 +790,6 @@ mod tests {
     }
 
     #[test]
-    fn test_upgrade_preserves_admin() {
     fn test_pause_unpause_events() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
