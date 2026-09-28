@@ -60,6 +60,7 @@ const MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR: u32 = 5;
 /// 50 matches the pagination cap used throughout the codebase (e.g.
 /// `get_validator_milestones_page`, `expire_trial_offers`).
 const CASCADE_LIMIT: u32 = 50;
+const MILESTONE_FLAG_PAGE_SIZE: u32 = 50;
 
 // Core identity TTL: 30 days at ~5s/ledger ≈ 518_400 ledgers.
 // Milestone records, validator registrations, and evidence uniqueness data are
@@ -803,8 +804,6 @@ impl VerificationContract {
         // validator index, and cursor are included. Store the flags in compact
         // validator-scoped pages instead: one bounded sweep writes at most two
         // page entries while preserving O(1) lookup by the public getter.
-        const FLAG_PAGE_SIZE: u32 = 50;
-
         let milestones_key = DataKey::ValidatorMilestones(wallet.clone());
         let milestones: Vec<MilestoneRef> = env
             .storage()
@@ -817,7 +816,7 @@ impl VerificationContract {
         let mut i = start_index;
         let count_key = DataKey::MilestonePendingReReviewCount(wallet.clone());
         let mut pending_count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
-        let mut page_index = pending_count / FLAG_PAGE_SIZE;
+        let mut page_index = pending_count / MILESTONE_FLAG_PAGE_SIZE;
         let mut page: Vec<MilestoneRef> = env
             .storage()
             .persistent()
@@ -832,7 +831,7 @@ impl VerificationContract {
         // milestone, which is what previously exhausted transaction limits.
         let mut existing: Vec<MilestoneRef> = Vec::new(env);
         if start_index == 0 && pending_count > 0 {
-            let page_count = pending_count.div_ceil(FLAG_PAGE_SIZE);
+            let page_count = pending_count.div_ceil(MILESTONE_FLAG_PAGE_SIZE);
             for p in 0..page_count {
                 if let Some(entries) = env
                     .storage()
@@ -863,7 +862,7 @@ impl VerificationContract {
             }
 
             if !already_flagged {
-                if page.len() >= FLAG_PAGE_SIZE {
+                if page.len() >= MILESTONE_FLAG_PAGE_SIZE {
                     env.storage().persistent().set(
                         &DataKey::MilestonePendingReReviewPage(wallet.clone(), page_index),
                         &page,
@@ -3516,7 +3515,7 @@ impl VerificationContract {
             .persistent()
             .get(&DataKey::MilestonePendingReReviewCount(wallet.clone()))
             .unwrap_or(0);
-        let page_count = count.div_ceil(50);
+        let page_count = count.div_ceil(MILESTONE_FLAG_PAGE_SIZE);
         for page_index in 0..page_count {
             if let Some(page) = env
                 .storage()
@@ -3592,7 +3591,7 @@ impl VerificationContract {
         let wallet = milestone.validator;
         let count_key = DataKey::MilestonePendingReReviewCount(wallet.clone());
         let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
-        let page_count = count.div_ceil(50);
+        let page_count = count.div_ceil(MILESTONE_FLAG_PAGE_SIZE);
         let mut cleared = false;
         for page_index in 0..page_count {
             let page_key = DataKey::MilestonePendingReReviewPage(wallet.clone(), page_index);
@@ -6688,6 +6687,51 @@ mod tests {
             milestone_restored.validator_status,
             types::ValidatorStatus::Active
         );
+    }
+
+    #[test]
+    fn test_is_milestone_flagged_reads_second_page() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let validator = Address::generate(&env);
+        client.register_validator(
+            &validator,
+            &String::from_str(&env, "Academy Director"),
+            &String::from_str(&env, "Default Academy"),
+            &Vec::new(&env),
+        );
+
+        for player_id in 1u64..=MILESTONE_FLAG_PAGE_SIZE as u64 + 1 {
+            let evidence = valid_cid_v1_for_seed(&env, player_id);
+            client.approve_milestone(
+                &validator,
+                &player_id,
+                &String::from_str(&env, "approved"),
+                &evidence,
+                &None,
+            );
+        }
+
+        client.revoke_validator(
+            &validator,
+            &RevocationSeverity::ForCause,
+            &Some(String::from_str(&env, "Misconduct")),
+        );
+        assert!(client.is_milestone_flagged(&1u64, &1u32));
+        assert!(!client.is_milestone_flagged(
+            &(MILESTONE_FLAG_PAGE_SIZE as u64 + 1),
+            &1u32
+        ));
+
+        client.continue_revocation_cascade(&validator);
+
+        assert!(client.is_milestone_flagged(&1u64, &1u32));
+        assert!(client.is_milestone_flagged(
+            &(MILESTONE_FLAG_PAGE_SIZE as u64 + 1),
+            &1u32
+        ));
     }
 
     // -------------------------------------------------------------------------
