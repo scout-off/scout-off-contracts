@@ -752,8 +752,9 @@ impl RegistrationContract {
 
         let message = Self::migration_message(&env, &authorization);
         let public_key = Self::address_to_ed25519_key(&env, &wallet);
-        // ed25519_verify panics on invalid signature rather than returning bool;
-        // wrap in a check via a no-panic approach — invoke and treat panic as invalid.
+        // The host traps on an invalid signature, failing the invocation so no state persists.
+        // Keep typed role, wallet, expiry, nonce, and hash checks before verification so callers
+        // receive meaningful errors for those cases; a bad signature is the exception.
         env.crypto()
             .ed25519_verify(&public_key, &message, &authorization.signature);
 
@@ -828,6 +829,9 @@ impl RegistrationContract {
 
         let message = Self::migration_message(&env, &authorization);
         let public_key = Self::address_to_ed25519_key(&env, &wallet);
+        // The host traps on an invalid signature, failing the invocation so no state persists.
+        // Keep typed role, wallet, expiry, nonce, and hash checks before verification so callers
+        // receive meaningful errors for those cases; a bad signature is the exception.
         env.crypto()
             .ed25519_verify(&public_key, &message, &authorization.signature);
 
