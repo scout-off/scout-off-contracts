@@ -1120,6 +1120,11 @@ impl RegistrationContract {
                     .persistent()
                     .get::<DataKey, ScoutProfile>(&DataKey::Scout(id))
                 {
+                    env.storage().persistent().extend_ttl(
+                        &DataKey::Scout(id),
+                        PERSISTENT_TTL_MIN,
+                        PERSISTENT_TTL_MAX,
+                    );
                     profiles.push_back(profile);
                 }
             }
@@ -3655,9 +3660,47 @@ mod tests {
         assert_eq!(profile.level, ProgressLevel::Unverified);
     }
 
+    #[test]
+    fn test_get_scouts_extends_persistent_ttl() {
+        use soroban_sdk::testutils::{storage::Persistent as _, Ledger};
+
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        env.ledger().with_mut(|ledger| {
+            ledger.sequence_number = 100;
+            ledger.max_entry_ttl = PERSISTENT_TTL_MAX + 1;
+        });
+
+        let wallet = Address::generate(&env);
+        let region = String::from_str(&env, "Europe");
+        let scout_id = client.register_scout(&wallet, &region);
+
+        env.ledger().with_mut(|ledger| {
+            ledger.sequence_number = 100 + 4_000;
+        });
+
+        let scout_key = DataKey::Scout(scout_id);
+        let ttl_before = env.as_contract(&client.address, || {
+            env.storage().persistent().get_ttl(&scout_key)
+        });
+        assert!(ttl_before < PERSISTENT_TTL_MIN);
+
+        let profiles = client.get_scouts(&vec![&env, scout_id]);
+        assert_eq!(profiles.len(), 1);
+
+        let ttl_after = env.as_contract(&client.address, || {
+            env.storage().persistent().get_ttl(&scout_key)
+        });
+        assert!(ttl_after > ttl_before);
+    }
+
     // -------------------------------------------------------------------------
+
     // Issue #444: register_player age field must reject implausible upper values
     // -------------------------------------------------------------------------
+
 
     /// An age of MAX_PLAYER_AGE (100) must be accepted.
     #[test]
