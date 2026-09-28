@@ -261,6 +261,10 @@ pub struct PendingMilestoneClaim {
     /// the global threshold mid-vote cannot retroactively fast-track or
     /// invalidate an in-flight claim.
     pub threshold: u32,
+    /// All validator wallets that have voted for this claim in the
+    /// current round. Populated incrementally as votes arrive; used
+    /// to persist the full attestor set when the threshold is reached.
+    pub attestors: Vec<Address>,
 }
 
 /// Reference to one of a validator's currently-open pending-claim votes.
@@ -429,6 +433,11 @@ pub enum DataKey {
     /// Voting window (seconds) within which `threshold` distinct votes must
     /// accumulate before a claim expires. See `get_voting_window_secs`.
     AttestationVotingWindowSecs,
+    /// Complete set of validator wallets that co-attested a committed
+    /// threshold milestone, keyed by (player_id, milestone_index).
+    /// Populated at commit time; used by cascade sweep, per-validator
+    /// caps, dispute conflict-of-interest, and activity reports.
+    MilestoneAttestors(u64, u32),
 
     // ── Registration cross-contract (issue #1014) ──
     /// Address of the registration contract used to verify wallet↔player_id binding.

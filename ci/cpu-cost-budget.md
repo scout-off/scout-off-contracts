@@ -40,6 +40,7 @@ measured-cost trends can be tracked across commits.
 | verification   | `register_validator`             | 15,000,000                |
 | verification   | `approve_milestone`              | 20,000,000                |
 | verification   | `attest_milestone`               | 25,000,000                |
+| verification   | `attest_milestone` (threshold=k, k attestors) | 25,000,000 + 500,000×k |
 | verification   | `cast_dispute_vote`              | 20,000,000                |
 | verification   | `tally_dispute`                  | 30,000,000                |
 | verification   | `get_validator_milestones_page`  | 15,000,000                |

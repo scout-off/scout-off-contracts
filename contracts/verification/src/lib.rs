@@ -1576,6 +1576,7 @@ impl VerificationContract {
             player_id,
             description,
             evidence_hash,
+            vec![validator_wallet],
         )
     }
 
@@ -1671,6 +1672,7 @@ impl VerificationContract {
                 round: 0,
                 created_at: now,
                 threshold: configured_threshold,
+                attestors: Vec::new(&env),
             });
 
         // Expire a stale sub-threshold round: bump `round` and reset the
@@ -1683,6 +1685,7 @@ impl VerificationContract {
             claim.created_at = now;
             claim.description = description.clone();
             claim.threshold = configured_threshold;
+            claim.attestors = Vec::new(&env);
             events::attestation_window_expired(&env, player_id, &evidence_hash, claim.round);
         }
 
@@ -1743,6 +1746,12 @@ impl VerificationContract {
         claim.vote_count =
             safe_add_u32(claim.vote_count, 1).map_err(|_| VerificationError::Overflow)?;
 
+        // Track this validator as an attestor for the full attestor set.
+        // Duplicates are possible if the same validator votes again in a
+        // new round after expiry, but that's harmless — the set is
+        // deduplicated when stored on the committed milestone.
+        claim.attestors.push_back(validator_wallet.clone());
+
         env.storage().persistent().set(&vote_key, &now);
         env.storage()
             .persistent()
@@ -1779,6 +1788,7 @@ impl VerificationContract {
                 player_id,
                 claim.description.clone(),
                 evidence_hash.clone(),
+                claim.attestors.clone(),
             )?;
             Ok(AttestationStatus::Committed(index))
         } else {
@@ -2046,6 +2056,7 @@ impl VerificationContract {
             attestation.player_id,
             attestation.description.clone(),
             attestation.evidence_hash.clone(),
+            vec![validator_wallet],
         )?;
 
         // Persist nonce only after successful commit so a failed commit does
@@ -2116,6 +2127,24 @@ impl VerificationContract {
             .persistent()
             .get(&DataKey::MilestoneCounter(player_id))
             .unwrap_or(0u32)
+    }
+
+    /// Return the complete set of validator wallets that co-attested
+    /// the committed milestone at `(player_id, milestone_index)`.
+    ///
+    /// For sub-threshold milestones (never committed) this returns an
+    /// empty vec. For single-validator `approve_milestone` calls the
+    /// vec contains exactly one entry (the primary validator). For
+    /// threshold-mode `attest_milestone` the vec contains all k attestors.
+    pub fn get_milestone_attestors(
+        env: Env,
+        player_id: u64,
+        milestone_index: u32,
+    ) -> Vec<Address> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::MilestoneAttestors(player_id, milestone_index))
+            .unwrap_or_else(|| Vec::new(env))
     }
 
     /// Return all milestones for a player with `approved_at >= since_timestamp`.
@@ -3282,13 +3311,19 @@ impl VerificationContract {
             return Err(VerificationError::VotingWindowClosed);
         }
 
-        // Rule 2: validator must not be the original milestone approver.
+        // Rule 2: validator must not be any attestor of the milestone
+        // (original approver or co-attestor).
         let milestone: Milestone = env
             .storage()
             .persistent()
             .get(&DataKey::Milestone(player_id, milestone_index))
             .ok_or(VerificationError::MilestoneNotFound)?;
-        if milestone.validator == validator {
+        let attestors: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MilestoneAttestors(player_id, milestone_index))
+            .unwrap_or_else(|| Vec::new(env));
+        if attestors.contains(&validator) {
             return Err(VerificationError::ConflictOfInterest);
         }
 
@@ -3510,8 +3545,30 @@ impl VerificationContract {
             Some(value) => value,
             None => return false,
         };
-        let wallet = milestone.validator;
-        let count: u32 = env
+
+        // Check cascade pages for the primary validator AND all
+        // co-attestors so that a ForCause revocation of any
+        // co-attestor is detected.
+        let attestors: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MilestoneAttestors(player_id, milestone_index))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        // Build the set of wallets to check: the primary validator
+        // plus all co-attestors.
+        let mut wallets_to_check: Vec<Address> = Vec::new(&env);
+        wallets_to_check.push_back(milestone.validator.clone());
+        for i in 0..attestors.len() {
+            let a = attestors.get(i).unwrap();
+            if a != &milestone.validator && !wallets_to_check.contains(a) {
+                wallets_to_check.push_back(a.clone());
+            }
+        }
+
+        for i in 0..wallets_to_check.len() {
+            let wallet = wallets_to_check.get(i).unwrap();
+            let count: u32 = env
             .storage()
             .persistent()
             .get(&DataKey::MilestonePendingReReviewCount(wallet.clone()))
@@ -3582,42 +3639,75 @@ impl VerificationContract {
             return Ok(());
         }
 
-        // New cascades store compact references in pages scoped to the
-        // validator that originally approved this milestone.
+        // New cascades store compact references in pages scoped to
+        // each validator that approved this milestone. Check all
+        // attestors (primary + co-attestors) so that a ForCause
+        // revocation of any co-attestor can be cleared.
         let milestone: Milestone = env
             .storage()
             .persistent()
             .get(&DataKey::Milestone(player_id, milestone_index))
             .ok_or(VerificationError::MilestoneNotFound)?;
-        let wallet = milestone.validator;
-        let count_key = DataKey::MilestonePendingReReviewCount(wallet.clone());
-        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
-        let page_count = count.div_ceil(50);
+
+        let attestors: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MilestoneAttestors(player_id, milestone_index))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        // Collect all wallets whose cascade pages might contain this
+        // milestone: the primary validator plus every co-attestor.
+        let mut wallets_to_check: Vec<Address> = Vec::new(&env);
+        wallets_to_check.push_back(milestone.validator.clone());
+        for i in 0..attestors.len() {
+            let a = attestors.get(i).unwrap();
+            if a != &milestone.validator && !wallets_to_check.contains(a) {
+                wallets_to_check.push_back(a.clone());
+            }
+        }
+
         let mut cleared = false;
-        for page_index in 0..page_count {
-            let page_key = DataKey::MilestonePendingReReviewPage(wallet.clone(), page_index);
-            let page: Vec<MilestoneRef> = env
-                .storage()
-                .persistent()
-                .get(&page_key)
-                .unwrap_or_else(|| Vec::new(&env));
-            let mut replacement: Vec<MilestoneRef> = Vec::new(&env);
-            for i in 0..page.len() {
-                let reference = page.get(i).unwrap();
-                if reference.player_id == player_id && reference.milestone_index == milestone_index
-                {
-                    cleared = true;
-                } else {
-                    replacement.push_back(reference);
+        for i in 0..wallets_to_check.len() {
+            let wallet = wallets_to_check.get(i).unwrap();
+            let count_key = DataKey::MilestonePendingReReviewCount(wallet.clone());
+            let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+            let page_count = count.div_ceil(50);
+            for page_index in 0..page_count {
+                let page_key = DataKey::MilestonePendingReReviewPage(wallet.clone(), page_index);
+                let page: Vec<MilestoneRef> = env
+                    .storage()
+                    .persistent()
+                    .get(&page_key)
+                    .unwrap_or_else(|| Vec::new(&env));
+                let mut replacement: Vec<MilestoneRef> = Vec::new(&env);
+                for j in 0..page.len() {
+                    let reference = page.get(j).unwrap();
+                    if reference.player_id == player_id
+                        && reference.milestone_index == milestone_index
+                    {
+                        cleared = true;
+                    } else {
+                        replacement.push_back(reference);
+                    }
+                }
+                if cleared {
+                    env.storage().persistent().set(&page_key, &replacement);
+                    env.storage().persistent().extend_ttl(
+                        &page_key,
+                        PERSISTENT_TTL_MIN,
+                        PERSISTENT_TTL_MAX,
+                    );
+                    // Decrement the count for this wallet.
+                    env.storage()
+                        .persistent()
+                        .set(&count_key, &count.saturating_sub(1));
+                    env.storage()
+                        .persistent()
+                        .extend_ttl(&count_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+                    break;
                 }
             }
             if cleared {
-                env.storage().persistent().set(&page_key, &replacement);
-                env.storage().persistent().extend_ttl(
-                    &page_key,
-                    PERSISTENT_TTL_MIN,
-                    PERSISTENT_TTL_MAX,
-                );
                 break;
             }
         }
@@ -3625,12 +3715,6 @@ impl VerificationContract {
         if !cleared {
             return Err(VerificationError::MilestoneNotFlagged);
         }
-        env.storage()
-            .persistent()
-            .set(&count_key, &count.saturating_sub(1));
-        env.storage()
-            .persistent()
-            .extend_ttl(&count_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
         events::milestone_flag_cleared(&env, &reviewer, player_id, milestone_index);
         Ok(())
     }
@@ -3877,6 +3961,17 @@ impl VerificationContract {
                 // expiry) already discarded this vote implicitly.
                 if claim.round == vref.round && claim.vote_count > 0 {
                     claim.vote_count -= 1;
+                    // Remove this validator from the attestor list so
+                    // the attestor set stays consistent with the
+                    // live vote count.
+                    let mut new_attestors: Vec<Address> = Vec::new(env);
+                    for j in 0..claim.attestors.len() {
+                        let a = claim.attestors.get(j).unwrap();
+                        if a != wallet {
+                            new_attestors.push_back(a.clone());
+                        }
+                    }
+                    claim.attestors = new_attestors;
                     env.storage().persistent().set(&claim_key, &claim);
                     let vote_key = DataKey::PendingMilestoneVote(
                         vref.player_id,
@@ -3906,16 +4001,33 @@ impl VerificationContract {
         player_id: u64,
         description: String,
         evidence_hash: String,
+        attestor_wallets: Vec<Address>,
     ) -> Result<u32, VerificationError> {
         let evidence_used_key = DataKey::EvidenceUsed(evidence_hash.clone());
         if env.storage().persistent().has(&evidence_used_key) {
             return Err(VerificationError::DuplicateEvidence);
         }
 
-        let vp_key = DataKey::ValidatorPlayerMilestoneCount(validator_wallet.clone(), player_id);
-        let vp_count: u32 = env.storage().persistent().get(&vp_key).unwrap_or(0u32);
-        if vp_count >= MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR {
-            return Err(VerificationError::MilestoneLimitExceeded);
+        // Deduplicate attestor wallets in-place (same validator may
+        // appear twice if they voted across a round expiry).
+        let mut unique_attestors: Vec<Address> = Vec::new(env);
+        for i in 0..attestor_wallets.len() {
+            let wallet = attestor_wallets.get(i).unwrap();
+            if !unique_attestors.contains(wallet) {
+                unique_attestors.push_back(wallet.clone());
+            }
+        }
+
+        // Check per-validator limit for every attestor before any
+        // storage is mutated. If any attestor is at the cap the whole
+        // commit is rejected atomically.
+        for i in 0..unique_attestors.len() {
+            let attestor = unique_attestors.get(i).unwrap();
+            let vp_key = DataKey::ValidatorPlayerMilestoneCount(attestor.clone(), player_id);
+            let vp_count: u32 = env.storage().persistent().get(&vp_key).unwrap_or(0u32);
+            if vp_count >= MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR {
+                return Err(VerificationError::MilestoneLimitExceeded);
+            }
         }
 
         let counter_key = DataKey::MilestoneCounter(player_id);
@@ -3954,30 +4066,62 @@ impl VerificationContract {
             PERSISTENT_TTL_MAX,
         );
 
-        let val_key = DataKey::ValidatorMilestoneCount(validator_wallet.clone());
-        let val_count: u32 = env.storage().persistent().get(&val_key).unwrap_or(0u32);
+        // Persist the full attestor set so every co-attestor is durable.
         env.storage().persistent().set(
-            &val_key,
-            &(safe_add_u32(val_count, 1).map_err(|_| VerificationError::Overflow)?),
+            &DataKey::MilestoneAttestors(player_id, next_index),
+            &unique_attestors,
         );
-        env.storage()
-            .persistent()
-            .extend_ttl(&val_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
-
-        env.storage().persistent().set(
-            &vp_key,
-            &(safe_add_u32(vp_count, 1).map_err(|_| VerificationError::Overflow)?),
+        env.storage().persistent().extend_ttl(
+            &DataKey::MilestoneAttestors(player_id, next_index),
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
         );
 
-        let vp_index_key = DataKey::ValidatorPlayers(validator_wallet.clone());
-        let mut vp_players: Vec<u64> = env
-            .storage()
-            .persistent()
-            .get(&vp_index_key)
-            .unwrap_or_else(|| Vec::new(env));
-        if !vp_players.contains(player_id) {
-            vp_players.push_back(player_id);
-            env.storage().persistent().set(&vp_index_key, &vp_players);
+        // Update per-validator counters and indexes for every attestor.
+        for i in 0..unique_attestors.len() {
+            let attestor = unique_attestors.get(i).unwrap();
+
+            let val_key = DataKey::ValidatorMilestoneCount(attestor.clone());
+            let val_count: u32 = env.storage().persistent().get(&val_key).unwrap_or(0u32);
+            env.storage().persistent().set(
+                &val_key,
+                &(safe_add_u32(val_count, 1).map_err(|_| VerificationError::Overflow)?),
+            );
+            env.storage()
+                .persistent()
+                .extend_ttl(&val_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+
+            let vp_key = DataKey::ValidatorPlayerMilestoneCount(attestor.clone(), player_id);
+            let vp_count: u32 = env.storage().persistent().get(&vp_key).unwrap_or(0u32);
+            env.storage().persistent().set(
+                &vp_key,
+                &(safe_add_u32(vp_count, 1).map_err(|_| VerificationError::Overflow)?),
+            );
+
+            let vp_index_key = DataKey::ValidatorPlayers(attestor.clone());
+            let mut vp_players: Vec<u64> = env
+                .storage()
+                .persistent()
+                .get(&vp_index_key)
+                .unwrap_or_else(|| Vec::new(env));
+            if !vp_players.contains(player_id) {
+                vp_players.push_back(player_id);
+                env.storage().persistent().set(&vp_index_key, &vp_players);
+            }
+
+            let validator_milestones_key = DataKey::ValidatorMilestones(attestor.clone());
+            let mut validator_milestones: Vec<MilestoneRef> = env
+                .storage()
+                .persistent()
+                .get(&validator_milestones_key)
+                .unwrap_or_else(|| Vec::new(env));
+            validator_milestones.push_back(MilestoneRef {
+                player_id,
+                milestone_index: next_index,
+            });
+            env.storage()
+                .persistent()
+                .set(&validator_milestones_key, &validator_milestones);
         }
 
         let total: u32 = env
@@ -4018,20 +4162,6 @@ impl VerificationContract {
             &(safe_add_u32(write_head, 1).map_err(|_| VerificationError::Overflow)?),
         );
 
-        let validator_milestones_key = DataKey::ValidatorMilestones(validator_wallet.clone());
-        let mut validator_milestones: Vec<MilestoneRef> = env
-            .storage()
-            .persistent()
-            .get(&validator_milestones_key)
-            .unwrap_or_else(|| Vec::new(env));
-        validator_milestones.push_back(MilestoneRef {
-            player_id,
-            milestone_index: next_index,
-        });
-        env.storage()
-            .persistent()
-            .set(&validator_milestones_key, &validator_milestones);
-
         events::milestone_approved(
             env,
             player_id,
@@ -4041,6 +4171,8 @@ impl VerificationContract {
             &evidence_hash,
         );
 
+        // Diversity check uses the primary validator (the one whose vote
+        // crossed the threshold) — this preserves the existing behaviour.
         let validator: Validator = env
             .storage()
             .persistent()
