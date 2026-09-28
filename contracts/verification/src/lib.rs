@@ -1890,13 +1890,14 @@ impl VerificationContract {
             return Err(VerificationError::InvalidInput);
         }
 
-        // Wallet must already be a registered validator.
-        if !env
+        // Wallet must already be an active validator.
+        let validator: Validator = env
             .storage()
             .persistent()
-            .has(&DataKey::Validator(wallet.clone()))
-        {
-            return Err(VerificationError::ValidatorNotFound);
+            .get(&DataKey::Validator(wallet.clone()))
+            .ok_or(VerificationError::ValidatorNotFound)?;
+        if !validator.active {
+            return Err(VerificationError::ValidatorInactive);
         }
 
         // If this pubkey was previously bound to another wallet, reject.
@@ -1910,8 +1911,8 @@ impl VerificationContract {
             }
         }
 
-        // Clear previous reverse index if rotating keys.
-        if let Some(old_key) = env
+        // Clear the previous reverse index if rotating keys.
+        let rotated_from = if let Some(old_key) = env
             .storage()
             .persistent()
             .get::<DataKey, BytesN<32>>(&DataKey::AttestationKey(wallet.clone()))
@@ -1919,9 +1920,14 @@ impl VerificationContract {
             if old_key != public_key {
                 env.storage()
                     .persistent()
-                    .remove(&DataKey::AttestationKeyOwner(old_key));
+                    .remove(&DataKey::AttestationKeyOwner(old_key.clone()));
+                Some(old_key)
+            } else {
+                None
             }
-        }
+        } else {
+            None
+        };
 
         env.storage()
             .persistent()
@@ -1939,6 +1945,7 @@ impl VerificationContract {
             PERSISTENT_TTL_MIN,
             PERSISTENT_TTL_MAX,
         );
+        events::attestation_key_registered(&env, &wallet, &public_key, &rotated_from);
         Ok(())
     }
 
@@ -4794,6 +4801,83 @@ mod tests {
         client.revoke_validator(&validator, &RevocationSeverity::Routine, &reason);
 
         assert!(!client.is_active_validator(&validator));
+    }
+
+    #[test]
+    fn test_register_attestation_key_emits_registration_and_rotation_events() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        client.register_validator(
+            &wallet,
+            &String::from_str(&env, "UEFA-B-License"),
+            &String::from_str(&env, "Default Academy"),
+            &Vec::new(&env),
+        );
+
+        let first_key = BytesN::from_array(&env, &[1u8; 32]);
+        let second_key = BytesN::from_array(&env, &[2u8; 32]);
+        let events_before_registration = env.events().all().len();
+        client.register_attestation_key(&wallet, &first_key);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), events_before_registration + 1);
+        assert_eq!(
+            events.get(events_before_registration).unwrap(),
+            (
+                client.address.clone(),
+                (
+                    Symbol::new(&env, crate::events::ATTESTATION_KEY_REGISTERED),
+                    wallet.clone(),
+                )
+                    .into_val(&env),
+                (first_key.clone(), None::<BytesN<32>>).into_val(&env),
+            )
+        );
+
+        let events_before_rotation = events.len();
+        client.register_attestation_key(&wallet, &second_key);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), events_before_rotation + 1);
+        assert_eq!(
+            events.get(events_before_rotation).unwrap(),
+            (
+                client.address.clone(),
+                (
+                    Symbol::new(&env, crate::events::ATTESTATION_KEY_REGISTERED),
+                    wallet.clone(),
+                )
+                    .into_val(&env),
+                (second_key, Some(first_key)).into_val(&env),
+            )
+        );
+    }
+
+    #[test]
+    fn test_register_attestation_key_rejects_inactive_validator() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        client.register_validator(
+            &wallet,
+            &String::from_str(&env, "UEFA-B-License"),
+            &String::from_str(&env, "Default Academy"),
+            &Vec::new(&env),
+        );
+        let reason: Option<String> = None;
+        client.revoke_validator(&wallet, &RevocationSeverity::Routine, &reason);
+
+        let public_key = BytesN::from_array(&env, &[3u8; 32]);
+        let result = client.try_register_attestation_key(&wallet, &public_key);
+        assert!(matches!(
+            result,
+            Ok(Err(VerificationError::ValidatorInactive))
+        ));
     }
 
     #[test]

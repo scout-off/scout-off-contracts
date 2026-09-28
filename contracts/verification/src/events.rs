@@ -22,6 +22,7 @@ pub const VALIDATOR_PENDING_VOTES_INVALIDATED: &str = "validator_votes_invalidat
 pub const WIRING_UPDATED: &str = "wiring_updated";
 pub const DISPUTE_VOTE_CAST: &str = "dispute_vote_cast";
 pub const DISPUTE_TALLIED: &str = "dispute_tallied";
+pub const ATTESTATION_KEY_REGISTERED: &str = "attestation_key_registered";
 
 /// topics: (event_name, old_admin)  data: new_admin
 pub fn admin_transfer_proposed(env: &Env, old_admin: &Address, new_admin: &Address) {
@@ -64,6 +65,19 @@ pub fn validator_registered(env: &Env, wallet: &Address, credentials: &String) {
     env.events().publish(
         (Symbol::new(env, "validator_registered"), wallet.clone()),
         credentials.clone(),
+    );
+}
+
+/// topics: (event_name, wallet)  data: (public_key, rotated_from)
+pub fn attestation_key_registered(
+    env: &Env,
+    wallet: &Address,
+    public_key: &soroban_sdk::BytesN<32>,
+    rotated_from: &Option<soroban_sdk::BytesN<32>>,
+) {
+    env.events().publish(
+        (Symbol::new(env, ATTESTATION_KEY_REGISTERED), wallet.clone()),
+        (public_key.clone(), rotated_from.clone()),
     );
 }
 

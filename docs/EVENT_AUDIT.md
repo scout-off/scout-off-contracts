@@ -143,6 +143,10 @@ The tool reconstructs state from these events:
 | `revocation_cascade_complete` | verification | End of cascade sweep | Emitted after all milestones for a for-cause revocation are flagged |
 | `revocation_cascade_continued` | verification | Partial cascade sweep | Cursor stored; `continue_revocation_cascade` required to finish |
 
+### Attestation key registration
+
+The verification contract emits `attestation_key_registered` after an active validator registers or rotates a key. Its topics are `(event_name, wallet)` and its data is `(public_key, rotated_from)`. `rotated_from` is `None` for a new key and contains the previous key when a validator rotates keys. The event-history audit tool does not currently replay the attestation-key registry.
+
 ---
 
 ## Performance Considerations
