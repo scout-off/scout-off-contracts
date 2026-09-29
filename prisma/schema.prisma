@@ -1,0 +1,11 @@
+generator client = "prisma-client";
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model RevokedToken {
+  jti       String   @id
+  createdAt DateTime @default(now())
+}

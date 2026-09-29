@@ -20,8 +20,15 @@ if [[ "$NETWORK" == "mainnet" ]]; then
   fi
 fi
 
-WASM_DIR="target/wasm32-unknown-unknown/release"
-WASM_DIR="target/wasm32v1-none/release"
+# Keep WASM_DIR assigned exactly once; a duplicate legacy-target assignment can
+# make deploys look in the wrong build directory.
+WASM_DIR="target/wasm32v1-none/release"  # wasm32v1-none replaced the legacy wasm32-unknown-unknown target (soroban-sdk 25.x+)
+
+# Save a pre-deploy snapshot so rollback.sh can restore the last known good state
+if [[ -f ".env.contracts" ]]; then
+  cp .env.contracts .env.contracts.snapshot
+  echo "==> Pre-deploy snapshot saved to .env.contracts.snapshot"
+fi
 
 if command -v sha256sum >/dev/null 2>&1; then
   hash_wasm() { sha256sum "$1" | awk '{print $1}'; }
@@ -68,5 +75,32 @@ done
   echo "SCOUT_ACCESS_CONTRACT_WASM_HASH=${CONTRACT_WASM_HASHES[scout_access]}"
 } > .env.contracts
 
+# Write the same data as JSON for downstream tooling.
+cat > .env.contracts.json <<EOF
+{
+  "network": "${NETWORK}",
+  "contracts": {
+    "registration": {
+      "id": "${CONTRACT_IDS[registration]}",
+      "wasm_hash": "${CONTRACT_WASM_HASHES[registration]}"
+    },
+    "verification": {
+      "id": "${CONTRACT_IDS[verification]}",
+      "wasm_hash": "${CONTRACT_WASM_HASHES[verification]}"
+    },
+    "progress": {
+      "id": "${CONTRACT_IDS[progress]}",
+      "wasm_hash": "${CONTRACT_WASM_HASHES[progress]}"
+    },
+    "scout_access": {
+      "id": "${CONTRACT_IDS[scout_access]}",
+      "wasm_hash": "${CONTRACT_WASM_HASHES[scout_access]}"
+    }
+  }
+}
+EOF
+
 echo ""
 echo "==> All contracts deployed. IDs saved to .env.contracts"
+echo "    Pre-deploy snapshot is at .env.contracts.snapshot"
+echo "    To roll back: ./scripts/rollback.sh $NETWORK"

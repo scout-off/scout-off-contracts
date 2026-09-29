@@ -1,4 +1,11 @@
 {
+  "_comment": [
+    "rpc_url contains a literal placeholder ('FILL_IN_BEFORE_USE') and MUST be",
+    "replaced with a real Soroban RPC endpoint before running deploy.sh mainnet.",
+    "scripts/deploy.sh will reject the deployment if the placeholder is still present.",
+    "See README.md — 'Mainnet Deployment Safety' and docs/DEPLOYMENT.md for the",
+    "full pre-mainnet checklist."
+  ],
   "network": "mainnet",
   "rpc_url": "https://mainnet.stellar.validationcloud.io/v1/FILL_IN_BEFORE_USE",
   "horizon_url": "https://horizon.stellar.org",

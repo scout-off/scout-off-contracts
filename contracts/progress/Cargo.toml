@@ -12,3 +12,5 @@ scoutchain-shared-types = { path = "../shared-types" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+scoutchain-verification = { path = "../verification" }
+scoutchain-registration = { path = "../registration" }

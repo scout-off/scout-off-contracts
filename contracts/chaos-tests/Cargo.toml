@@ -1,0 +1,25 @@
+[package]
+name = "scoutchain-chaos-tests"
+version.workspace = true
+edition.workspace = true
+# fixtures.rs / invariants.rs / schedule.rs are modules of chaos_schedules.rs,
+# not standalone integration tests.
+autotests = false
+
+[lib]
+crate-type = ["rlib"]
+
+[[test]]
+name = "chaos_schedules"
+path = "tests/chaos_schedules.rs"
+
+[dependencies]
+soroban-sdk = { workspace = true }
+scoutchain-registration = { path = "../registration" }
+scoutchain-verification = { path = "../verification" }
+scoutchain-progress = { path = "../progress" }
+scoutchain-scout-access = { path = "../scout_access" }
+scoutchain-shared-types = { path = "../shared-types" }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

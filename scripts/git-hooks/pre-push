@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Git pre-push hook to run local validation checks.
+# Opt-in by running: git config core.hooksPath scripts/git-hooks
+
+set -euo pipefail
+
+# Get repository root
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+echo "=== Running local pre-push checks ==="
+
+# 1. Cargo format check
+echo "Checking code formatting (cargo fmt --all -- --check)..."
+if ! cargo fmt --all -- --check; then
+  echo "❌ cargo fmt check failed. Please run 'cargo fmt --all' to fix formatting."
+  exit 1
+fi
+
+# 2. Cargo clippy check
+echo "Running clippy (cargo clippy --workspace -- -D warnings)..."
+if ! cargo clippy --workspace -- -D warnings; then
+  echo "❌ cargo clippy check failed. Please resolve all clippy warnings before pushing."
+  exit 1
+fi
+
+# 3. Check docs completeness
+echo "Checking documentation completeness (scripts/check-docs.sh)..."
+if ! bash scripts/check-docs.sh; then
+  echo "❌ Documentation completeness check failed. See above errors."
+  exit 1
+fi
+
+echo "✅ All local pre-push checks passed!"
+exit 0
