@@ -1,4 +1,6 @@
-generator client = "prisma-client";
+generator client {
+  provider = "prisma-client-js"
+}
 
 datasource db {
   provider = "postgresql"
@@ -8,4 +10,6 @@ datasource db {
 model RevokedToken {
   jti       String   @id
   createdAt DateTime @default(now())
+
+  @@map("revoked_tokens")
 }

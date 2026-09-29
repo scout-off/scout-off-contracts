@@ -165,6 +165,35 @@ impl ScoutAccessContract {
     // Admin
     // -------------------------------------------------------------------------
 
+    // -------------------------------------------------------------------------
+    // Constructor (atomic deployment + initialization — issue #1369)
+    // -------------------------------------------------------------------------
+
+    /// Soroban constructor: called atomically during `stellar contract deploy`.
+    /// Takes the same arguments as the legacy `initialize` entrypoint so the
+    /// deploy scripts can supply them in a single transaction.
+    /// Eliminates the front-running window between deploy and initialize.
+    /// See `docs/DEPLOYMENT.md` and `docs/VERSIONING.md`.
+    pub fn __constructor(
+        env: Env,
+        admin: Address,
+        xlm_token: Address,
+        fee_config: FeeConfig,
+    ) -> Result<(), ScoutAccessError> {
+        // Probe the supplied xlm_token address to confirm it is a deployed
+        // token contract before we accept it.
+        match token::Client::new(&env, &xlm_token).try_decimals() {
+            Ok(_) => {}
+            Err(_) => return Err(ScoutAccessError::InvalidInput),
+        }
+        Self::validate_fee_config(&fee_config)?;
+        Self::init_state(&env, &admin, &xlm_token, &fee_config);
+        Ok(())
+    }
+
+    /// One-time contract initialisation. Kept for backward compatibility with
+    /// already-deployed contracts. Returns `AlreadyInitialized` if the
+    /// constructor already ran. New deployments should rely on the constructor.
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -187,23 +216,27 @@ impl ScoutAccessContract {
         admin.require_auth();
         Self::validate_fee_config(&fee_config)?;
         Self::bump_instance_ttl(&env);
-        env.storage().persistent().set(&DataKey::Admin, &admin);
+        Self::init_state(&env, &admin, &xlm_token, &fee_config);
+        Ok(())
+    }
+
+    fn init_state(env: &Env, admin: &Address, xlm_token: &Address, fee_config: &FeeConfig) {
+        env.storage().persistent().set(&DataKey::Admin, admin);
         env.storage().persistent().extend_ttl(
             &DataKey::Admin,
             ADMIN_BUMP_LEDGERS,
             ADMIN_BUMP_LEDGERS,
         );
-        env.storage().instance().set(&DataKey::XlmToken, &xlm_token);
+        env.storage().instance().set(&DataKey::XlmToken, xlm_token);
         env.storage()
             .instance()
-            .set(&DataKey::FeeConfig, &fee_config);
+            .set(&DataKey::FeeConfig, fee_config);
         env.storage().instance().set(&DataKey::Initialized, &true);
         env.storage().instance().set(&DataKey::Paused, &false);
         env.storage()
             .instance()
             .set(&DataKey::AccumulatedFees, &0i128);
-        events::contract_initialized(&env, &admin);
-        Ok(())
+        events::contract_initialized(env, admin);
     }
 
     pub fn update_fee_config(env: Env, fee_config: FeeConfig) -> Result<(), ScoutAccessError> {
@@ -2627,6 +2660,113 @@ impl ScoutAccessContract {
         Ok(())
     }
 
+    // -------------------------------------------------------------------------
+    // GDPR right-to-erasure (issue #1373)
+    // -------------------------------------------------------------------------
+
+    /// Paged erasure of a player's scout_access state (admin only).
+    ///
+    /// Removes `ContactRecord`, `PlayerContacts`, `EvidenceAccessGrant`,
+    /// `EvidenceAccessGrantPage`, `EvidenceAccessGrantCount`, `TrialOffer`,
+    /// `TrialEscrow`, and `TrialCounter` for the player.
+    ///
+    /// **Outstanding escrows must be refunded before calling this** — the
+    /// function returns `TrialOfferNotFound` if any unexpired escrow remains
+    /// for the player (callers should first call `expire_trial_offers` or
+    /// wait for expiry). Pass `cursor=0` to start; pass returned `next_cursor`
+    /// back until `more == false`.
+    pub fn purge_player_data(
+        env: Env,
+        player_id: u64,
+        cursor: u32,
+    ) -> Result<(u32, bool), ScoutAccessError> {
+        let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        Self::require_not_paused(&env)?;
+        Self::require_initialized(&env)?;
+
+        const PAGE_SIZE: u32 = 50;
+        let mut removed: u32 = 0;
+
+        // Refuse if any unexpired escrow still exists for this player.
+        let trial_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TrialCounter(player_id))
+            .unwrap_or(0u32);
+        let now = env.ledger().timestamp();
+        for idx in 0..trial_count {
+            let ek = DataKey::TrialEscrow(player_id, idx);
+            if let Some(escrow) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, TrialEscrow>(&ek)
+            {
+                if now <= escrow.expires_at && escrow.amount > 0 {
+                    return Err(ScoutAccessError::TrialOfferNotFound);
+                }
+            }
+        }
+
+        // On the first page remove non-paged scalar keys.
+        if cursor == 0 {
+            // PlayerContacts index.
+            if env
+                .storage()
+                .persistent()
+                .has(&DataKey::PlayerContacts(player_id))
+            {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::PlayerContacts(player_id));
+                removed += 1;
+            }
+            // EvidenceAccessGrantCount.
+            if env
+                .storage()
+                .persistent()
+                .has(&DataKey::EvidenceAccessGrantCount(player_id))
+            {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::EvidenceAccessGrantCount(player_id));
+                removed += 1;
+            }
+            // TrialCounter.
+            if env
+                .storage()
+                .persistent()
+                .has(&DataKey::TrialCounter(player_id))
+            {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::TrialCounter(player_id));
+                removed += 1;
+            }
+        }
+
+        // Paged removal: trial offers + escrows starting at cursor.
+        let start = cursor;
+        let end = (start + PAGE_SIZE).min(trial_count);
+        for idx in start..end {
+            let tok = DataKey::TrialOffer(player_id, idx);
+            if env.storage().persistent().has(&tok) {
+                env.storage().persistent().remove(&tok);
+                removed += 1;
+            }
+            let tek = DataKey::TrialEscrow(player_id, idx);
+            if env.storage().persistent().has(&tek) {
+                env.storage().persistent().remove(&tek);
+                removed += 1;
+            }
+        }
+
+        let next_cursor = end;
+        let more = next_cursor < trial_count;
+
+        events::player_data_purged(&env, &admin, player_id, removed, more);
+        Ok((next_cursor, more))
+    }
+
     pub fn health(env: Env) -> ContractHealth {
         let initialized = env
             .storage()
@@ -2984,7 +3124,7 @@ mod tests {
                 (
                     contract_id.clone(),
                     (
-                        Symbol::new(&env, crate::events::CONTRACT_INITIALIZED),
+                        Symbol::new(&env, "ContractInitialized"),
                         admin.clone()
                     )
                         .into_val(&env),
@@ -3287,7 +3427,7 @@ mod tests {
                 (
                     contract_id.clone(),
                     (
-                        Symbol::new(&env, crate::events::EVIDENCE_ACCESS_GRANTED),
+                        Symbol::new(&env, "EvidenceAccessGranted"),
                         scout.clone()
                     )
                         .into_val(&env),
@@ -3296,7 +3436,7 @@ mod tests {
                 (
                     contract_id.clone(),
                     (
-                        Symbol::new(&env, crate::events::PLAYER_CONTACTED),
+                        Symbol::new(&env, "PlayerContacted"),
                         scout.clone()
                     )
                         .into_val(&env),
@@ -3813,7 +3953,7 @@ mod tests {
                 (
                     contract_id.clone(),
                     (
-                        Symbol::new(&env, events::ADMIN_TRANSFER_PROPOSED),
+                        Symbol::new(&env, "AdminTransferProposed"),
                         old_admin.clone(),
                     )
                         .into_val(&env),
@@ -3858,7 +3998,7 @@ mod tests {
                 (
                     contract_id.clone(),
                     (
-                        Symbol::new(&env, events::ADMIN_TRANSFERRED),
+                        Symbol::new(&env, "AdminTransferred"),
                         old_admin.clone(),
                     )
                         .into_val(&env),
@@ -3947,7 +4087,7 @@ mod tests {
                 (
                     client.address.clone(),
                     (
-                        Symbol::new(&env, crate::events::CONTRACT_PAUSED),
+                        Symbol::new(&env, "ContractPaused"),
                         admin.clone()
                     )
                         .into_val(&env),
@@ -3965,7 +4105,7 @@ mod tests {
                 (
                     client.address.clone(),
                     (
-                        Symbol::new(&env, crate::events::CONTRACT_UNPAUSED),
+                        Symbol::new(&env, "ContractUnpaused"),
                         admin.clone()
                     )
                         .into_val(&env),
@@ -4577,7 +4717,7 @@ mod tests {
                 (
                     contract_id.clone(),
                     (
-                        Symbol::new(&env, crate::events::PROGRESS_CONTRACT_UPDATED),
+                        Symbol::new(&env, "ProgressContractUpdated"),
                         _admin.clone(),
                     )
                         .into_val(&env),
@@ -4586,7 +4726,7 @@ mod tests {
                 (
                     contract_id.clone(),
                     (
-                        Symbol::new(&env, crate::events::WIRING_UPDATED),
+                        Symbol::new(&env, "WiringUpdated"),
                         _admin.clone(),
                         Symbol::new(&env, "progress_contract"),
                     )
@@ -4684,7 +4824,7 @@ mod tests {
                 (
                     contract_id.clone(),
                     (
-                        Symbol::new(&env, crate::events::REGISTRATION_CONTRACT_UPDATED),
+                        Symbol::new(&env, "RegistrationContractUpdated"),
                         _admin.clone(),
                     )
                         .into_val(&env),
@@ -4693,7 +4833,7 @@ mod tests {
                 (
                     contract_id.clone(),
                     (
-                        Symbol::new(&env, crate::events::WIRING_UPDATED),
+                        Symbol::new(&env, "WiringUpdated"),
                         _admin.clone(),
                         Symbol::new(&env, "registration_contract"),
                     )
@@ -5972,7 +6112,7 @@ mod tests {
                 (
                     contract_id.clone(),
                     (
-                        Symbol::new(&env, crate::events::AUTO_RENEW_SET),
+                        Symbol::new(&env, "AutoRenewSet"),
                         scout.clone()
                     )
                         .into_val(&env),
