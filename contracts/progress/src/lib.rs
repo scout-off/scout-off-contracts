@@ -1,5 +1,4 @@
 #![cfg_attr(target_family = "wasm", no_std)]
-#![no_std]
 mod errors;
 mod events;
 mod types;
@@ -8,6 +7,33 @@ use errors::ProgressError;
 use types::{ContractHealth, DataKey, ProgressEntry, ProgressLevel};
 
 use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
+
+// Generated client for the registration contract — used to sync a player's
+// level back after a dispute reset. The registration contract must already be
+// deployed and its address set via `set_registration_contract`; without it the
+// level sync is simply skipped.
+mod registration_contract {
+    soroban_sdk::contractimport!(
+        file = "fixtures/scoutchain_registration.wasm"
+    );
+}
+
+/// The imported WASM carries its own `ProgressLevel` type, distinct from the
+/// one in shared-types, so the level has to be translated before it crosses the
+/// contract boundary. Both enums are declared in the same order, so this is a
+/// positional match rather than a string or numeric round-trip.
+fn to_imported_level(level: &ProgressLevel) -> registration_contract::ProgressLevel {
+    match level {
+        ProgressLevel::Unverified => registration_contract::ProgressLevel::Unverified,
+        ProgressLevel::VerifiedIdentity => {
+            registration_contract::ProgressLevel::VerifiedIdentity
+        }
+        ProgressLevel::PerformanceMilestones => {
+            registration_contract::ProgressLevel::PerformanceMilestones
+        }
+        ProgressLevel::EliteTier => registration_contract::ProgressLevel::EliteTier,
+    }
+}
 
 const INSTANCE_TTL_MIN: u32 = 100;
 const INSTANCE_TTL_MAX: u32 = 500;
@@ -150,7 +176,7 @@ impl ProgressContract {
             .get::<DataKey, Address>(&DataKey::RegistrationContract)
         {
             let reg_client = registration_contract::Client::new(&env, &reg_contract);
-            match reg_client.try_set_player_level(&player_id, &target_level) {
+            match reg_client.try_set_player_level(&player_id, &to_imported_level(&target_level)) {
                 Ok(Ok(())) => {}
                 _ => return Err(ProgressError::RegistrationCallFailed),
             }
@@ -227,7 +253,7 @@ impl ProgressContract {
             .get::<DataKey, Address>(&DataKey::RegistrationContract)
         {
             let reg_client = registration_contract::Client::new(&env, &reg_contract);
-            match reg_client.try_set_player_level(&player_id, &new_level) {
+            match reg_client.try_set_player_level(&player_id, &to_imported_level(&new_level)) {
                 Ok(Ok(())) => {}
                 _ => return Err(ProgressError::RegistrationCallFailed),
             }

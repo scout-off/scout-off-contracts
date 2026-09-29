@@ -5,8 +5,8 @@ mod types;
 
 use errors::ScoutChainError;
 use types::{
-    ContractHealth, DataKey, PlayerProfile, PlayerSummary, PlayerVitals, ProgressLevel,
-    ScoutProfile,
+    ContractHealth, DataKey, FilterResult, PlayerProfile, PlayerSummary, PlayerVitals,
+    ProgressLevel, ScoutProfile, StoredPlayerProfile,
 };
 
 use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
@@ -15,7 +15,7 @@ use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
 // current level at read time.  `level` is never stored in this contract.
 mod progress_contract {
     use scoutchain_shared_types::ProgressLevel;
-    use soroban_sdk::{contractclient, Address, Env};
+    use soroban_sdk::{contractclient, Env};
 
     #[contractclient(name = "Client")]
     #[allow(dead_code)]
@@ -230,8 +230,11 @@ impl RegistrationContract {
                 .set(&DataKey::PlayerIndex, &player_ids);
         }
 
-        // Remove from composite index
-        Self::composite_index_remove(&env, &profile.level, &profile.vitals.region, player_id);
+        // Remove from composite index. The index is keyed by level, and level is
+        // not stored here — it comes from the progress contract, so it has to be
+        // resolved before the profile is removed.
+        let level = Self::resolve_level(&env, player_id);
+        Self::composite_index_remove(&env, &level, &profile.vitals.region, player_id);
 
         events::player_deregistered(&env, player_id);
         Ok(())
@@ -422,7 +425,6 @@ impl RegistrationContract {
 
         let mut profiles = Vec::new(&env);
         let mut next_cursor: u64 = 0;
-        let mut past_cursor = cursor == 0; // cursor=0 means start from beginning
 
         for level in levels.iter() {
             if !Self::level_gte(level, &min_level) {
@@ -435,19 +437,26 @@ impl RegistrationContract {
                 .unwrap_or_else(|| Vec::new(&env));
 
             for player_id in ids.iter() {
-                if results.len() >= max_results {
+                if profiles.len() >= limit {
                     break;
+                }
+                if cursor != 0 && player_id < cursor {
+                    continue;
                 }
                 if let Ok(profile) = Self::load_player(&env, player_id) {
                     if profile.vitals.position == position {
-                        results.push_back(profile);
+                        profiles.push_back(profile);
                     }
                 }
             }
 
-            if results.len() >= max_results {
+            if profiles.len() >= limit {
                 break;
             }
+        }
+
+        if let Some(last) = profiles.last() {
+            next_cursor = last.player_id;
         }
 
         Ok(FilterResult {

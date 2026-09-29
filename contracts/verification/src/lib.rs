@@ -1,4 +1,4 @@
-#![no_std]
+#![cfg_attr(target_family = "wasm", no_std)]
 // IMPORTANT: Cross-contract wiring required after deployment
 //
 // `approve_milestone` calls `advance_level` on the progress contract to update
@@ -11,7 +11,6 @@
 //
 // The easiest way is to run `./scripts/initialize.sh` which does this for you.
 // Without this step, milestones are recorded but player levels will NOT advance.
-#![cfg_attr(target_family = "wasm", no_std)]
 mod errors;
 mod events;
 mod types;
@@ -30,6 +29,9 @@ const MAX_CREDENTIALS_LEN: u32 = 256;
 /// is bounded by Soroban's 64 KB per-entry limit.
 const MAX_VALIDATORS: u32 = 100;
 
+/// Maximum milestones a single validator may approve for one player.
+const MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR: u32 = 5;
+
 // Bump applied to the admin key on every privileged call, so the admin address
 // cannot lapse out of persistent storage between privileged calls.
 const ADMIN_BUMP_LEDGERS: u32 = 100_000;
@@ -43,32 +45,6 @@ mod progress_contract {
     soroban_sdk::contractimport!(
         file = "fixtures/scoutchain_progress.wasm"
     );
-    use scoutchain_shared_types::ProgressLevel;
-    use soroban_sdk::{contractclient, contracterror, Address, Env};
-
-    #[contracterror]
-    #[derive(Copy, Clone, Debug, PartialEq)]
-    #[repr(u32)]
-    pub enum Error {
-        AlreadyInitialized = 1,
-        NotInitialized = 2,
-        ContractPaused = 3,
-        Unauthorized = 4,
-        InvalidProgressTransition = 5,
-        AlreadyAtMaxLevel = 6,
-        PlayerNotFound = 7,
-    }
-
-    #[contractclient(name = "Client")]
-    #[allow(dead_code)]
-    pub trait ProgressContractClient {
-        fn advance_level(
-            env: Env,
-            caller: Address,
-            player_id: u64,
-            milestone_ref: u32,
-        ) -> Result<ProgressLevel, Error>;
-    }
 }
 
 #[contract]
@@ -366,7 +342,7 @@ impl VerificationContract {
             // Any other error propagates as ProgressCallFailed.
             match progress_client.try_advance_level(&validator_wallet, &player_id, &next_index) {
                 Ok(_) => {}
-                Err(Ok(progress_contract::Error::AlreadyAtMaxLevel)) => {}
+                Err(Ok(progress_contract::ProgressError::AlreadyAtMaxLevel)) => {}
                 Err(_) => return Err(VerificationError::ProgressCallFailed),
             }
         }

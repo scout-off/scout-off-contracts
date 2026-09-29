@@ -6,7 +6,7 @@ use errors::ScoutAccessError;
 use types::{DataKey, Subscription, TrialOffer};
 pub use types::{FeeConfig, SubscriptionTier};
 
-use soroban_sdk::{contract, contractimpl, token, Address, Env, String};
+use soroban_sdk::{contract, contractimpl, token, Address, Env, String, Vec};
 
 use scoutchain_shared_types::{validate_cid, ContractHealth};
 
@@ -1562,18 +1562,13 @@ mod tests {
         let scout_balance_after = TokenClient::new(&env, &xlm).balance(&scout);
 
         assert_eq!(
-    contract_balance_before - refund_amount,
-    contract_balance_after
-);
-
-assert_eq!(
-    scout_balance_before + refund_amount,
-    scout_balance_after
-);
             contract_balance_before - refund_amount,
             contract_balance_after
         );
-        assert_eq!(scout_balance_before + refund_amount, scout_balance_after);
+        assert_eq!(
+            scout_balance_before + refund_amount,
+            scout_balance_after
+        );
     }
 
     #[test]

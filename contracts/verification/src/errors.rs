@@ -19,4 +19,7 @@ pub enum VerificationError {
     Overflow = 13,
     MilestoneNotFound = 14,
     ValidatorCapReached = 15,
+    /// A single validator has already approved
+    /// MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR milestones for this player.
+    MilestoneLimitExceeded = 16,
 }
