@@ -1,21 +1,20 @@
 import jwt from "jsonwebtoken";
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { prisma } from "../db";
+import type { Request } from "express";
 
 export async function isTokenRevoked(jti: string): Promise<boolean> {
   if (!jti) {
     return false;
   }
 
-  const existingRevocation = await prisma.revoked_tokens.findFirst({
+  const existingRevocation = await prisma.revokedToken.findFirst({
     where: { jti },
   });
 
   return !!existingRevocation;
 }
 
-export function requireAuth(
+export async function requireAuth(
   req: Request,
   res: any,
   next: () => void
