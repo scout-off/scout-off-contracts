@@ -1440,6 +1440,7 @@ pub struct TrialOffer {
 | 6 | `AlreadyAtMaxLevel` | Player is already at `EliteTier` |
 | 7 | `PlayerNotFound` | History index out of range |
 | 8 | `Overflow` | History counter overflowed |
+| 9 | `RegistrationCallFailed` | Cross-contract call to the registration contract failed when syncing a player's level |
 
 ### `ScoutAccessError` (scout_access contract)
 
