@@ -1,24 +1,40 @@
 {
-  "name": "scoutchain-contracts-tooling",
+  "name": "scoutchain-backend",
   "private": true,
   "version": "1.0.0",
-  "description": "Node-based tooling for scout-off-contracts (currently just the on-chain/off-chain indexer reconciliation script). Does not affect the Rust contracts or bindings/ packages.",
+  "description": "Node.js Express API + on-chain/off-chain indexer reconciliation tooling for ScoutChain.",
   "license": "MIT",
   "engines": {
     "node": ">=18"
   },
+  "main": "dist/server.js",
   "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "ts-node src/server.ts",
     "reconcile-indexer": "node scripts/reconcile-indexer.js",
-    "test": "jest"
+    "test": "jest",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src tests --ext .ts"
   },
   "dependencies": {
-    "pg": "^8.11.0"
+    "@prisma/client": "5.16.2",
+    "express": "4.19.2",
+    "jsonwebtoken": "9.0.2",
+    "pg": "8.11.0",
+    "uuid": "9.0.1"
   },
   "devDependencies": {
-    "@types/jest": "^30.0.0",
-    "@types/node": "^26.4.0",
-    "jest": "^30.5.0",
-    "ts-jest": "^29.4.12",
-    "typescript": "^7.0.2"
+    "@types/express": "4.17.21",
+    "@types/jest": "29.5.13",
+    "@types/jsonwebtoken": "9.0.6",
+    "@types/node": "20.14.15",
+    "@types/supertest": "6.0.2",
+    "@types/uuid": "9.0.8",
+    "jest": "29.7.0",
+    "prisma": "5.16.2",
+    "supertest": "7.0.0",
+    "ts-jest": "29.2.3",
+    "typescript": "5.5.4"
   }
 }
