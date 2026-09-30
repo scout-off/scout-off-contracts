@@ -1,5 +1,7 @@
 # Deployment Guide
 
+> **See also:** [Glossary](GLOSSARY.md)
+
 ## Prerequisites
 
 <!-- Note: XLM token address source of truth -->
