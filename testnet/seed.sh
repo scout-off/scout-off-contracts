@@ -183,7 +183,8 @@ invoke_idempotent \
     --network "$NETWORK" \
     -- register_validator \
     --wallet "$VALIDATOR_ADDRESS" \
-    --credentials "UEFA B License — Test Validator"
+    --credentials "UEFA B License — Test Validator" \
+    --affiliation "Test Academy"
 
 invoke_idempotent \
   "Registering second validator" \
@@ -194,7 +195,8 @@ invoke_idempotent \
     --network "$NETWORK" \
     -- register_validator \
     --wallet "$VALIDATOR_2_ADDRESS" \
-    --credentials "FIFA Talent ID — Test Validator 2"
+    --credentials "FIFA Talent ID — Test Validator 2" \
+    --affiliation "Global Scouting Network"
 
 invoke_idempotent \
   "Registering test player" \

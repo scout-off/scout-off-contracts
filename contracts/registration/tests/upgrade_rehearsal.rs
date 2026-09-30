@@ -156,11 +156,17 @@ fn seed(h: &Harness) -> Seeded {
     let scout_id = h.registration.register_scout(&scout_wallet, &scout_region);
     h.registration.verify_scout(&scout_id);
 
+    // Wire registration -> progress first (set_player_level requires the
+    // link to be present), then progress -> registration so advance_level
+    // syncs the level mirror into registration. With both links wired, the
+    // advance below propagates VerifiedIdentity into registration's stored
+    // PlayerLevel mirror, which get_player reads back.
+    h.registration.set_progress_contract(&h.progress.address);
+    h.progress
+        .set_registration_contract(&h.registration.address);
+
     // Advance player 1 one tier on the progress contract (primary-caller path).
     h.progress.advance_level(&h.verifier, &p1, &1u32);
-
-    // Wire registration -> progress so get_player resolves the live level.
-    h.registration.set_progress_contract(&h.progress.address);
 
     Seeded {
         p1_wallet,
@@ -192,9 +198,11 @@ fn test_registration_upgrade_preserves_state() {
 
     // Sanity-check the seed is representative before we rely on it.
     assert_eq!(p1_before.wallet, s.p1_wallet);
-    assert_eq!(p1_before.level, ProgressLevel::VerifiedIdentity); // instance link resolves live
+    // advance_level synced VerifiedIdentity into registration's mirror via the
+    // wired progress -> registration link.
+    assert_eq!(p1_before.level, ProgressLevel::VerifiedIdentity);
     assert_eq!(p2_before.level, ProgressLevel::Unverified);
-    assert!(scout_before.verified);
+    assert!(scout_before.verification.verified);
     assert_eq!(player_count, 2);
     assert_eq!(scout_count, 1);
     assert!(health.initialized && !health.paused);
@@ -202,10 +210,13 @@ fn test_registration_upgrade_preserves_state() {
     // --- Upgrade ---
     rehearse_upgrade(&h);
 
-    // Instance storage (the progress-contract link) is not wiped by an upgrade,
+    // Instance storage (the cross-contract links) is not wiped by an upgrade,
     // but the DEPLOYMENT.md checklist says to re-wire it explicitly. For
     // registration this is a plain, idempotent overwrite (no guard flag).
+    // Re-wire both directions so level sync keeps working after the swap.
     h.registration.set_progress_contract(&h.progress.address);
+    h.progress
+        .set_registration_contract(&h.registration.address);
 
     // --- Assert: persistent storage survived (Player / scout profiles rows) ---
     let p1_after = h.registration.get_player(&s.p1);
@@ -226,7 +237,7 @@ fn test_registration_upgrade_preserves_state() {
     assert_eq!(scout_after.scout_id, scout_before.scout_id);
     assert_eq!(scout_after.wallet, scout_before.wallet);
     assert_eq!(scout_after.region, s.scout_region);
-    assert!(scout_after.verified);
+    assert!(scout_after.verification.verified);
 
     // --- Assert: instance flags / counters survived (Initialized/Paused rows) ---
     assert_eq!(h.registration.health(), health);
@@ -242,24 +253,27 @@ fn test_registration_upgrade_preserves_state() {
 
 /// Deliberately-broken upgrade — proves the harness is not a no-op.
 ///
-/// An operator re-wires the progress-contract link to the WRONG address after
-/// the upgrade (a plain account, not the progress contract) — the classic
-/// "forgot / fat-fingered the re-wiring step" mistake. The harness's read-back
-/// check then fails hard: resolving a player's live level cross-calls
-/// `get_level` on a non-contract address, which panics. If the harness's
-/// assertions were vacuous this would pass silently; instead it panics, so the
-/// regression is caught.
+/// The operator forgets to re-verify the instance `Paused` flag after the
+/// upgrade and the contract is left paused. The harness's post-upgrade
+/// functional check — a state-changing `register_player` call — then panics
+/// with `ContractPaused`, catching the skipped re-verification step instead
+/// of letting a half-configured contract through. This mirrors the broken
+/// scenarios in the verification / progress / scout_access harnesses.
 #[test]
 #[should_panic]
-fn test_registration_broken_upgrade_mis_wired_progress_link_is_caught() {
+fn test_registration_broken_upgrade_left_paused_is_caught() {
     let h = setup();
-    let s = seed(&h);
+    seed(&h);
 
     rehearse_upgrade(&h);
 
-    let wrong_address = Address::generate(&h.env);
-    h.registration.set_progress_contract(&wrong_address);
+    // Simulate a botched re-verification: the contract is (still) paused.
+    h.registration.pause_contract();
 
-    // Post-upgrade read-back: this must not silently succeed.
-    let _ = h.registration.get_player(&s.p1);
+    // Post-upgrade functional check — must not silently succeed while paused.
+    let wallet = Address::generate(&h.env);
+    let hashes = vec![&h.env, String::from_str(&h.env, "QmBrokenUpgradeCheck01")];
+    let _ = h
+        .registration
+        .register_player(&wallet, &vitals(&h.env, "Goalkeeper"), &hashes);
 }

@@ -211,11 +211,188 @@ check_error_codes "scout_access (ScoutAccessError)" \
   "$REPO_ROOT/contracts/scout_access/src/errors.rs" \
   "### \`ScoutAccessError\`"
 
+# ---------------------------------------------------------------------------
+# Cross-contract call drift check
+#
+# For each pub fn that makes a cross-contract call (detected via
+# `_contract::Client::new` in the Rust source), the corresponding entry in
+# CONTRACT_REFERENCE.md must contain a structured annotation line:
+#
+#   | **Cross-contract calls:** | <target>.<method> |
+#
+# If a function makes a cross-contract call but the doc entry has no such
+# annotation, the check fails — catching the class of drift where a
+# function's documented behaviour diverges from what the code actually does.
+# ---------------------------------------------------------------------------
+
+# extract_cross_contract_calls <lib_rs_file>
+#   Prints "function_name target.method" pairs for every pub fn whose body
+#   contains a `_contract::Client::new` call.
+extract_cross_contract_calls() {
+  local file="$1"
+  python3 - "$file" <<'PYEOF'
+import re, sys
+
+src = open(sys.argv[1]).read()
+
+# Remove block comments
+src = re.sub(r'/\*.*?\*/', '', src, flags=re.DOTALL)
+# Remove line comments
+src = re.sub(r'//[^\n]*', '', src)
+
+# Find #[contractimpl] block
+segments = re.split(r'#\[contractimpl\]', src)
+
+for segment in segments[1:]:
+    stripped = segment.lstrip()
+    if not stripped.startswith('impl'):
+        continue
+
+    # Walk the impl block body
+    depth = 0
+    collecting = False
+    block_chars = []
+    for ch in segment:
+        if ch == '{':
+            depth += 1
+            collecting = True
+        elif ch == '}':
+            depth -= 1
+            if collecting and depth == 0:
+                block_chars.append(ch)
+                break
+        if collecting:
+            block_chars.append(ch)
+    block = ''.join(block_chars)
+
+    # Split into individual pub fn bodies
+    fn_pattern = re.compile(r'\bpub fn ([a-z_][a-z0-9_]*)\b')
+    matches = list(fn_pattern.finditer(block))
+
+    for i, m in enumerate(matches):
+        fn_name = m.group(1)
+        fn_start = m.start()
+        fn_end = matches[i + 1].start() if i + 1 < len(matches) else len(block)
+        fn_body = block[fn_start:fn_end]
+
+        # Detect cross-contract Client::new calls:
+        # Pattern: something_contract::Client::new ... .method( or .try_method(
+        client_pattern = re.compile(
+            r'(\w+)_contract::Client::new[^;]*?'
+            r'(?:\.(\w+)\s*\(|\.try_(\w+)\s*\()',
+            re.DOTALL
+        )
+        calls_found = set()
+        for cm in client_pattern.finditer(fn_body):
+            target = cm.group(1)
+            method = cm.group(2) or cm.group(3)
+            if method and target:
+                calls_found.add(f"{target}.{method}")
+
+        for call in sorted(calls_found):
+            print(f"{fn_name} {call}")
+PYEOF
+}
+
+# check_cross_contract_calls <label> <lib_rs_file>
+check_cross_contract_calls() {
+  local label="$1"
+  local src="$2"
+
+  echo "Checking cross-contract calls: $label"
+
+  local mismatches=()
+
+  while IFS=' ' read -r fn_name call; do
+    [[ -z "$fn_name" || -z "$call" ]] && continue
+
+    # Find the function's section in CONTRACT_REFERENCE.md
+    local fn_doc_section
+    fn_doc_section=$(python3 - "$DOCS_FILE" "$fn_name" <<'PYEOF'
+import re, sys
+
+content = open(sys.argv[1]).read()
+fn_name = sys.argv[2]
+
+# Find the heading for this function
+pattern = rf'####\s+`{re.escape(fn_name)}\('
+m = re.search(pattern, content)
+if not m:
+    pattern = rf'####\s+{re.escape(fn_name)}\('
+    m = re.search(pattern, content)
+if not m:
+    print("")
+    sys.exit(0)
+
+section_start = m.start()
+next_heading = re.search(r'\n####', content[m.end():])
+if next_heading:
+    section_end = m.end() + next_heading.start()
+else:
+    section_end = len(content)
+
+print(content[section_start:section_end])
+PYEOF
+)
+
+    if [[ -z "$fn_doc_section" ]]; then
+      # Function not in docs — covered by the function-existence check above
+      continue
+    fi
+
+    # Check that the doc section has a Cross-contract calls annotation for
+    # this specific call target.method
+    local target method
+    target=$(echo "$call" | cut -d. -f1)
+    method=$(echo "$call" | cut -d. -f2)
+
+    if ! echo "$fn_doc_section" | grep -qiE "\*\*Cross-contract calls:\*\*.*${target}\.${method}"; then
+      mismatches+=("${fn_name}: code calls ${call} but doc has no '**Cross-contract calls:** ${call}' annotation")
+    fi
+  done < <(extract_cross_contract_calls "$src")
+
+  if [[ ${#mismatches[@]} -gt 0 ]]; then
+    echo "  CROSS-CONTRACT CALL DRIFT:"
+    for m_item in "${mismatches[@]}"; do
+      echo "    - $m_item"
+    done
+    FAIL=1
+  else
+    echo "  OK"
+  fi
+}
+
 echo ""
+echo "=== Cross-contract call drift check ==="
+echo ""
+
+check_cross_contract_calls "verification"  "$REPO_ROOT/contracts/verification/src/lib.rs"
+check_cross_contract_calls "progress"      "$REPO_ROOT/contracts/progress/src/lib.rs"
+check_cross_contract_calls "scout_access"  "$REPO_ROOT/contracts/scout_access/src/lib.rs"
+check_cross_contract_calls "registration"  "$REPO_ROOT/contracts/registration/src/lib.rs"
+
+echo ""
+# --- Sanity check: ensure CONTRACT_REFERENCE.md is not truncated ---
+DOC_LINES=$(wc -l < "$DOCS_FILE")
+DOC_LAST_LINE=$(tail -1 "$DOCS_FILE")
+if [[ "$DOC_LAST_LINE" != *"# END OF DOCS CONTRACT_REFERENCE.md"* ]]; then
+  echo "  WARNING: DOCS FILE LAST LINE UNEXPECTED:"
+  echo "    Last line: $DOC_LAST_LINE"
+  echo "    (Expected marker: '# END OF DOCS CONTRACT_REFERENCE.md')"
+  echo "    Doc file may be truncated — verify CONTRACT_REFERENCE.md completeness."
+  FAIL=1
+fi
+if [[ $DOC_LINES -lt 100 ]]; then
+  echo "  WARNING: DOCS FILE UNEXPECTEDLY SHORT ($DOC_LINES lines):"
+  echo "    CONTRACT_REFERENCE.md may be truncated."
+  FAIL=1
+fi
+echo ""
+
 if [[ $FAIL -ne 0 ]]; then
   echo "FAIL: One or more issues found — see above."
   echo "      Update docs/CONTRACT_REFERENCE.md to match the Rust source and re-run."
   exit 1
 else
-  echo "PASS: All public functions and error codes are correctly documented."
+  echo "PASS: All public functions, error codes, and cross-contract calls are correctly documented."
 fi

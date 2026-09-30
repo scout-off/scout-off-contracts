@@ -6,6 +6,15 @@
 set -euo pipefail
 
 NETWORK="${1:-testnet}"
+# `stellar contract invoke` requires a --source-account even for read-only
+# calls. Any funded account works for a simulation-only read; callers set
+# STELLAR_SOURCE_ACCOUNT (an identity name or secret key), falling back to
+# DEPLOYER_SECRET.
+SOURCE_ACCOUNT="${STELLAR_SOURCE_ACCOUNT:-${DEPLOYER_SECRET:-}}"
+if [[ -z "$SOURCE_ACCOUNT" ]]; then
+  echo "ERROR: set STELLAR_SOURCE_ACCOUNT (or DEPLOYER_SECRET) to a Stellar identity or secret key." >&2
+  exit 1
+fi
 # shellcheck source=/dev/null
 source .env.contracts
 
@@ -24,25 +33,37 @@ for name in "${CONTRACTS[@]}"; do
   id="${IDS[$name]}"
   echo "==> Checking health() on $name ($id)..."
 
+  # stdout = the ContractHealth JSON; stellar-cli progress goes to stderr.
   response=$(stellar contract invoke \
     --id "$id" \
+    --source "$SOURCE_ACCOUNT" \
     --network "$NETWORK" \
-    -- health 2>&1)
+    -- health 2>/dev/null)
 
   echo "    Response: $response"
 
-  if echo "$response" | grep -q '"initialized":false'; then
-    echo "    FAIL: $name returned initialized: false"
-    FAILED=1
-  elif echo "$response" | grep -q '"paused":true'; then
-    echo "    FAIL: $name returned paused: true"
-    FAILED=1
-  elif echo "$response" | grep -q '"initialized":true'; then
-    echo "    OK: $name is healthy"
-  else
-    echo "    FAIL: $name returned unexpected health response"
-    FAILED=1
-  fi
+  # Parse the struct as JSON rather than grepping a whitespace-sensitive
+  # substring — the CLI's formatting is not guaranteed to be compact.
+  status=$(echo "$response" | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("UNPARSEABLE"); sys.exit()
+if not d.get("initialized"):
+    print("NOT_INITIALIZED")
+elif d.get("paused"):
+    print("PAUSED")
+else:
+    print("OK")
+' 2>/dev/null || echo "UNPARSEABLE")
+
+  case "$status" in
+    OK)              echo "    OK: $name is healthy" ;;
+    NOT_INITIALIZED) echo "    FAIL: $name returned initialized: false"; FAILED=1 ;;
+    PAUSED)          echo "    FAIL: $name returned paused: true"; FAILED=1 ;;
+    *)               echo "    FAIL: $name returned unexpected health response"; FAILED=1 ;;
+  esac
 done
 
 if [[ "$FAILED" -ne 0 ]]; then

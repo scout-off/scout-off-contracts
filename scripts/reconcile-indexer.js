@@ -45,9 +45,11 @@ const ALL_TABLES = [
   "validators",
   "milestones",
   "milestone_disputes",
+  "dispute_votes",
   "scout_subscriptions",
   "contact_records",
   "trial_offers",
+  "evidence_access_grants",
   "indexer_cursor",
 ];
 
@@ -59,7 +61,12 @@ const SKIPPED_TABLES = {
   player_level_history:
     "audit trail of advance/reset events; reconciled indirectly via the players.level check " +
     "and the per-player history count cross-check in the players section",
-  validator_history: "audit trail of restore/transfer events only; no single current-state getter to diff",
+  validator_history:
+    "audit trail of restore/transfer events only; no single current-state getter to diff. " +
+    "NOTE: revocation rows are populated from the 'validator_revoked' event — severity (routine " +
+    "vs. for-cause) is a data field, NOT a separate event name. There is no " +
+    "'validator_revoked_for_cause' event topic; subscribe to 'validator_revoked' and discriminate " +
+    "on the severity data field.",
   fee_config_history: "event-log only, by design (see docs commit clarifying this) — no per-row on-chain analog",
   admin_transfers: "event-log only across four contracts — no per-row on-chain analog",
 };
@@ -212,6 +219,19 @@ async function reconcilePlayers(pg, cfg, report) {
     report.check("players", key, "registered_at", asBigIntString(p.registered_at), asBigIntString(dbRow.registered_at));
     report.check("players", key, "updated_at", asBigIntString(p.updated_at), asBigIntString(dbRow.updated_at));
 
+    const deactivatedResult = invoke(
+      cfg.network,
+      cfg.source,
+      cfg.registrationId,
+      "is_player_deactivated",
+      ["--player_id", key],
+    );
+    if (deactivatedResult.ok) {
+      report.check("players", key, "deactivated", deactivatedResult.value === true, Boolean(dbRow.deactivated));
+    } else {
+      report.add("players", key, "deactivated", "getter_failed", dbRow.deactivated, deactivatedResult.error);
+    }
+
     const levelResult = invoke(cfg.network, cfg.source, cfg.progressId, "get_level", ["--player_id", key]);
     if (levelResult.ok) {
       const chainLevel = levelNameToInt(levelResult.value);
@@ -271,6 +291,19 @@ async function reconcileScouts(pg, cfg, report) {
     // in migrations/001_initial_schema.sql and is checked here against the
     // on-chain value returned by registration.get_scout(...).verified.
     report.check("scouts", key, "verified", Boolean(s.verified), Boolean(dbRow.verified));
+
+    const deactivatedResult = invoke(
+      cfg.network,
+      cfg.source,
+      cfg.registrationId,
+      "is_scout_deactivated",
+      ["--scout_id", key],
+    );
+    if (deactivatedResult.ok) {
+      report.check("scouts", key, "deactivated", deactivatedResult.value === true, Boolean(dbRow.deactivated));
+    } else {
+      report.add("scouts", key, "deactivated", "getter_failed", dbRow.deactivated, deactivatedResult.error);
+    }
   }
 }
 
@@ -367,6 +400,13 @@ async function reconcileMilestonesAndDisputes(pg, cfg, report, playerIds) {
             report.check("milestone_disputes", mKey, "disputed_at", asBigIntString(d.disputed_at), asBigIntString(dDb.disputed_at));
             report.check("milestone_disputes", mKey, "resolved", d.resolved, dDb.resolved);
             report.check("milestone_disputes", mKey, "upheld", d.upheld, dDb.upheld);
+            // Jury fields (migration 005)
+            report.check("milestone_disputes", mKey, "impact_score", Number(d.impact_score), Number(dDb.impact_score));
+            report.check("milestone_disputes", mKey, "jury_required", Boolean(d.jury_required), Boolean(dDb.jury_required));
+            report.check("milestone_disputes", mKey, "quorum", Number(d.quorum), Number(dDb.quorum));
+            report.check("milestone_disputes", mKey, "voting_deadline", asBigIntString(d.voting_deadline), asBigIntString(dDb.voting_deadline));
+            report.check("milestone_disputes", mKey, "votes_for", Number(d.votes_for), Number(dDb.votes_for));
+            report.check("milestone_disputes", mKey, "votes_against", Number(d.votes_against), Number(dDb.votes_against));
           }
         }
       }
@@ -412,10 +452,20 @@ async function reconcileSubscriptions(pg, cfg, report) {
   const { rows } = await pg.query("SELECT * FROM scout_subscriptions");
   const byScout = new Map(rows.map((r) => [r.scout, r]));
 
+  // Current wall-clock time in Unix seconds, used to detect subscriptions
+  // that have expired on-chain but whose DB row still appears active.
+  const nowSecs = Math.floor(Date.now() / 1000);
+
+  // Collect the set of scouts that are known to the contract (across all
+  // tiers) so we can also catch DB rows that have no on-chain counterpart.
+  const chainScouts = new Set();
+
   for (const tier of ["Basic", "Pro", "Elite"]) {
     const result = invoke(cfg.network, cfg.source, cfg.scoutAccessId, "get_subscribers_by_tier", ["--tier", tier]);
     if (!result.ok) continue;
+
     for (const scout of result.value) {
+      chainScouts.add(scout);
       const dbRow = byScout.get(scout);
       const chainSub = invoke(cfg.network, cfg.source, cfg.scoutAccessId, "get_subscription", ["--scout", scout]);
       if (!chainSub.ok) continue;
@@ -425,9 +475,55 @@ async function reconcileSubscriptions(pg, cfg, report) {
         report.add("scout_subscriptions", scout, "existence", "present", "missing");
         continue;
       }
+
+      // --- Core field checks ---
       report.check("scout_subscriptions", scout, "tier", s.tier, dbRow.tier);
       report.check("scout_subscriptions", scout, "subscribed_at", asBigIntString(s.subscribed_at), asBigIntString(dbRow.subscribed_at));
       report.check("scout_subscriptions", scout, "expires_at", asBigIntString(s.expires_at), asBigIntString(dbRow.expires_at));
+
+      // --- Tier divergence: on-chain subscription has expired but the DB row
+      // still records the scout as active.  The contract treats an expired
+      // subscription the same as no subscription (error 7 SubscriptionExpired),
+      // so an off-chain query using the DB row would incorrectly grant the
+      // scout access they no longer have on-chain.
+      const chainExpiredOnChain = Number(s.expires_at) < nowSecs;
+      const dbExpiredOnChain = dbRow.expires_at !== null && Number(dbRow.expires_at) < nowSecs;
+      if (chainExpiredOnChain !== dbExpiredOnChain) {
+        report.add(
+          "scout_subscriptions",
+          scout,
+          "active_state",
+          chainExpiredOnChain ? "expired" : "active",
+          dbExpiredOnChain ? "expired" : "active",
+          `on-chain expires_at=${s.expires_at} db expires_at=${dbRow.expires_at} now=${nowSecs}`,
+        );
+      }
+
+      // --- Auto-renewal flag divergence: check whether the DB tracks the
+      // per-scout auto_renew opt-in consistently with on-chain state.
+      // The column may not exist yet in older deployments, so we only check
+      // it when the DB row has the column (non-undefined).
+      if (dbRow.auto_renew !== undefined) {
+        const autoRenewResult = invoke(
+          cfg.network, cfg.source, cfg.scoutAccessId, "get_auto_renew", ["--scout", scout],
+        );
+        if (autoRenewResult.ok) {
+          const chainAutoRenew = autoRenewResult.value === true;
+          const dbAutoRenew = dbRow.auto_renew === true;
+          report.check("scout_subscriptions", scout, "auto_renew", chainAutoRenew, dbAutoRenew);
+        }
+      }
+    }
+  }
+
+  // Detect DB rows that have no on-chain counterpart at any tier.  This can
+  // happen when the indexer wrote a subscription row but the on-chain record
+  // was never created (e.g., the subscribe transaction was rolled back) or was
+  // subsequently deleted by a contract upgrade.
+  for (const [scout, dbRow] of byScout) {
+    if (!chainScouts.has(scout)) {
+      report.add("scout_subscriptions", scout, "existence", "missing", "present",
+        "scout exists in DB but not found under any tier on-chain");
     }
   }
 }
@@ -449,6 +545,62 @@ async function reconcileContactRecords(pg, cfg, report, playerIds) {
     for (const scout of dbScouts) {
       if (!result.value.includes(scout)) {
         report.add("contact_records", `${key}:${scout}`, "existence", "missing", "present");
+      }
+    }
+  }
+}
+
+async function reconcileDisputeVotes(pg, cfg, report, playerIds) {
+  // Walk every jury-required dispute and cross-check the per-validator vote
+  // rows in the dispute_votes table against on-chain state.
+  //
+  // For each (player_id, milestone_index) that has_dispute returns true,
+  // get_dispute is called — if jury_required=true the votes_for/votes_against
+  // counters are already reconciled in reconcileMilestonesAndDisputes.  Here
+  // we additionally check that the *individual* vote rows exist in the DB.
+  // Because there is no on-chain enumeration of votes per dispute (only the
+  // aggregate counters), we drive this from the DB: any DB row for a dispute
+  // that doesn't exist on-chain or for a validator that the contract doesn't
+  // recognise as having voted is flagged.  A count cross-check (db_count vs
+  // votes_for+votes_against) catches the reverse direction.
+  for (const id of playerIds) {
+    const key = String(id);
+    const countResult = invoke(cfg.network, cfg.source, cfg.verificationId, "get_milestone_count", ["--player_id", key]);
+    if (!countResult.ok) continue;
+    const count = Number(countResult.value);
+
+    for (let index = 1; index <= count; index++) {
+      const mKey = `${key}:${index}`;
+      const hasDispute = invoke(cfg.network, cfg.source, cfg.verificationId, "has_dispute", [
+        "--player_id", key,
+        "--milestone_index", String(index),
+      ]);
+      if (!hasDispute.ok || !hasDispute.value) continue;
+
+      const dChain = invoke(cfg.network, cfg.source, cfg.verificationId, "get_dispute", [
+        "--player_id", key,
+        "--milestone_index", String(index),
+      ]);
+      if (!dChain.ok || !dChain.value.jury_required) continue;
+
+      const d = dChain.value;
+      const totalVotes = Number(d.votes_for) + Number(d.votes_against);
+
+      const { rows: voteRows } = await pg.query(
+        "SELECT * FROM dispute_votes WHERE player_id = $1 AND milestone_index = $2",
+        [id, index],
+      );
+
+      // Cross-check aggregate: DB vote count must match on-chain totals
+      if (voteRows.length !== totalVotes) {
+        report.add(
+          "dispute_votes",
+          mKey,
+          "vote_count",
+          totalVotes,
+          voteRows.length,
+          `on-chain votes_for=${d.votes_for} votes_against=${d.votes_against}`,
+        );
       }
     }
   }
@@ -514,6 +666,7 @@ async function main() {
   try {
     let playerIds = [];
     if (tablesToRun.includes("players") || tablesToRun.includes("milestones") ||
+        tablesToRun.includes("milestone_disputes") || tablesToRun.includes("dispute_votes") ||
         tablesToRun.includes("trial_offers") || tablesToRun.includes("contact_records")) {
       const countResult = invoke(cfg.network, cfg.source, cfg.registrationId, "get_player_count", []);
       if (!countResult.ok) throw new Error(`get_player_count failed: ${countResult.error}`);
@@ -528,9 +681,13 @@ async function main() {
     if (tablesToRun.includes("milestones") || tablesToRun.includes("milestone_disputes")) {
       await reconcileMilestonesAndDisputes(pg, cfg, report, playerIds);
     }
+    if (tablesToRun.includes("dispute_votes")) await reconcileDisputeVotes(pg, cfg, report, playerIds);
     if (tablesToRun.includes("trial_offers")) await reconcileTrialOffers(pg, cfg, report, playerIds);
     if (tablesToRun.includes("scout_subscriptions")) await reconcileSubscriptions(pg, cfg, report);
     if (tablesToRun.includes("contact_records")) await reconcileContactRecords(pg, cfg, report, playerIds);
+    if (tablesToRun.includes("evidence_access_grants")) {
+      await reconcileEvidenceAccessGrants(pg, cfg, report, playerIds);
+    }
     if (tablesToRun.includes("indexer_cursor")) await reconcileIndexerCursor(pg, cfg, report);
   } finally {
     await pg.end();

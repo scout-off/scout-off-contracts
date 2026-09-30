@@ -12,13 +12,13 @@
 #   network        testnet | mainnet | local   (default: testnet)
 #   --dry-run      Print the planned actions without executing any of them.
 #   --yes, -y      Skip the interactive confirmation gate (for automation).
-#   --export-dir   Directory for the player/scout export JSON
+#   --export-dir   Directory for migration export JSON
 #                  (default: migration-export/).
 #
 # Contract IDs are resolved in this order:
 #   OLD ids  — env OLD_<NAME>_CONTRACT_ID, else read from .env.contracts.snapshot
 #   NEW ids  — env NEW_<NAME>_CONTRACT_ID, else read from .env.contracts
-# where <NAME> is REGISTRATION / VERIFICATION / PROGRESS.
+# where <NAME> is REGISTRATION / VERIFICATION / PROGRESS / SCOUT_ACCESS.
 #
 # Signing:
 #   DEPLOYER_SECRET must be the admin secret key for the NEW contract set
@@ -36,17 +36,15 @@
 #   from the OLD contract and calls register_validator() on the NEW one,
 #   signed by DEPLOYER_SECRET.
 #
-#   PLAYERS and SCOUTS — can now be re-seeded via admin-only entrypoints.
+#   PLAYERS and SCOUTS — can be re-seeded via admin-only entrypoints.
 #   registration.admin_seed_player() and registration.admin_seed_scout() are
 #   admin-authenticated and accept the full exported payload needed to recreate
-#   the persistent profile state without requiring the player's or scout's own
-#   signature. This script exports the data to JSON and then replays it onto the
-#   NEW contract using the admin key.
+#   the persistent profile state without requiring wallet signatures.
 #
-#   LEVELS — the registration contract does NOT store player level; the progress
-#   contract is the source of truth (see resolve_level / set_player_level). The
-#   exported PlayerProfile already carries the level field resolved from the
-#   OLD progress contract via get_player(), so it is captured in the export.
+#   ALL DERIVED STATE — after profiles are restored, this script replays progress
+#   history, milestones, disputes, subscriptions, contacts, trial offers and
+#   auto-renew flags through their migration-window-gated admin seeders. It
+#   closes every migration window before returning, including on failure.
 #
 set -euo pipefail
 
@@ -106,15 +104,24 @@ invoke_view() {
   stellar contract invoke --id "$id" --network "$NETWORK" -- "$@"
 }
 
+# invoke_admin <contract_id> <fn> [args...] — admin-signed state change.
+invoke_admin() {
+  local id="$1"; shift
+  stellar contract invoke --id "$id" --source "$DEPLOYER" --network "$NETWORK" -- "$@"
+}
+
 # ---------------------------------------------------------------------------
 # Resolve OLD and NEW contract IDs
 # ---------------------------------------------------------------------------
 OLD_REGISTRATION_CONTRACT_ID="${OLD_REGISTRATION_CONTRACT_ID:-$(read_id .env.contracts.snapshot REGISTRATION_CONTRACT_ID)}"
 OLD_VERIFICATION_CONTRACT_ID="${OLD_VERIFICATION_CONTRACT_ID:-$(read_id .env.contracts.snapshot VERIFICATION_CONTRACT_ID)}"
 OLD_PROGRESS_CONTRACT_ID="${OLD_PROGRESS_CONTRACT_ID:-$(read_id .env.contracts.snapshot PROGRESS_CONTRACT_ID)}"
+OLD_SCOUT_ACCESS_CONTRACT_ID="${OLD_SCOUT_ACCESS_CONTRACT_ID:-$(read_id .env.contracts.snapshot SCOUT_ACCESS_CONTRACT_ID)}"
 
 NEW_REGISTRATION_CONTRACT_ID="${NEW_REGISTRATION_CONTRACT_ID:-$(read_id .env.contracts REGISTRATION_CONTRACT_ID)}"
 NEW_VERIFICATION_CONTRACT_ID="${NEW_VERIFICATION_CONTRACT_ID:-$(read_id .env.contracts VERIFICATION_CONTRACT_ID)}"
+NEW_PROGRESS_CONTRACT_ID="${NEW_PROGRESS_CONTRACT_ID:-$(read_id .env.contracts PROGRESS_CONTRACT_ID)}"
+NEW_SCOUT_ACCESS_CONTRACT_ID="${NEW_SCOUT_ACCESS_CONTRACT_ID:-$(read_id .env.contracts SCOUT_ACCESS_CONTRACT_ID)}"
 
 DEPLOYER="${DEPLOYER_SECRET:-}"
 
@@ -124,24 +131,27 @@ echo "==========================================================================
 echo "  OLD registration : ${OLD_REGISTRATION_CONTRACT_ID:-<unset>}"
 echo "  OLD verification : ${OLD_VERIFICATION_CONTRACT_ID:-<unset>}"
 echo "  OLD progress     : ${OLD_PROGRESS_CONTRACT_ID:-<unset>}"
+echo "  OLD scout_access : ${OLD_SCOUT_ACCESS_CONTRACT_ID:-<unset>}"
 echo "  NEW registration : ${NEW_REGISTRATION_CONTRACT_ID:-<unset>}"
 echo "  NEW verification : ${NEW_VERIFICATION_CONTRACT_ID:-<unset>}"
+echo "  NEW progress     : ${NEW_PROGRESS_CONTRACT_ID:-<unset>}"
+echo "  NEW scout_access : ${NEW_SCOUT_ACCESS_CONTRACT_ID:-<unset>}"
 echo "  Export directory : $EXPORT_DIR"
 [[ "$DRY_RUN" -eq 1 ]] && echo "  Mode             : DRY RUN (no state will be changed)"
 echo ""
 
-if [[ -z "$OLD_VERIFICATION_CONTRACT_ID" || -z "$OLD_REGISTRATION_CONTRACT_ID" ]]; then
+if [[ -z "$OLD_VERIFICATION_CONTRACT_ID" || -z "$OLD_REGISTRATION_CONTRACT_ID" || -z "$OLD_PROGRESS_CONTRACT_ID" || -z "$OLD_SCOUT_ACCESS_CONTRACT_ID" ]]; then
   echo "ERROR: could not resolve OLD contract IDs." >&2
   echo "       Set OLD_*_CONTRACT_ID env vars or provide .env.contracts.snapshot." >&2
   exit 1
 fi
-if [[ -z "$NEW_VERIFICATION_CONTRACT_ID" || -z "$NEW_REGISTRATION_CONTRACT_ID" ]]; then
+if [[ -z "$NEW_VERIFICATION_CONTRACT_ID" || -z "$NEW_REGISTRATION_CONTRACT_ID" || -z "$NEW_PROGRESS_CONTRACT_ID" || -z "$NEW_SCOUT_ACCESS_CONTRACT_ID" ]]; then
   echo "ERROR: could not resolve NEW contract IDs." >&2
   echo "       Set NEW_*_CONTRACT_ID env vars or provide .env.contracts." >&2
   exit 1
 fi
 if [[ -z "$DEPLOYER" ]]; then
-  echo "ERROR: DEPLOYER_SECRET is not set (required to sign register_validator on the new contract)." >&2
+  echo "ERROR: DEPLOYER_SECRET is not set (required to sign migration replay calls)." >&2
   exit 1
 fi
 
@@ -157,6 +167,38 @@ fi
 
 mkdir -p "$EXPORT_DIR"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
+
+MIGRATION_WINDOWS_OPEN=0
+close_migration_windows() {
+  [[ "$MIGRATION_WINDOWS_OPEN" -eq 1 ]] || return 0
+  echo "==> Closing migration windows..."
+  for entry in \
+    "progress:$NEW_PROGRESS_CONTRACT_ID" \
+    "verification:$NEW_VERIFICATION_CONTRACT_ID" \
+    "scout_access:$NEW_SCOUT_ACCESS_CONTRACT_ID"; do
+    name="${entry%%:*}"
+    id="${entry#*:}"
+    set +e
+    invoke_admin "$id" close_migration_window >/dev/null 2>&1
+    status=$?
+    set -e
+    if [[ $status -ne 0 ]]; then
+      echo "WARN: failed to close $name migration window ($id); close it manually before launch." >&2
+    fi
+  done
+  MIGRATION_WINDOWS_OPEN=0
+}
+trap close_migration_windows EXIT
+
+if [[ "$DRY_RUN" -eq 0 ]]; then
+  echo "==> Opening migration windows on the NEW contracts..."
+  MIGRATION_WINDOWS_OPEN=1
+  invoke_admin "$NEW_PROGRESS_CONTRACT_ID" open_migration_window >/dev/null
+  invoke_admin "$NEW_VERIFICATION_CONTRACT_ID" open_migration_window >/dev/null
+  invoke_admin "$NEW_SCOUT_ACCESS_CONTRACT_ID" open_migration_window >/dev/null
+else
+  echo "==> [dry-run] would open migration windows on progress, verification, and scout_access"
+fi
 
 # ===========================================================================
 # PART 1 — VALIDATORS  (read OLD, register on NEW — fully automated)
@@ -292,6 +334,12 @@ if [[ "$PLAYER_COUNT" -gt 0 ]]; then
       exit 1
     fi
     echo "      OK"
+
+    deactivated="$(invoke_view "$OLD_REGISTRATION_CONTRACT_ID" is_player_deactivated \
+      --player_id "$id" 2>/dev/null || echo false)"
+    if [[ "$deactivated" == "true" ]]; then
+      admin_call "$NEW_REGISTRATION_CONTRACT_ID" deactivate_player --player_id "$id" >/dev/null
+    fi
   done
 fi
 echo "    Players exported to $PLAYERS_EXPORT"
@@ -361,6 +409,173 @@ if [[ "$SCOUT_COUNT" -gt 0 ]]; then
   done
 fi
 echo "    Scouts exported to $SCOUTS_EXPORT"
+
+# ===========================================================================
+# PART 4 — PROGRESS HISTORY
+# ===========================================================================
+echo ""
+echo "==> [4/10] Replaying progress history and Merkle roots..."
+PROGRESS_EXPORT="$EXPORT_DIR/progress-history-$TS.json"
+echo "[]" > "$PROGRESS_EXPORT"
+
+admin_call() {
+  local id="$1"; shift
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "    [dry-run] would invoke $* on $id"
+  else
+    invoke_admin "$id" "$@"
+  fi
+}
+
+while IFS= read -r player; do
+  [[ -z "$player" ]] && continue
+  player_id="$(echo "$player" | jq -r '.player_id')"
+  history="$(invoke_view "$OLD_PROGRESS_CONTRACT_ID" get_progress_history --player_id "$player_id" 2>/dev/null || echo '[]')"
+  root="$(invoke_view "$OLD_PROGRESS_CONTRACT_ID" get_progress_root --player_id "$player_id" 2>/dev/null || echo '')"
+  tmp="$(mktemp)"
+  jq --argjson id "$player_id" --argjson h "$history" --arg root "$root" \
+    '. += [{player_id:$id, history:$h, root:$root}]' "$PROGRESS_EXPORT" > "$tmp" && mv "$tmp" "$PROGRESS_EXPORT"
+
+  count="$(echo "$history" | jq 'length')"
+  index=1
+  while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    expected_root="null"
+    [[ "$index" -eq "$count" && -n "$root" ]] && expected_root="$root"
+    admin_call "$NEW_PROGRESS_CONTRACT_ID" admin_seed_history \
+      --player_id "$player_id" --history_index "$index" --entry "$entry" --expected_root "$expected_root" >/dev/null
+    index=$((index + 1))
+  done < <(echo "$history" | jq -c '.[]')
+done < <(jq -c '.[]' "$PLAYERS_EXPORT")
+
+# ===========================================================================
+# PART 5 — MILESTONES AND DISPUTES
+# ===========================================================================
+echo "==> [5/10] Replaying milestones and disputes..."
+MILESTONE_EXPORT="$EXPORT_DIR/milestones-$TS.json"
+DISPUTE_EXPORT="$EXPORT_DIR/disputes-$TS.json"
+echo "[]" > "$MILESTONE_EXPORT"
+echo "[]" > "$DISPUTE_EXPORT"
+
+while IFS= read -r player; do
+  [[ -z "$player" ]] && continue
+  player_id="$(echo "$player" | jq -r '.player_id')"
+  milestone_count="$(invoke_view "$OLD_VERIFICATION_CONTRACT_ID" get_milestone_count --player_id "$player_id" 2>/dev/null || echo 0)"
+  for ((index=1; index<=milestone_count; index++)); do
+    milestone="$(invoke_view "$OLD_VERIFICATION_CONTRACT_ID" get_milestone --player_id "$player_id" --index "$index" 2>/dev/null || true)"
+    [[ -z "$milestone" ]] && continue
+    tmp="$(mktemp)"
+    jq --argjson m "$milestone" '. += [$m]' "$MILESTONE_EXPORT" > "$tmp" && mv "$tmp" "$MILESTONE_EXPORT"
+    validator="$(echo "$milestone" | jq -r '.validator')"
+    admin_call "$NEW_VERIFICATION_CONTRACT_ID" admin_seed_milestone \
+      --player_id "$player_id" --milestone_index "$index" --milestone "$milestone" --validator "$validator" >/dev/null
+
+    has_dispute="$(invoke_view "$OLD_VERIFICATION_CONTRACT_ID" has_dispute \
+      --player_id "$player_id" --milestone_index "$index" 2>/dev/null || echo false)"
+    if [[ "$has_dispute" == "true" ]]; then
+      dispute="$(invoke_view "$OLD_VERIFICATION_CONTRACT_ID" get_dispute \
+        --player_id "$player_id" --milestone_index "$index" 2>/dev/null || true)"
+      if [[ -n "$dispute" ]]; then
+        tmp="$(mktemp)"
+        jq --argjson d "$dispute" '. += [$d]' "$DISPUTE_EXPORT" > "$tmp" && mv "$tmp" "$DISPUTE_EXPORT"
+        admin_call "$NEW_VERIFICATION_CONTRACT_ID" admin_seed_dispute \
+          --player_id "$player_id" --milestone_index "$index" --dispute "$dispute" >/dev/null
+      fi
+    fi
+  done
+done < <(jq -c '.[]' "$PLAYERS_EXPORT")
+
+# ===========================================================================
+# PART 6 — FEE CONFIGURATION
+# ===========================================================================
+echo "==> [6/10] Replaying current fee configuration and bounded history..."
+FEE_EXPORT="$EXPORT_DIR/fee-config-$TS.json"
+OLD_FEE_CONFIG="$(invoke_view "$OLD_SCOUT_ACCESS_CONTRACT_ID" get_fee_config 2>/dev/null || echo '{}')"
+OLD_FEE_HISTORY="$(invoke_view "$OLD_SCOUT_ACCESS_CONTRACT_ID" get_fee_config_history 2>/dev/null || echo '[]')"
+printf '%s\n' "{\"config\":$OLD_FEE_CONFIG,\"history\":$OLD_FEE_HISTORY}" > "$FEE_EXPORT"
+admin_call "$NEW_SCOUT_ACCESS_CONTRACT_ID" admin_seed_fee_config \
+  --config "$OLD_FEE_CONFIG" --history "$OLD_FEE_HISTORY" >/dev/null
+
+# ===========================================================================
+# PART 7 — SUBSCRIPTIONS AND AUTO-RENEWAL
+# ===========================================================================
+echo "==> [7/10] Replaying subscriptions and auto-renewal flags..."
+SUBSCRIPTION_EXPORT="$EXPORT_DIR/subscriptions-$TS.json"
+AUTO_RENEW_EXPORT="$EXPORT_DIR/auto-renew-$TS.json"
+echo "[]" > "$SUBSCRIPTION_EXPORT"
+echo "[]" > "$AUTO_RENEW_EXPORT"
+
+while IFS= read -r scout; do
+  wallet="$(echo "$scout" | jq -r '.wallet')"
+  subscription="$(invoke_view "$OLD_SCOUT_ACCESS_CONTRACT_ID" get_subscription --scout "$wallet" 2>/dev/null || true)"
+  if [[ -n "$subscription" ]]; then
+    tmp="$(mktemp)"
+    jq --argjson s "$subscription" '. += [$s]' "$SUBSCRIPTION_EXPORT" > "$tmp" && mv "$tmp" "$SUBSCRIPTION_EXPORT"
+    admin_call "$NEW_SCOUT_ACCESS_CONTRACT_ID" admin_seed_subscription \
+      --subscription "$subscription" >/dev/null
+  fi
+
+  auto_renew="$(invoke_view "$OLD_SCOUT_ACCESS_CONTRACT_ID" get_auto_renew --scout "$wallet" 2>/dev/null || echo false)"
+  tmp="$(mktemp)"
+  jq --arg wallet "$wallet" --argjson enabled "$auto_renew" \
+    '. += [{scout:$wallet, enabled:$enabled}]' "$AUTO_RENEW_EXPORT" > "$tmp" && mv "$tmp" "$AUTO_RENEW_EXPORT"
+  admin_call "$NEW_SCOUT_ACCESS_CONTRACT_ID" admin_seed_auto_renew \
+    --scout "$wallet" --enabled "$auto_renew" >/dev/null
+done < <(jq -c '.[]' "$SCOUTS_EXPORT")
+
+# ===========================================================================
+# PART 8 — CONTACT RECORDS
+# ===========================================================================
+echo "==> [8/10] Replaying contact records and reverse indexes..."
+CONTACT_EXPORT="$EXPORT_DIR/contacts-$TS.json"
+echo "[]" > "$CONTACT_EXPORT"
+while IFS= read -r scout; do
+  wallet="$(echo "$scout" | jq -r '.wallet')"
+  contacts="$(invoke_view "$OLD_SCOUT_ACCESS_CONTRACT_ID" get_scout_contacts --scout "$wallet" 2>/dev/null || echo '[]')"
+  while IFS= read -r player_id; do
+    [[ -z "$player_id" ]] && continue
+    contact="$(invoke_view "$OLD_SCOUT_ACCESS_CONTRACT_ID" get_contact_record \
+      --scout "$wallet" --player_id "$player_id" 2>/dev/null || true)"
+    [[ -z "$contact" || "$contact" == "null" ]] && continue
+    tmp="$(mktemp)"
+    jq --argjson c "$contact" '. += [$c]' "$CONTACT_EXPORT" > "$tmp" && mv "$tmp" "$CONTACT_EXPORT"
+    admin_call "$NEW_SCOUT_ACCESS_CONTRACT_ID" admin_seed_contact \
+      --contact "$contact" >/dev/null
+  done < <(echo "$contacts" | jq -r '.[]')
+done < <(jq -c '.[]' "$SCOUTS_EXPORT")
+
+# ===========================================================================
+# PART 9 — TRIAL OFFERS AND IN-FLIGHT ESCROWS
+# ===========================================================================
+echo "==> [9/10] Replaying trial offers and escrow records..."
+TRIAL_EXPORT="$EXPORT_DIR/trial-offers-$TS.json"
+echo "[]" > "$TRIAL_EXPORT"
+while IFS= read -r player; do
+  [[ -z "$player" ]] && continue
+  player_id="$(echo "$player" | jq -r '.player_id')"
+  trial_count="$(invoke_view "$OLD_SCOUT_ACCESS_CONTRACT_ID" get_trial_count --player_id "$player_id" 2>/dev/null || echo 0)"
+  for ((index=1; index<=trial_count; index++)); do
+    offer="$(invoke_view "$OLD_SCOUT_ACCESS_CONTRACT_ID" get_trial_offer \
+      --player_id "$player_id" --index "$index" 2>/dev/null || true)"
+    [[ -z "$offer" ]] && continue
+    escrow="$(invoke_view "$OLD_SCOUT_ACCESS_CONTRACT_ID" get_trial_escrow \
+      --player_id "$player_id" --index "$index" 2>/dev/null || echo null)"
+    [[ -z "$escrow" ]] && escrow=null
+    tmp="$(mktemp)"
+    jq --argjson o "$offer" --argjson e "$escrow" \
+      '. += [{offer:$o, escrow:$e}]' "$TRIAL_EXPORT" > "$tmp" && mv "$tmp" "$TRIAL_EXPORT"
+    admin_call "$NEW_SCOUT_ACCESS_CONTRACT_ID" admin_seed_trial_offer \
+      --player_id "$player_id" --trial_index "$index" --offer "$offer" --escrow "$escrow" >/dev/null
+  done
+done < <(jq -c '.[]' "$PLAYERS_EXPORT")
+
+# ===========================================================================
+# PART 10 — CLOSE WINDOWS AND VERIFY READ-BACK
+# ===========================================================================
+echo "==> [10/10] Closing migration windows and completing replay..."
+if [[ "$DRY_RUN" -eq 0 ]]; then
+  close_migration_windows
+fi
 
 # ===========================================================================
 # Summary
