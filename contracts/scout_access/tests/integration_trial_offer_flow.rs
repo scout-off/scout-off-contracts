@@ -53,12 +53,12 @@ fn setup() -> Harness {
 
     // Deploy and initialize the verification contract (the primary
     // whitelisted caller of advance_level).
-    let ver_id = env.register_contract(None, VerificationContract);
+    let ver_id = env.register(VerificationContract, ());
     let verification = VerificationContractClient::new(&env, &ver_id);
     verification.initialize(&admin);
 
     // Deploy and initialize the progress contract.
-    let progress_id = env.register_contract(None, ProgressContract);
+    let progress_id = env.register(ProgressContract, ());
     let progress = ProgressContractClient::new(&env, &progress_id);
     progress.initialize(&admin);
     progress.set_verification_contract(&ver_id);
@@ -69,7 +69,7 @@ fn setup() -> Harness {
         .address();
 
     // Deploy and initialize the scout_access contract.
-    let sa_id = env.register_contract(None, ScoutAccessContract);
+    let sa_id = env.register(ScoutAccessContract, ());
     let scout_access = ScoutAccessContractClient::new(&env, &sa_id);
     scout_access.initialize(&admin, &xlm, &default_fees());
 
@@ -103,13 +103,18 @@ fn advance_player(h: &Harness, player_id: u64, levels: u32) {
 /// (the verification contract rejects duplicate evidence hashes).
 fn approve_milestone(h: &Harness, player_id: u64, evidence_hash: &str) {
     let validator = Address::generate(&h.env);
-    h.verification
-        .register_validator(&validator, &String::from_str(&h.env, "UEFA-B-License"));
+    h.verification.register_validator(
+        &validator,
+        &String::from_str(&h.env, "UEFA-B-License"),
+        &String::from_str(&h.env, "Default Academy"),
+        &soroban_sdk::Vec::new(&h.env),
+    );
     h.verification.approve_milestone(
         &validator,
         &player_id,
         &String::from_str(&h.env, "scored"),
         &String::from_str(&h.env, evidence_hash),
+        &None,
     );
 }
 
@@ -157,9 +162,16 @@ fn test_log_trial_offer_advances_player_to_elite_tier() {
     );
 
     assert_eq!(index, 1);
+    assert_eq!(h.scout_access.get_trial_count(&player_id), 1);
+
+    // The two-step flow: the *player* confirms the offer, which is what
+    // triggers the cross-contract advance_level call.
+    let player_wallet = Address::generate(&h.env);
+    h.scout_access
+        .confirm_trial_offer(&player_wallet, &player_id, &index, &None);
+
     // The cross-contract call must have advanced the player to EliteTier.
     assert_eq!(h.progress.get_level(&player_id), ProgressLevel::EliteTier);
-    assert_eq!(h.scout_access.get_trial_count(&player_id), 1);
 }
 
 /// Edge case: when the player is already at EliteTier, log_trial_offer must
@@ -264,10 +276,15 @@ fn test_trial_counter_increments_across_two_scouts() {
 
     // First call must return index 1
     assert_eq!(index_a, 1, "first trial offer must be assigned index 1");
-    // Player advanced to EliteTier by the cross-contract call
-    assert_eq!(h.progress.get_level(&player_id), ProgressLevel::EliteTier);
     // Counter is now 1
     assert_eq!(h.scout_access.get_trial_count(&player_id), 1);
+
+    // Player advances to EliteTier only after the player confirms the offer
+    // (two-step flow: log_trial_offer escrows, confirm_trial_offer advances).
+    let player_wallet = Address::generate(&h.env);
+    h.scout_access
+        .confirm_trial_offer(&player_wallet, &player_id, &index_a, &None);
+    assert_eq!(h.progress.get_level(&player_id), ProgressLevel::EliteTier);
 
     // Scout B — second trial offer for the same player.
     // A different scout is used to avoid the 24-hour per-(scout, player) cooldown.

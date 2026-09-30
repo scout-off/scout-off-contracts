@@ -42,6 +42,18 @@ The script validates that `.env.contracts` exists and all four IDs are
 non-empty before making any network calls. It exits immediately with a
 descriptive error if anything is missing.
 
+### Version sync
+
+Each binding package's `package.json` `version` is kept in lockstep with the
+contracts' workspace version — the value of `[workspace.package].version` in
+[`Cargo.toml`](../Cargo.toml), the build-time source of truth documented in
+[`docs/VERSIONING.md`](../docs/VERSIONING.md). The committed scaffolds already
+carry that version, and `scripts/generate-bindings.sh` re-derives it from
+`Cargo.toml` on every run and rewrites each generated `package.json` after the
+CLI (which overwrites the package with its own template and a placeholder
+version). Bump the version in `Cargo.toml` and the bindings follow
+automatically on the next regeneration.
+
 ---
 
 ## Build
@@ -129,6 +141,47 @@ const player = await client.get_player({ player_id: 1n });
 
 ---
 
+## Auto-Generated Function Lists
+
+Each `bindings/<contract>/README.md` contains a clearly-delimited
+**auto-generated function list** section, injected by
+`scripts/generate-bindings.sh` at binding-generation time.
+
+### What it contains
+
+The section is extracted from [`docs/CONTRACT_REFERENCE.md`](../docs/CONTRACT_REFERENCE.md)
+and lists every public function in the contract with its full signature and
+a one-line description. It is delimited by HTML comment markers so it can be
+located and replaced reliably on each run:
+
+```html
+<!-- AUTO-GENERATED FUNCTION LIST BEGIN - DO NOT EDIT MANUALLY -->
+...function list...
+<!-- AUTO-GENERATED FUNCTION LIST END -->
+```
+
+### Idempotent re-generation
+
+Re-running `./scripts/generate-bindings.sh` is idempotent: if the function
+list section already exists in a README, it is replaced in-place with the
+current content extracted from `CONTRACT_REFERENCE.md`. If `CONTRACT_REFERENCE.md`
+has not changed, the README is byte-for-byte identical after a second run.
+
+### Manually maintained content
+
+All content **outside** the delimited block is manually maintained and will
+not be touched by the generation script. Add package-specific notes, usage
+examples, or integration guidance outside the auto-generated block.
+
+### Source of truth
+
+`CONTRACT_REFERENCE.md` is the authoritative source for function documentation.
+The auto-generated block in each bindings README is a convenience summary.
+For complete documentation including parameters, return types, authorization
+requirements, and CLI examples, always refer to `CONTRACT_REFERENCE.md`.
+
+---
+
 ## Gitignore
 
 The generated `src/` directories and compiled `dist/` output are excluded
@@ -153,3 +206,4 @@ bindings/*/node_modules/
 | `Cannot find module '@stellar/stellar-sdk'` | `npm install` not run after generation | `cd bindings/<name> && npm install` |
 | `dist/` missing | `npm run build` not run | `cd bindings/<name> && npm run build` |
 | Stale types after contract change | Contract redeployed but bindings not regenerated | `./scripts/generate-bindings.sh testnet` then rebuild |
+| Wrong `stellar-cli` version | Local CLI does not match the pinned version | Install the pinned version in [`docs/CONTRIBUTING.md`](../docs/CONTRIBUTING.md#installing-the-pinned-stellar-cli-version) |

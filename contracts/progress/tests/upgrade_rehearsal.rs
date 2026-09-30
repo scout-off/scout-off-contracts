@@ -136,8 +136,10 @@ fn test_progress_upgrade_preserves_state() {
 
     // --- Re-wire the remaining two instance-storage links (plain overwrites for
     // progress — no guard flags). These must succeed. ---
-    h.progress.set_registration_contract(&Address::generate(&h.env));
-    h.progress.set_scout_access_contract(&Address::generate(&h.env));
+    h.progress
+        .set_registration_contract(&Address::generate(&h.env));
+    h.progress
+        .set_scout_access_contract(&Address::generate(&h.env));
 }
 
 /// Deliberately-broken upgrade — proves the harness is not a no-op.

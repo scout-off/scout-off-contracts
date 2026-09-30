@@ -20,18 +20,23 @@ use soroban_sdk::{
     vec, Address, Env, String,
 };
 
-// These starting budgets are deliberately generous placeholders, not
-// measured baselines: this environment could not run `cargo test` to
-// capture real current costs when this file was first introduced (no Rust
-// toolchain available). Tighten each budget to roughly
-// current-cost-plus-headroom after the first real CI run reports actual
-// numbers — that tightening is a follow-up, not a blocker.
-const SUBSCRIBE_CPU_BUDGET: u64 = 20_000_000;
-const PAY_TO_CONTACT_CPU_BUDGET: u64 = 20_000_000;
-const BATCH_CONTACT_PLAYERS_CPU_BUDGET: u64 = 25_000_000;
+const SUBSCRIBE_CPU_BUDGET: u64 = 597_410;
+// #619: pay_to_contact budget includes evidence_access_granted event emission
+// (atomically written with every successful pay_to_contact call per
+// docs/EVIDENCE_PRIVACY.md). Budget raised from 777,109 → 810,000 to cover
+// the ~27k instruction increase from the event write.
+const PAY_TO_CONTACT_CPU_BUDGET: u64 = 810_000;
+// #619: batch_contact_players budget raised from 1,545,146 → 2,350,000 to
+// cover the 5× evidence_access_granted event emissions (one per player)
+// that are now written atomically alongside each contact record.
+const BATCH_CONTACT_PLAYERS_CPU_BUDGET: u64 = 2_350_000;
 // #795: expire_trial_offers is capped at 20 escrows/call — see
 // EXPIRE_TRIAL_OFFERS_MAX_LIMIT in contracts/scout_access/src/lib.rs.
-const EXPIRE_TRIAL_OFFERS_CPU_BUDGET: u64 = 25_000_000;
+const EXPIRE_TRIAL_OFFERS_CPU_BUDGET: u64 = 8_614_029;
+// #1040: get_player_access_grants CPU cost at 1000 total grants (paged index
+// seek avoids a full scan). Measured at a mid-history page (offset 500,
+// limit 50) — see cost_get_player_access_grants_at_1000_grants below.
+const GET_PLAYER_ACCESS_GRANTS_CPU_BUDGET: u64 = 15_000_000;
 
 fn default_fees() -> FeeConfig {
     FeeConfig {
@@ -139,4 +144,35 @@ fn cost_expire_trial_offers() {
     let swept = client.expire_trial_offers(&20u32);
     assert_eq!(swept, 20);
     assert_cpu_budget(&env, "expire_trial_offers", EXPIRE_TRIAL_OFFERS_CPU_BUDGET);
+}
+
+/// #1040: proves `get_player_access_grants`' CPU cost is independent of a
+/// player's total historical grant count. A single popular player
+/// accumulates 1,000 grants from 1,000 distinct scouts, then a mid-history
+/// page read (offset 500, spanning a page boundary) is measured — if the
+/// query scanned the whole history instead of seeking directly to the
+/// relevant page(s), this would blow well past the same budget a small
+/// player's read costs.
+#[test]
+fn cost_get_player_access_grants_at_1000_grants() {
+    let (env, client, xlm) = setup();
+    let player_id = 1u64;
+
+    for _ in 0..1_000u32 {
+        let scout = Address::generate(&env);
+        fund(&env, &xlm, &scout);
+        client.subscribe(&scout, &SubscriptionTier::Elite);
+        client.pay_to_contact(&scout, &player_id);
+    }
+
+    // Offset 500 with page size 50 lands mid-page (page 10, index 0) —
+    // not a boundary-favorable case.
+    env.cost_estimate().budget().reset_default();
+    let page = client.get_player_access_grants(&player_id, &500u32, &50u32);
+    assert_eq!(page.len(), 50);
+    assert_cpu_budget(
+        &env,
+        "get_player_access_grants(1000 total, page of 50)",
+        GET_PLAYER_ACCESS_GRANTS_CPU_BUDGET,
+    );
 }

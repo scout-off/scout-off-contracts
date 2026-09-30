@@ -13,8 +13,8 @@
 #   2. initialize.sh        — initialize + wire the NEW contract set
 #   3. pause old contracts  — pause_contract on each OLD id, so no new state is
 #                             written to the addresses being retired
-#   4. replay-state.sh      — replay validators onto NEW (automated) + export
-#                             players/scouts (see the player/scout gap below)
+#   4. replay-state.sh      — replay the full supported state set onto NEW
+#                             through migration-window-gated admin seeders
 #   5. health-check.sh      — verify the NEW contract set is healthy
 #   6. manual checklist     — bindings / backend / frontend / announce
 #
@@ -31,15 +31,12 @@
 #   • A current .env.contracts describing the OLD (to-be-retired) contract set
 #
 # ===========================================================================
-# IMPORTANT — the player/scout replay gap
+# MIGRATION REPLAY SCOPE
 # ===========================================================================
-#   Validators ARE replayed automatically (register_validator is admin-only).
-#   Players and scouts are NOT: register_player()/register_scout() require the
-#   player's/scout's OWN signature (wallet.require_auth()), which an operator
-#   does not hold. Their data is EXPORTED to JSON so nothing is lost, but they
-#   must either re-register themselves against the new contract ID, or the team
-#   must add a dedicated admin-only seeding entrypoint (follow-up work).
-#   See scripts/replay-state.sh and docs/DEPLOYMENT.md for the full detail.
+#   replay-state.sh replays validators, profiles, progress history, milestones,
+#   disputes, fee configuration, subscriptions, contacts, trial offers and
+#   auto-renew flags. It opens the new contracts' migration windows only for
+#   the duration of the replay and closes them before returning.
 # ===========================================================================
 #
 set -euo pipefail
@@ -164,8 +161,7 @@ cat <<PLAN
     [1/5] Deploy NEW contract set          -> scripts/deploy.sh $NETWORK
     [2/5] Initialize + wire NEW set        -> scripts/initialize.sh $NETWORK
     [3/5] Pause OLD contracts              -> pause_contract on each OLD id
-    [4/5] Replay validators + export       -> scripts/replay-state.sh $NETWORK
-          players/scouts (players/scouts CANNOT be auto-replayed — see below)
+    [4/5] Replay full supported state set  -> scripts/replay-state.sh $NETWORK
     [5/5] Health-check NEW set             -> scripts/health-check.sh $NETWORK
     Then: regenerate bindings, redeploy backend/frontend, announce old+new ids.
 
@@ -186,6 +182,7 @@ run_step "deploy" bash "$SCRIPT_DIR/deploy.sh" "$NETWORK"
 NEW_REGISTRATION_CONTRACT_ID="$(read_id .env.contracts REGISTRATION_CONTRACT_ID)"
 NEW_VERIFICATION_CONTRACT_ID="$(read_id .env.contracts VERIFICATION_CONTRACT_ID)"
 NEW_PROGRESS_CONTRACT_ID="$(read_id .env.contracts PROGRESS_CONTRACT_ID)"
+NEW_SCOUT_ACCESS_CONTRACT_ID="$(read_id .env.contracts SCOUT_ACCESS_CONTRACT_ID)"
 
 # ---------------------------------------------------------------------------
 # [2/5] Initialize + wire the NEW contract set
@@ -233,12 +230,16 @@ REPLAY_FLAGS=()
 # the final summary below are left untouched.
 REPLAY_NEW_REG="${NEW_REGISTRATION_CONTRACT_ID:-$OLD_REGISTRATION_CONTRACT_ID}"
 REPLAY_NEW_VER="${NEW_VERIFICATION_CONTRACT_ID:-$OLD_VERIFICATION_CONTRACT_ID}"
+REPLAY_NEW_PROGRESS="${NEW_PROGRESS_CONTRACT_ID:-$OLD_PROGRESS_CONTRACT_ID}"
+REPLAY_NEW_SCOUT="${NEW_SCOUT_ACCESS_CONTRACT_ID:-$OLD_SCOUT_ACCESS_CONTRACT_ID}"
 env \
   OLD_REGISTRATION_CONTRACT_ID="$OLD_REGISTRATION_CONTRACT_ID" \
   OLD_VERIFICATION_CONTRACT_ID="$OLD_VERIFICATION_CONTRACT_ID" \
   OLD_PROGRESS_CONTRACT_ID="$OLD_PROGRESS_CONTRACT_ID" \
   NEW_REGISTRATION_CONTRACT_ID="$REPLAY_NEW_REG" \
   NEW_VERIFICATION_CONTRACT_ID="$REPLAY_NEW_VER" \
+  NEW_PROGRESS_CONTRACT_ID="$REPLAY_NEW_PROGRESS" \
+  NEW_SCOUT_ACCESS_CONTRACT_ID="$REPLAY_NEW_SCOUT" \
   bash "$SCRIPT_DIR/replay-state.sh" "$NETWORK" "${REPLAY_FLAGS[@]}"
 
 # ---------------------------------------------------------------------------
@@ -271,11 +272,9 @@ echo "  3. Announce the migration in release notes with OLD and NEW ids:"
 echo "       OLD registration: $OLD_REGISTRATION_CONTRACT_ID"
 echo "       NEW registration: ${NEW_REGISTRATION_CONTRACT_ID:-<see .env.contracts>}"
 echo ""
-echo "  4. ⚠  PLAYERS/SCOUTS ARE NOT MIGRATED AUTOMATICALLY. Their data has been"
-echo "        exported under migration-export/, but they must re-register against"
-echo "        the new contract ID (self-service) OR the team must add an"
-echo "        admin-only seeding entrypoint. See migration-export/ and"
-echo "        docs/DEPLOYMENT.md."
+echo "  4. Replay exports are written under migration-export/ for audit and"
+echo "        reconciliation. All supported state is seeded through the new"
+echo "        contracts' migration-window-gated admin entrypoints."
 echo ""
 echo "  If anything looks wrong, the OLD contract set is only PAUSED (not"
 echo "  deleted) and .env.contracts.snapshot still holds the old ids:"

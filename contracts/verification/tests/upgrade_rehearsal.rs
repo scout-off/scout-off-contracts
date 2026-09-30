@@ -54,8 +54,7 @@ fn rehearse_upgrade(h: &Harness) {
 fn setup() -> Harness {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger()
-        .with_mut(|l| l.timestamp = 1_000_000);
+    env.ledger().with_mut(|l| l.timestamp = 1_000_000);
 
     let admin = Address::generate(&env);
     let id = env.register(VerificationContract, ());
@@ -75,6 +74,8 @@ fn seed(h: &Harness) -> Seeded {
     h.verification.register_validator(
         &validator,
         &String::from_str(&h.env, "UEFA-B-License"),
+        &String::from_str(&h.env, "Default Academy"),
+        &soroban_sdk::Vec::new(&h.env),
     );
 
     h.verification.approve_milestone(
@@ -82,12 +83,14 @@ fn seed(h: &Harness) -> Seeded {
         &1u64,
         &String::from_str(&h.env, "scored"),
         &String::from_str(&h.env, CID_1),
+        &None,
     );
     h.verification.approve_milestone(
         &validator,
         &2u64,
         &String::from_str(&h.env, "assisted"),
         &String::from_str(&h.env, CID_2),
+        &None,
     );
 
     // Initial progress-contract wiring (sets the one-time ProgressContractSet
@@ -145,7 +148,10 @@ fn test_verification_upgrade_preserves_state() {
     // --- Assert: instance flags / counters survived ---
     assert_eq!(h.verification.health(), health);
     assert_eq!(h.verification.get_total_milestone_count(), total_before);
-    assert_eq!(h.verification.get_active_validator_count(), active_validators);
+    assert_eq!(
+        h.verification.get_active_validator_count(),
+        active_validators
+    );
 
     // --- Assert: Admin (persistent) survived — admin-gated call still works ---
     h.verification.pause_contract();

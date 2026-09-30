@@ -1,6 +1,40 @@
-use soroban_sdk::{contracttype, Address, String, Vec};
+use soroban_sdk::{contracttype, Address, Bytes, BytesN, String, Vec};
 
-pub use scoutchain_shared_types::{ContractHealth, ProgressLevel};
+/// Bound on tracked migration nonces per wallet (documented design limit).
+#[allow(dead_code)]
+const MAX_MIGRATION_NONCES: u32 = 1024;
+
+pub use scoutchain_shared_types::{ContractHealth, ProgressLevel, WiringLink};
+
+/// Role identifier for migration authorizations.
+#[contracttype]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum MigrationRole {
+    Player,
+    Scout,
+}
+
+/// An off-chain signed migration authorization produced by a player or scout.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct MigrationAuthorization {
+    /// Wallet address of the player or scout granting consent.
+    pub wallet: Address,
+    /// Role being migrated (player or scout).
+    pub role: MigrationRole,
+    /// Hash of the serialized profile data being authorized for migration.
+    pub profile_data_hash: Bytes,
+    /// Expected address of the new contract that will redeem this authorization.
+    pub new_contract_hint: Address,
+    /// Unique nonce to prevent replay. The signer should increment this for
+    /// each new authorization they grant.
+    pub nonce: u64,
+    /// Unix timestamp after which this authorization expires (0 = no expiry).
+    pub expires_at: u64,
+    /// ed25519 signature over the canonical message:
+    /// `wallet || role || profile_data_hash || new_contract_hint || nonce || expires_at`
+    pub signature: BytesN<64>,
+}
 
 /// Basic player vitals stored on-chain
 #[contracttype]
@@ -77,9 +111,14 @@ pub struct PlayerSummary {
 pub struct FilterResult {
     /// Page of player profiles matching the supplied filter criteria.
     pub profiles: Vec<PlayerProfile>,
-    /// Pass this value as `cursor` in the next call to continue pagination.
+    /// Pass this value as `offset` in the next call to continue pagination.
     /// A value of `0` means there are no further results.
     pub next_cursor: u64,
+    /// Whether more results exist after this page.
+    /// When `false`, the client has reached the end of the result set
+    /// and should stop paging even if `next_cursor` is non-zero
+    /// (which can happen if the underlying data changed between pages).
+    pub has_more: bool,
 }
 
 /// Direct status for a registered player.
@@ -88,6 +127,33 @@ pub struct FilterResult {
 pub enum PlayerStatus {
     Active,
     Deactivated,
+}
+
+/// Direct status for a registered scout.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub enum ScoutStatus {
+    Active,
+    Deactivated,
+    NotRegistered,
+}
+
+/// Structured verification record for a scout profile. Replaces/augments the
+/// simple `verified: bool` flag with audit evidence so dashboards and future
+/// Sybil-mitigation features can consume the verification detail.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ScoutVerificationRecord {
+    /// Whether the scout is currently verified.
+    pub verified: bool,
+    /// Optional admin wallet that performed the verification.
+    pub verified_by: Option<Address>,
+    /// Ledger timestamp when verification was performed.
+    pub verified_at: Option<u64>,
+    /// Free-form evidence reference (e.g. KYC provider ID, organization name).
+    pub evidence_ref: Option<String>,
+    /// Verification method label (e.g. "admin_manual", "kyc_attestation").
+    pub method: Option<String>,
 }
 
 /// Scout profile stored on-chain
@@ -100,8 +166,12 @@ pub struct ScoutProfile {
     pub wallet: Address,
     /// Scout operating region used for profile display and discovery context.
     pub region: String,
-    /// Whether the scout has been verified by the platform.
+    /// Legacy boolean flag retained for backward compatibility with existing
+    /// consumers. New code should prefer `verification.verified`.
     pub verified: bool,
+    /// Structured verification record capturing what was checked, by whom,
+    /// when, and evidence reference.
+    pub verification: ScoutVerificationRecord,
     /// Ledger timestamp when the scout was registered, in Unix seconds.
     pub registered_at: u64,
 }
@@ -118,10 +188,14 @@ pub enum DataKey {
     Initialized,
     /// Boolean flag indicating if contract is paused (circuit breaker)
     Paused,
-    /// Counter for generating unique player IDs
+    /// Counter for generating unique player IDs (monotonically increasing ID allocator)
     PlayerCounter,
-    /// Counter for generating unique scout IDs
+    /// Counter for generating unique scout IDs (monotonically increasing ID allocator)
     ScoutCounter,
+    /// Live count of currently registered players (incremented on register, decremented on deregister)
+    LivePlayerCount,
+    /// Live count of currently registered scouts (incremented on register, decremented on deregister)
+    LiveScoutCount,
     /// Full player profile stored by player_id
     Player(u64),
     /// Index mapping player wallet address to player_id for fast lookup
@@ -134,6 +208,9 @@ pub enum DataKey {
     PlayerIndex,
     /// Address of the progress contract allowed to call set_player_level
     ProgressContract,
+    /// Re-wiring epoch for `DataKey::ProgressContract`, bumped by every
+    /// `set_progress_contract` call.
+    ProgressContractEpoch,
     /// Explicit player level override used for admin-seeded players or
     /// progress updates that should be visible to reads even before a progress
     /// contract is wired.
@@ -150,4 +227,43 @@ pub enum DataKey {
     /// hidden from `filter_players` results while their profile and history are
     /// fully preserved. Set by `deactivate_player`, cleared by `reactivate_player`.
     PlayerDeactivated(u64),
+
+    // ── Registration cooldown ──
+    /// Last registration timestamp for a player wallet (Unix seconds).
+    /// Set by `register_player` and read to enforce the per-caller cooldown.
+    PlayerRegLastSent(Address),
+    /// Last registration timestamp for a scout wallet (Unix seconds).
+    /// Set by `register_scout` and read to enforce the per-caller cooldown.
+    ScoutRegLastSent(Address),
+    /// Last registration timestamp for a validator wallet (Unix seconds).
+    /// Set by `register_validator` in the verification contract; mirrored here
+    /// via the same DataKey convention for cross-contract inspection.
+    ValidatorRegLastSent(Address),
+    /// Cooldown in seconds between repeated registration attempts from the
+    /// same wallet. 0 means no cooldown. Configurable by admin.
+    RegCooldownSecs(u64), // ── Migration ticket replay prevention ──
+    /// Nonce tracking for migration authorizations. A wallet+nonce pair is
+    /// stored as `true` after a migration authorization is redeemed, preventing
+    /// the same authorization from being replayed.
+    MigrationNonce(Address, u64),
+
+    // ── Scout deactivation ──
+    /// Deactivation flag for a scout. When present and `true`, the scout is
+    /// hidden from scout discovery results. Set by `deactivate_scout`,
+    /// cleared by `reactivate_scout`.
+    ScoutDeactivated(u64),
+}
+
+/// Snapshot of the single cross-contract peer address pointer held by the
+/// registration contract (progress), with its address and re-wiring epoch.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct RegistrationWiringState {
+    pub progress_contract: WiringLink,
+}
+
+impl RegistrationWiringState {
+    pub fn is_fully_wired(&self) -> bool {
+        self.progress_contract.is_configured()
+    }
 }

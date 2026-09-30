@@ -20,11 +20,9 @@ use soroban_sdk::{testutils::Address as _, Address, Env};
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 struct Harness {
-    env: Env,
-    admin: Address,
     client: ProgressContractClient<'static>,
-    /// Whitelisted secondary caller that can call advance_level without a
-    /// real verification contract (set via set_scout_access_contract).
+    /// Whitelisted caller for `advance_level`, registered as the *primary*
+    /// VerificationContract (see `setup`).
     caller: Address,
 }
 
@@ -36,21 +34,28 @@ fn setup() -> Harness {
     let client = ProgressContractClient::new(&env, &id);
     client.initialize(&admin);
 
-    // Whitelist a test address as secondary caller so advance_level works
-    // without a real verification contract.
+    // Whitelist a test address on the *primary* (VerificationContract) path.
+    //
+    // The secondary (ScoutAccessContract) path cannot be used here: since #457
+    // it cross-calls `get_milestone_count` on the configured verification
+    // contract to validate `milestone_ref`, which requires a real deployed
+    // contract and constrains which refs are accepted. The primary path skips
+    // that check by design — the verification contract is the source of truth
+    // for milestone data — so it is the right harness for level-transition
+    // invariants, which are about the state machine, not milestone lookup.
     let caller = Address::generate(&env);
-    client.set_scout_access_contract(&caller);
+    client.set_verification_contract(&caller);
 
-    Harness { env, admin, client, caller }
+    Harness { client, caller }
 }
 
 /// Convert ProgressLevel to its numeric tier (0–3).
 fn level_to_u32(l: &ProgressLevel) -> u32 {
     match l {
-        ProgressLevel::Unverified           => 0,
-        ProgressLevel::VerifiedIdentity     => 1,
+        ProgressLevel::Unverified => 0,
+        ProgressLevel::VerifiedIdentity => 1,
         ProgressLevel::PerformanceMilestones => 2,
-        ProgressLevel::EliteTier            => 3,
+        ProgressLevel::EliteTier => 3,
     }
 }
 
@@ -119,7 +124,11 @@ fn test_cannot_exceed_elite_tier() {
 
     let result = h.client.try_advance_level(&h.caller, &pid, &4u32);
     assert_eq!(result, Err(Ok(ProgressError::AlreadyAtMaxLevel)));
-    assert_eq!(h.client.get_level(&pid), ProgressLevel::EliteTier, "level must not change");
+    assert_eq!(
+        h.client.get_level(&pid),
+        ProgressLevel::EliteTier,
+        "level must not change"
+    );
     assert_history_invariants(&h, pid);
 }
 
@@ -132,10 +141,14 @@ fn test_reset_mid_sequence_and_resume() {
 
     h.client.advance_level(&h.caller, &pid, &1u32);
     h.client.advance_level(&h.caller, &pid, &2u32);
-    assert_eq!(h.client.get_level(&pid), ProgressLevel::PerformanceMilestones);
+    assert_eq!(
+        h.client.get_level(&pid),
+        ProgressLevel::PerformanceMilestones
+    );
 
     // Admin reset to Unverified
-    h.client.reset_player_level(&pid, &ProgressLevel::Unverified);
+    h.client
+        .reset_player_level(&pid, &ProgressLevel::Unverified);
     assert_eq!(h.client.get_level(&pid), ProgressLevel::Unverified);
 
     // Resume: must go through all three steps again
@@ -155,10 +168,13 @@ fn test_reset_to_mid_level() {
     let h = setup();
     let pid: u64 = 4;
 
-    for i in 1..=3u32 { h.client.advance_level(&h.caller, &pid, &i); }
+    for i in 1..=3u32 {
+        h.client.advance_level(&h.caller, &pid, &i);
+    }
     assert_eq!(h.client.get_level(&pid), ProgressLevel::EliteTier);
 
-    h.client.reset_player_level(&pid, &ProgressLevel::VerifiedIdentity);
+    h.client
+        .reset_player_level(&pid, &ProgressLevel::VerifiedIdentity);
     assert_eq!(h.client.get_level(&pid), ProgressLevel::VerifiedIdentity);
 
     // Can now re-advance from 1→2→3
@@ -175,11 +191,14 @@ fn test_multiple_players_independent() {
     let h = setup();
 
     // Player A: full progression
-    for i in 1..=3u32 { h.client.advance_level(&h.caller, &1u64, &i); }
+    for i in 1..=3u32 {
+        h.client.advance_level(&h.caller, &1u64, &i);
+    }
     // Player B: only one step
     h.client.advance_level(&h.caller, &2u64, &1u32);
     // Player C: reset immediately (starts at 0, stays at 0)
-    h.client.reset_player_level(&3u64, &ProgressLevel::Unverified);
+    h.client
+        .reset_player_level(&3u64, &ProgressLevel::Unverified);
 
     assert_eq!(h.client.get_level(&1u64), ProgressLevel::EliteTier);
     assert_eq!(h.client.get_level(&2u64), ProgressLevel::VerifiedIdentity);
@@ -254,12 +273,14 @@ fn test_exhaustive_action_sequences() {
                     }
                 }
                 Action::ResetUnverified => {
-                    h.client.reset_player_level(&pid, &ProgressLevel::Unverified);
+                    h.client
+                        .reset_player_level(&pid, &ProgressLevel::Unverified);
                     expected = ProgressLevel::Unverified;
                     assert_eq!(h.client.get_level(&pid), expected);
                 }
                 Action::ResetVerifiedIdentity => {
-                    h.client.reset_player_level(&pid, &ProgressLevel::VerifiedIdentity);
+                    h.client
+                        .reset_player_level(&pid, &ProgressLevel::VerifiedIdentity);
                     expected = ProgressLevel::VerifiedIdentity;
                     assert_eq!(h.client.get_level(&pid), expected);
                 }
@@ -282,7 +303,9 @@ fn test_paused_contract_blocks_all_mutations() {
     let r1 = h.client.try_advance_level(&h.caller, &pid, &2u32);
     assert_eq!(r1, Err(Ok(ProgressError::ContractPaused)));
 
-    let r2 = h.client.try_reset_player_level(&pid, &ProgressLevel::Unverified);
+    let r2 = h
+        .client
+        .try_reset_player_level(&pid, &ProgressLevel::Unverified);
     assert_eq!(r2, Err(Ok(ProgressError::ContractPaused)));
 
     // Level unchanged
