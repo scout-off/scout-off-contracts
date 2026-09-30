@@ -87,8 +87,12 @@ pub enum ScoutAccessError {
     PendingFeeConfigAlreadyExists = 26,
 
     // ── Sybil resistance ──
-    /// Scout is not verified; cannot subscribe to Pro tier.
+    /// Scout is not verified; cannot subscribe to Pro or Elite tier.
     ScoutNotVerified = 27,
+    /// Registration contract is not wired; Pro/Elite subscriptions require it.
+    RegistrationContractNotSet = 28,
+    /// batch_contact_players input exceeds the maximum allowed batch size.
+    BatchTooLarge = 40,
 
     // ── Auto-renewal ──
     /// `renew_if_due` was called but auto-renewal is not enabled for this scout.
@@ -134,6 +138,24 @@ pub enum ScoutAccessError {
     /// `admin_revoke_evidence_access` targeted a (player_id, scout) pair for
     /// which no `EvidenceAccessGrant` record exists.
     GrantNotFound = 38,
+
+    // ── Scout deactivation ──
+    /// The scout has been deactivated by the registration admin and cannot
+    /// use paid services (subscribe, pay_to_contact, log_trial_offer).
+    ScoutDeactivated = 39,
+
+    // ── Tier access enforcement (issue #1357) ──
+    /// `pay_to_contact` or `batch_contact_players` called by a Basic-tier scout,
+    /// or by a Pro-tier scout attempting to contact a Level-3 player.
+    /// Basic tier has no contact entitlement; Pro tier is capped at Level 2.
+    TierNotPermitted = 41,
+
+    /// `revoke_evidence_access` attempted to revoke a grant that was already
+    /// revoked (by admin or player).
+    GrantAlreadyRevoked = 42,
+    /// `revoke_evidence_access` caller's wallet does not own the `player_id`
+    /// passed to the function, or the player is not registered.
+    PlayerNotVerified = 43,
 }
 
 impl AdminError for ScoutAccessError {
@@ -207,5 +229,20 @@ mod tests {
     #[test]
     fn grant_not_found_is_code_38() {
         assert_eq!(ScoutAccessError::GrantNotFound as u32, 38);
+    }
+
+    #[test]
+    fn grant_already_revoked_is_code_42() {
+        assert_eq!(ScoutAccessError::GrantAlreadyRevoked as u32, 42);
+    }
+
+    #[test]
+    fn player_not_verified_is_code_43() {
+        assert_eq!(ScoutAccessError::PlayerNotVerified as u32, 43);
+    }
+
+    #[test]
+    fn scout_deactivated_is_code_39() {
+        assert_eq!(ScoutAccessError::ScoutDeactivated as u32, 39);
     }
 }

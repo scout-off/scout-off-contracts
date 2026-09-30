@@ -163,3 +163,30 @@ fn test_progress_broken_upgrade_left_paused_is_caught() {
     // Post-upgrade functional check — must not silently succeed while paused.
     h.progress.advance_level(&h.verifier, &1u64, &2u32);
 }
+
+/// Assert that `upgrade()` emits a `contract_upgraded` event before swapping
+/// the WASM, so the event is attributed to the old code version.
+#[test]
+fn test_progress_upgrade_emits_contract_upgraded_event() {
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::{symbol_short, IntoVal};
+
+    let h = setup();
+    seed(&h);
+
+    let new_wasm_hash = h.env.deployer().upload_contract_wasm(Bytes::new(&h.env));
+    h.progress.upgrade(&new_wasm_hash);
+
+    let events = h.env.events().all();
+    let found = events.iter().any(|(_, topics, _)| {
+        topics.get(0).map_or(false, |first| {
+            let expected: soroban_sdk::Val = symbol_short!("contract_upgraded").into_val(&h.env);
+            first == expected
+        })
+    });
+
+    assert!(
+        found,
+        "expected a 'contract_upgraded' event to be emitted by upgrade()"
+    );
+}

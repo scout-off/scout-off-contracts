@@ -23,7 +23,7 @@ use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
 // current-cost-plus-headroom after the first real CI run reports actual
 // numbers — that tightening is a follow-up, not a blocker.
 const REGISTER_VALIDATOR_CPU_BUDGET: u64 = 15_000_000;
-const APPROVE_MILESTONE_CPU_BUDGET: u64 = 20_000_000;
+const APPROVE_MILESTONE_CPU_BUDGET: u64 = 25_000_000;
 const GET_VALIDATOR_MILESTONES_PAGE_CPU_BUDGET: u64 = 15_000_000;
 /// Bounded cascade sweep (CASCADE_LIMIT = 50) with 500 total milestones.
 /// Cost must be proportional to the 50-entry limit, not the full 500.

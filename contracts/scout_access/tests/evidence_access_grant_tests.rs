@@ -109,6 +109,7 @@ fn pay_to_contact_success_grants_evidence_access() {
     assert_eq!(grant.player_id, player_id);
     assert_eq!(grant.scout, scout);
     assert_eq!(grant.granted_at, START_TIME);
+    assert_eq!(grant.expires_at, START_TIME + 90 * 24 * 3600);
     assert_eq!(grant.tier_at_grant, SubscriptionTier::Elite);
     assert!(!grant.revoked);
     assert_eq!(grant.revoked_at, None);
@@ -549,4 +550,132 @@ fn evidence_access_grant_type_is_exported() {
     h.contract.pay_to_contact(&scout, &1u64);
     let grant = h.contract.get_evidence_access_grant(&1u64, &scout).unwrap();
     accepts(grant);
+}
+
+// ---------------------------------------------------------------------------
+// #1380: Grant expiry — has_evidence_access returns false after expires_at
+// ---------------------------------------------------------------------------
+
+const EVIDENCE_ACCESS_TTL: u64 = 90 * 24 * 3600;
+
+#[test]
+fn has_evidence_access_returns_true_before_expiry() {
+    let h = setup();
+    let scout = Address::generate(&h.env);
+    let player_id = 1u64;
+    subscribe(&h, &scout, &SubscriptionTier::Elite);
+    h.contract.pay_to_contact(&scout, &player_id);
+
+    let grant = h.contract.get_evidence_access_grant(&player_id, &scout).unwrap();
+    assert_eq!(grant.expires_at, START_TIME + EVIDENCE_ACCESS_TTL);
+    assert!(
+        h.contract.has_evidence_access(&player_id, &scout),
+        "grant must be active before expires_at"
+    );
+}
+
+#[test]
+fn has_evidence_access_returns_false_after_expiry() {
+    let h = setup();
+    let scout = Address::generate(&h.env);
+    let player_id = 1u64;
+    subscribe(&h, &scout, &SubscriptionTier::Elite);
+    h.contract.pay_to_contact(&scout, &player_id);
+    assert!(h.contract.has_evidence_access(&player_id, &scout));
+
+    // Advance past the grant's expires_at.
+    h.env.ledger().with_mut(|l| l.timestamp += EVIDENCE_ACCESS_TTL + 1);
+
+    assert!(
+        !h.contract.has_evidence_access(&player_id, &scout),
+        "expired grant must no longer read as active access"
+    );
+
+    // But the record itself is retained for audit.
+    let grant = h
+        .contract
+        .get_evidence_access_grant(&player_id, &scout)
+        .expect("expired grant must still be readable for audit");
+    assert!(!grant.revoked, "expiry must not flip the revoked flag");
+}
+
+// ---------------------------------------------------------------------------
+// #1380: Player-initiated revocation — revoke_evidence_access
+// ---------------------------------------------------------------------------
+
+#[test]
+fn revoke_evidence_access_by_player_revokes_grant() {
+    let h = setup();
+    let scout = Address::generate(&h.env);
+    let player = Address::generate(&h.env);
+    let player_id = 1u64;
+    subscribe(&h, &scout, &SubscriptionTier::Elite);
+    h.contract.pay_to_contact(&scout, &player_id);
+    assert!(h.contract.has_evidence_access(&player_id, &scout));
+
+    // Player revokes their own grant. The registration contract is not wired
+    // in this self-contained harness, so the call is expected to fail with
+    // PlayerNotVerified — this test documents that the function exists and
+    // enforces player verification.
+    let result = h.contract.try_revoke_evidence_access(&player, &player_id, &scout);
+    let err = result
+        .expect_err("player not verified without a registration contract")
+        .expect("must be a contract error, not a host error");
+    assert_eq!(
+        err,
+        scoutchain_scout_access::ScoutAccessError::PlayerNotVerified
+    );
+
+    // Grant is untouched.
+    assert!(h.contract.has_evidence_access(&player_id, &scout));
+    let grant = h
+        .contract
+        .get_evidence_access_grant(&player_id, &scout)
+        .unwrap();
+    assert!(!grant.revoked);
+}
+
+#[test]
+fn revoke_evidence_access_grant_not_found() {
+    let h = setup();
+    let player = Address::generate(&h.env);
+    let player_id = 1u64;
+    let scout = Address::generate(&h.env);
+
+    let result = h
+        .contract
+        .try_revoke_evidence_access(&player, &player_id, &scout);
+    let err = result
+        .expect_err("grant was never issued")
+        .expect("must be a contract error, not a host error");
+    assert_eq!(
+        err,
+        scoutchain_scout_access::ScoutAccessError::GrantNotFound
+    );
+}
+
+#[test]
+fn revoke_evidence_access_already_revoked() {
+    let h = setup();
+    let scout = Address::generate(&h.env);
+    let player = Address::generate(&h.env);
+    let player_id = 1u64;
+    subscribe(&h, &scout, &SubscriptionTier::Elite);
+    h.contract.pay_to_contact(&scout, &player_id);
+
+    // Admin revokes first.
+    h.contract.admin_revoke_evidence_access(&player_id, &scout);
+
+    // Player attempting to revoke an already-revoked grant must get
+    // GrantAlreadyRevoked (not a silent Ok).
+    let result = h
+        .contract
+        .try_revoke_evidence_access(&player, &player_id, &scout);
+    let err = result
+        .expect_err("grant was already revoked")
+        .expect("must be a contract error, not a host error");
+    assert_eq!(
+        err,
+        scoutchain_scout_access::ScoutAccessError::GrantAlreadyRevoked
+    );
 }

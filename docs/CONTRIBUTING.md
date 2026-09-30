@@ -140,6 +140,20 @@ Rationale and the full set of breaking-change rules live in
 
 Changes to validator registration, revocation, or milestone approval logic require explicit
 review from a second team member before merge — these are the trust anchors of the platform.
+
+## No throwaway codemods in the repository
+
+Do **not** commit one-off Python (or any other language) scripts that rewrite source files via
+regex or AST manipulation (e.g. `patch_lib.py`, `fix_*.py`). These scripts:
+
+- Become stale the moment the codebase changes.
+- Risk silently corrupting sources if accidentally re-run.
+- Pollute history with non-reusable tooling.
+
+If you need a one-time migration, run it locally, verify the result, delete the script, and
+commit only the resulting source changes. Long-lived Python tooling that belongs in CI
+(e.g. `scripts/calibrate-budgets.py`, `scripts/record_wasm_sizes.py`) is fine and should
+live under `scripts/` with a clear docstring and an entry in this guide.
 The validator contract is covered by [`.github/CODEOWNERS`](../.github/CODEOWNERS), which
 requests review from the designated validator-logic owner for changes under
 `/contracts/verification/`.

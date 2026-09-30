@@ -32,6 +32,12 @@ const GET_PROGRESS_HISTORY_PAGE_CPU_BUDGET: u64 = 195_802;
 const LONG_HISTORY_ADVANCE_LEVEL_CPU_BUDGET: u64 = 30_000_000;
 const VERIFY_HISTORY_PROOF_CPU_BUDGET: u64 = 139_669;
 
+/// Budget for advance_level called against a player with ≥ 64 history entries.
+/// This is the key benchmark for the HistoryVec growth regression (issue #1467).
+/// Set generously; tighten to current-cost-plus-headroom after the first real
+/// CI run reports the measured number.
+const ADVANCE_LEVEL_LONG_HISTORY_CPU_BUDGET: u64 = 50_000_000;
+
 fn setup() -> (Env, ProgressContractClient<'static>, Address) {
     let env = Env::default();
     env.mock_all_auths();
@@ -91,6 +97,57 @@ fn cost_get_progress_history_page() {
         &env,
         "get_progress_history_page",
         GET_PROGRESS_HISTORY_PAGE_CPU_BUDGET,
+    );
+}
+
+/// Measure advance_level cost when the player already has ≥ 64 history entries.
+///
+/// # Why alternating advance + reset
+///
+/// A player can only advance three times before hitting `AlreadyAtMaxLevel`,
+/// so naive repeated `advance_level` calls fail after 3 entries. To build a
+/// realistically long history we alternate:
+///
+///   advance (0→1) + advance (1→2) + advance (2→3) + reset (3→0)
+///
+/// Each cycle adds 4 history entries. Sixteen cycles → 64 entries. We then
+/// advance once more and measure that call's CPU cost against the budget.
+///
+/// This fixes the pre-existing test setup bug (issue #1467) where the test
+/// tried to call advance_level more than 3 times on the same player, which
+/// always fails with AlreadyAtMaxLevel.
+#[test]
+fn cost_advance_level_long_history() {
+    let (env, client, verification) = setup();
+    let player_id: u64 = 42;
+
+    // Build 64 history entries via 16 advance-advance-advance-reset cycles.
+    let mut milestone: u32 = 1;
+    for _ in 0..16u32 {
+        client.advance_level(&verification, &player_id, &milestone);
+        milestone += 1;
+        client.advance_level(&verification, &player_id, &milestone);
+        milestone += 1;
+        client.advance_level(&verification, &player_id, &milestone);
+        milestone += 1;
+        // reset back to Unverified so the next cycle can advance again
+        client.reset_player_level(&player_id, &ProgressLevel::Unverified);
+    }
+
+    // Sanity: 3 advances + 1 reset = 4 entries per cycle × 16 = 64 total.
+    assert_eq!(
+        client.get_history_count(&player_id),
+        64,
+        "setup must produce exactly 64 history entries before measurement"
+    );
+
+    // Measure one advance_level call against the long-history player.
+    env.cost_estimate().budget().reset_default();
+    client.advance_level(&verification, &player_id, &milestone);
+    assert_cpu_budget(
+        &env,
+        "advance_level_long_history",
+        ADVANCE_LEVEL_LONG_HISTORY_CPU_BUDGET,
     );
 }
 

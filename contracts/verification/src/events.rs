@@ -1,5 +1,5 @@
 #![allow(deprecated)]
-use soroban_sdk::{Address, Env, String, Symbol};
+use soroban_sdk::{Address, BytesN, Env, String, Symbol};
 
 pub const MILESTONE_APPROVED: &str = "milestone_approved";
 pub const VALIDATOR_REGISTERED: &str = "validator_registered";
@@ -16,12 +16,14 @@ pub const PROGRESS_CONTRACT_UPDATED: &str = "progress_contract_updated";
 pub const DISPUTE_RESOLVED: &str = "dispute_resolved";
 pub const ADMIN_TRANSFER_PROPOSED: &str = "admin_transfer_proposed";
 pub const ADMIN_TRANSFERRED: &str = "admin_transferred";
+pub const CONTRACT_UPGRADED: &str = "contract_upgraded";
 pub const ATTESTATION_RECORDED: &str = "attestation_recorded";
 pub const ATTESTATION_WINDOW_EXPIRED: &str = "attestation_window_expired";
 pub const VALIDATOR_PENDING_VOTES_INVALIDATED: &str = "validator_votes_invalidated";
 pub const WIRING_UPDATED: &str = "wiring_updated";
 pub const DISPUTE_VOTE_CAST: &str = "dispute_vote_cast";
 pub const DISPUTE_TALLIED: &str = "dispute_tallied";
+pub const ATTESTATION_KEY_REGISTERED: &str = "attestation_key_registered";
 
 /// topics: (event_name, old_admin)  data: new_admin
 pub fn admin_transfer_proposed(env: &Env, old_admin: &Address, new_admin: &Address) {
@@ -64,6 +66,19 @@ pub fn validator_registered(env: &Env, wallet: &Address, credentials: &String) {
     env.events().publish(
         (Symbol::new(env, "validator_registered"), wallet.clone()),
         credentials.clone(),
+    );
+}
+
+/// topics: (event_name, wallet)  data: (public_key, rotated_from)
+pub fn attestation_key_registered(
+    env: &Env,
+    wallet: &Address,
+    public_key: &soroban_sdk::BytesN<32>,
+    rotated_from: &Option<soroban_sdk::BytesN<32>>,
+) {
+    env.events().publish(
+        (Symbol::new(env, ATTESTATION_KEY_REGISTERED), wallet.clone()),
+        (public_key.clone(), rotated_from.clone()),
     );
 }
 
@@ -222,6 +237,28 @@ pub fn level_advancement_skipped(env: &Env, player_id: u64, reason: &String) {
     );
 }
 
+/// Emitted when diversity gating blocks level advancement (the milestone is
+/// committed but the player's level has not advanced because they need more
+/// distinct validator affiliations).
+///
+/// topics: (event_name, player_id)  data: (milestone_index, distinct_affiliations, required)
+///
+/// `distinct_affiliations` is the player's current count of distinct validator
+/// affiliations; `required` is the threshold from `DiversityConfig`. UIs can
+/// show "needs 1 more independent validator" from this data.
+pub fn level_advancement_deferred(
+    env: &Env,
+    player_id: u64,
+    milestone_index: u32,
+    distinct_affiliations: u32,
+    required: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "level_advancement_deferred"), player_id),
+        (milestone_index, distinct_affiliations, required),
+    );
+}
+
 /// Emitted when level advancement is skipped because the progress contract
 /// address has not been configured.  Common during testing without a full
 /// deployment.  In production this indicates a missing wiring step and the
@@ -233,9 +270,7 @@ pub fn progress_contract_not_set(env: &Env, player_id: u64) {
     );
 }
 
-/// Emitted on every accepted `attest_milestone` vote (including the
-/// threshold-crossing one).
-/// topics: (event_name, validator)  data: (player_id, evidence_hash, vote_count, threshold)
+/// topics: (event_name, validator)  data: (player_id, evidence_hash, vote_count, threshold, description_hash)
 pub fn attestation_recorded(
     env: &Env,
     validator: &Address,
@@ -243,10 +278,17 @@ pub fn attestation_recorded(
     evidence_hash: &String,
     vote_count: u32,
     threshold: u32,
+    description_hash: &BytesN<32>,
 ) {
     env.events().publish(
         (Symbol::new(env, ATTESTATION_RECORDED), validator.clone()),
-        (player_id, evidence_hash.clone(), vote_count, threshold),
+        (
+            player_id,
+            evidence_hash.clone(),
+            vote_count,
+            threshold,
+            description_hash.clone(),
+        ),
     );
 }
 
@@ -404,5 +446,14 @@ pub fn dispute_tallied(
     env.events().publish(
         (Symbol::new(env, DISPUTE_TALLIED), player_id),
         (milestone_index, upheld, votes_for, votes_against),
+    );
+}
+
+/// Emitted before `update_current_contract_wasm` — attributed to the old code version.
+/// topics: (event_name, admin)  data: new_wasm_hash
+pub fn contract_upgraded(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>) {
+    env.events().publish(
+        (Symbol::new(env, CONTRACT_UPGRADED), admin.clone()),
+        new_wasm_hash.clone(),
     );
 }

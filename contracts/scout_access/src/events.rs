@@ -1,6 +1,6 @@
 #![allow(deprecated, dead_code)]
 use crate::types::SubscriptionTier;
-use soroban_sdk::{Address, Env, Symbol};
+use soroban_sdk::{Address, BytesN, Env, Symbol};
 
 pub const CONTRACT_INITIALIZED: &str = "contract_initialized";
 pub const SCOUT_SUBSCRIBED: &str = "scout_subscribed";
@@ -16,8 +16,10 @@ pub const CONTRACT_PAUSED: &str = "contract_paused";
 pub const CONTRACT_UNPAUSED: &str = "contract_unpaused";
 pub const SUBSCRIPTION_REFUNDED: &str = "subscription_refunded";
 pub const PROGRESS_CONTRACT_UPDATED: &str = "progress_contract_updated";
+pub const CONTRACT_UPGRADED: &str = "contract_upgraded";
 pub const REGISTRATION_CONTRACT_UPDATED: &str = "registration_contract_updated";
 pub const FEE_CONFIG_PROPOSED: &str = "fee_config_proposed";
+pub const FEE_CONFIG_PROPOSAL_CANCELLED: &str = "fee_config_proposal_cancelled";
 pub const FEE_CONFIG_UPDATED: &str = "fee_config_updated";
 pub const FEE_CONFIG_DELAY_BYPASSED: &str = "fee_config_delay_bypassed";
 pub const WIRING_UPDATED: &str = "wiring_updated";
@@ -167,11 +169,11 @@ pub fn subscription_renewed(
     );
 }
 
-/// topics: (event_name, scout)  data: amount
-pub fn subscription_refunded(env: &Env, scout: &Address, amount: i128) {
+/// topics: (event_name, scout)  data: (admin, amount)
+pub fn subscription_refunded(env: &Env, scout: &Address, admin: &Address, amount: i128) {
     env.events().publish(
         (Symbol::new(env, "subscription_refunded"), scout.clone()),
-        amount,
+        (admin.clone(), amount),
     );
 }
 
@@ -241,6 +243,20 @@ pub fn fee_config_updated(
     env.events().publish(
         (Symbol::new(env, "fee_config_updated"), admin.clone()),
         (old_config.clone(), new_config.clone()),
+    );
+}
+
+/// topics: (event_name, admin)  data: ()
+///
+/// Emitted when a pending fee config proposal is cancelled via
+/// `cancel_fee_config_proposal`, or cleared implicitly by `update_fee_config`.
+pub fn fee_config_proposal_cancelled(env: &Env, admin: &Address) {
+    env.events().publish(
+        (
+            Symbol::new(env, "fee_config_proposal_cancelled"),
+            admin.clone(),
+        ),
+        (),
     );
 }
 
@@ -356,5 +372,38 @@ pub fn evidence_access_revoked(env: &Env, player_id: u64, scout: &Address, admin
     env.events().publish(
         (Symbol::new(env, EVIDENCE_ACCESS_REVOKED), scout.clone()),
         (player_id, admin.clone()),
+    );
+}
+
+pub const EVIDENCE_ACCESS_REVOKED_BY_PLAYER: &str = "evidence_access_revoked_by_player";
+
+/// topics: (event_name, scout)  data: (player_id, player)
+///
+/// Emitted by `revoke_evidence_access` (player-initiated). Like
+/// `evidence_access_revoked` (admin path), this only instructs the off-chain
+/// key-wrapping service to stop honoring *future* key-wrap requests for
+/// this (player_id, scout) pair — it cannot claw back a wrapped key already
+/// delivered before this event.
+pub fn evidence_access_revoked_by_player(
+    env: &Env,
+    player_id: u64,
+    scout: &Address,
+    player: &Address,
+) {
+    env.events().publish(
+        (
+            Symbol::new(env, EVIDENCE_ACCESS_REVOKED_BY_PLAYER),
+            scout.clone(),
+        ),
+        (player_id, player.clone()),
+    );
+}
+
+/// Emitted before `update_current_contract_wasm` — attributed to the old code version.
+/// topics: (event_name, admin)  data: new_wasm_hash
+pub fn contract_upgraded(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>) {
+    env.events().publish(
+        (Symbol::new(env, CONTRACT_UPGRADED), admin.clone()),
+        new_wasm_hash.clone(),
     );
 }
