@@ -5,17 +5,16 @@ members = [
     "contracts/verification",
     "contracts/progress",
     "contracts/scout_access",
+    "contracts/chaos-tests",
 ]
 resolver = "2"
 
 [workspace.package]
-# When bumping this version, also update docs/VERSIONING.md Version History.
-version = "0.1.0"
+version = "2.0.0"
 edition = "2021"
 
 [workspace.dependencies]
-soroban-sdk = { version = "25.3.1" }
-soroban-sdk-testutils = { version = "25.3.1", package = "soroban-sdk", features = ["testutils"] }
+soroban-sdk = "25.3.1"
 ed25519-dalek = "=3.0.0-rc.0"
 
 [profile.release]

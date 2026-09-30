@@ -7,9 +7,32 @@
 >
 > **Full field reference:** See [`docs/CONFIG_REFERENCE.md`](CONFIG_REFERENCE.md) for a complete description of every field in `config/testnet.json` and `config/mainnet.json`, including where each value is used and mainnet deployment requirements.
 
-- Rust + `wasm32-unknown-unknown` target: `rustup target add wasm32-unknown-unknown`
+- Rust + `wasm32v1-none` target: `rustup target add wasm32v1-none`
+  (Note: `rust-toolchain.toml` in this repo auto-selects the correct target when you run `cargo` from the project directory, so this step is only needed for manual `stellar contract install` invocations outside of `cargo`.)
 - Stellar CLI: https://developers.stellar.org/docs/tools/developer-tools/cli/install-stellar-cli
 - A funded Stellar keypair for deployment
+
+### Reproducible WASM builds
+
+`Cargo.lock` is committed to this repository. Because the workspace produces
+deployable WASM binaries (not libraries), every developer and every CI run
+resolves identical dependency versions and therefore produces a bit-for-bit
+reproducible WASM binary.
+
+**Always use `--locked` when building for deployment or release:**
+
+```bash
+cargo build --workspace --target wasm32v1-none --release --locked
+```
+
+This ensures the build uses exactly the dependency versions recorded in
+`Cargo.lock` and fails fast if the lockfile is out of date, rather than
+silently resolving different versions. CI enforces `--locked` on every build
+step for the same reason.
+
+To update dependencies in a controlled way (e.g. via Dependabot or Renovate),
+run `cargo update`, review the diff in `Cargo.lock`, and open a dedicated PR
+so the supply-chain change is auditable.
 
 ## Contract Deployment Order
 
@@ -72,17 +95,47 @@ stellar contract invoke \
 ```
 
 Both functions emit `progress_contract_updated` with the new address, so
-off-chain indexers see the change either way.
+off-chain indexers see the change either way. As of issue #1041 both also
+emit `wiring_updated` (address + a bumped re-wiring epoch) alongside it — see
+[`docs/WIRING_REGISTRY_DESIGN.md`](WIRING_REGISTRY_DESIGN.md).
+`verification.set_registration_contract` carries the identical first-call-only
+guard (with `update_registration_contract` as its own escape hatch) — it
+predates this doc section but works the same way.
 
+Every other `set_*_contract` setter across all four contracts — including
 `registration.set_progress_contract` and `scout_access.set_progress_contract`
-have no such guard — they can always be re-invoked to re-wire the link, and
-`scout_access` also exposes `update_progress_contract` as an alias for the
-same call so the same verb works across contracts.
+/ `set_registration_contract` — has no such guard: they can always be
+re-invoked to re-wire the link, and `scout_access` also exposes
+`update_progress_contract` as an alias for the same call so the same verb
+works across contracts. This asymmetry (verification's two links
+first-call-only, every other link freely re-settable) is deliberate and
+preserved for backward compatibility with already-deployed contracts — see
+`docs/WIRING_REGISTRY_DESIGN.md`'s re-wiring policy section for why it was
+not homogenised further.
 
-`./scripts/initialize.sh` is idempotent with respect to this link: if
-`set_progress_contract` on `verification` fails with `AlreadyConfigured`
+`./scripts/initialize.sh` is idempotent with respect to both of
+verification's guarded links: if `set_progress_contract` or
+`set_registration_contract` on `verification` fails with `AlreadyConfigured`
 (e.g. because the script is being re-run), it automatically falls back to
-`update_progress_contract` instead of aborting.
+`update_progress_contract` / `update_registration_contract` instead of
+aborting.
+
+### Checking wiring is actually consistent, not just "set"
+
+Every contract now exposes `get_wiring_state()`, returning each peer
+pointer's address **and** a monotonically-incrementing `epoch` bumped on
+every re-wiring call (`scoutchain_shared_types::WiringLink`). Because Soroban
+has no atomic multi-contract transaction, a re-wiring operation touching
+several contracts (e.g. redeploying `progress` requires updating three
+separate `ProgressContract` pointers on `verification`, `registration`, and
+`scout_access`) can fail or be interrupted partway through, leaving some
+pointers updated and others stale. `scripts/verify-cross-contract-wiring.sh`
+detects exactly this: it groups the platform's eight peer-address pointers by
+which contract they target, and flags a group as `PARTIAL` when some members
+agree with the target's actual deployed address and others don't — distinct
+from `NEVER_CONFIGURED` (nobody has wired it yet) and `FULLY_WIRED`. Run it
+with `--repair` to print just the corrective `stellar contract invoke`
+commands for whatever is inconsistent.
 
 ---
 
@@ -108,12 +161,20 @@ chmod +x scripts/deploy.sh
 ```bash
 chmod +x scripts/initialize.sh
 ./scripts/initialize.sh testnet
-# Sets admin, fee config, and wires all cross-contract links:
+# Sets admin, fee config, and wires all eight cross-contract links:
 # - Verification → Progress: verification.set_progress_contract
 # - Registration ← Progress: registration.set_progress_contract
+# - Verification → Registration: verification.set_registration_contract
 # - Progress → Verification: progress.set_verification_contract
 # - Progress → Registration: progress.set_registration_contract
+# - Progress → Scout Access: progress.set_scout_access_contract
 # - Scout Access → Progress: scout_access.set_progress_contract
+# - Scout Access → Registration: scout_access.set_registration_contract
+#
+# Then gates success on scripts/verify-cross-contract-wiring.sh — the script
+# aborts with a non-zero exit if any link is missing, misconfigured, or
+# partially re-wired, rather than declaring success just because none of the
+# individual `stellar contract invoke` calls above returned an error.
 ```
 
 ### 4. Generate TypeScript bindings
@@ -131,20 +192,51 @@ chmod +x testnet/seed.sh
 ./testnet/seed.sh
 ```
 
-### 6. Run the database migration
+### 6. Verify deployment health and wiring (recommended)
 
-Copy the migration files to your backend repo and run them against PostgreSQL in order:
+After deploying and initializing, run the combined readiness check to confirm
+all four contracts are healthy (initialized and not paused) and all eight
+cross-contract wiring links are correctly and consistently set — not just
+present, but agreeing with each other, catching a partially-applied re-wiring
+(see [Checking wiring is actually consistent](#checking-wiring-is-actually-consistent-not-just-set)
+above) — before routing any traffic:
+
+```bash
+chmod +x scripts/full-readiness-check.sh
+./scripts/full-readiness-check.sh testnet
+```
+
+This prints a combined summary table with ✅/❌/⚠️ status for every health and
+wiring check in a single command.  If any check fails, the script exits
+non-zero and names the failing check explicitly.
+
+The two underlying scripts remain available for targeted debugging:
+
+- `scripts/health-check.sh testnet` — init/pause status only
+- `scripts/verify-cross-contract-wiring.sh testnet` — wiring links only
+
+### 7. Run the database migration
+
+Copy the migration files to your backend repo and run them against PostgreSQL in
+numeric order. **Run every file** — skipping any migration leaves tables, columns,
+or indexes missing and will cause silent indexer errors at runtime.
 
 ```bash
 psql $DATABASE_URL -f migrations/001_initial_schema.sql
 psql $DATABASE_URL -f migrations/002_cursor_upsert_helper.sql
+psql $DATABASE_URL -f migrations/003_diagnostic_events.sql
+psql $DATABASE_URL -f migrations/004_scout_subscriptions_auto_renew.sql
+psql $DATABASE_URL -f migrations/005_evidence_access_grants.sql
+psql $DATABASE_URL -f migrations/006_dispute_jury.sql
+psql $DATABASE_URL -f migrations/007_milestone_flags.sql
 ```
 
-`001_initial_schema.sql` creates all fourteen tables and seeds the `indexer_cursor`
-row so the indexer can `SELECT` it on first startup without encountering an empty
-result. Every `CREATE TABLE` and `CREATE INDEX` uses `IF NOT EXISTS` and the seed
-`INSERT` uses `ON CONFLICT DO NOTHING`, making both files safe to re-run against an
-already-migrated database.
+All migration files are idempotent (`CREATE TABLE IF NOT EXISTS`,
+`ALTER TABLE … ADD COLUMN IF NOT EXISTS`): re-running against an already-migrated
+database is safe.
+
+`001_initial_schema.sql` creates all fourteen base tables and seeds the
+`indexer_cursor` row so the indexer can `SELECT` it on first startup.
 
 `002_cursor_upsert_helper.sql` adds the `advance_indexer_cursor(p_ledger BIGINT)`
 helper function. Call it from the indexer after processing each batch of Horizon
@@ -156,6 +248,21 @@ SELECT advance_indexer_cursor(42391);
 
 The function updates `last_ledger` only when the supplied value is greater than the
 stored value, so replaying an old batch never accidentally rewinds the cursor.
+
+`003_diagnostic_events.sql` adds the `diagnostic_events` table for off-chain
+diagnostic event logging.
+
+`004_scout_subscriptions_auto_renew.sql` adds the `auto_renew` column to
+`scout_subscriptions` so the indexer can track per-scout auto-renewal opt-in.
+
+`005_evidence_access_grants.sql` adds the `evidence_access_grants` table —
+the off-chain mirror of `scout_access.EvidenceAccessGrant`.
+
+`006_dispute_jury.sql` adds jury-escalation columns to `milestone_disputes` and
+creates the `dispute_votes` table for per-validator audit trail.
+
+`007_milestone_flags.sql` adds the `milestone_flags` and `revocation_records`
+tables for the validator-revocation cascade re-review system.
 
 ### Resetting the Indexer Cursor
 
@@ -193,18 +300,61 @@ WHERE id = 1;
 -- 4. Restart the indexer — it will stream events from ledger 0.
 ```
 
+### 8. Seed migrated state (optional)
+
+For fresh deployments of an existing production dataset, use the admin-only
+seeding entrypoints to replay exported player/scout profiles without requiring
+their wallet signatures:
+
+```bash
+stellar contract invoke --id $REGISTRATION_CONTRACT_ID \
+  --source $ADMIN_ADDRESS --network testnet \
+  -- admin_seed_player \
+  --player_id <id> \
+  --wallet <G-address> \
+  --vitals '{"age":25,"position":"Forward","region":"Europe","nationality":"FR"}' \
+  --ipfs_hashes '["QmHash"]' \
+  --registered_at <unix_ts> \
+  --level <0-3>
+
+stellar contract invoke --id $REGISTRATION_CONTRACT_ID \
+  --source $ADMIN_ADDRESS --network testnet \
+  -- admin_seed_scout \
+  --scout_id <id> \
+  --wallet <G-address> \
+  --region "Europe" \
+  --verified false \
+  --registered_at <unix_ts>
+```
+
+> **Warning:** These functions bypass wallet authentication.  They should only
+> be used during a controlled migration replay before the contract serves any
+> real wallet-signed registrations.
+
+### 9. Verify indexer consistency
+
+```bash
+node scripts/reconcile-indexer.js
+```
+
+The script compares on-chain state against the local database and reports
+discrepancies for `players.deactivated` and `scouts.verified`.
 If you only want to re-process events from a specific ledger (partial replay),
 replace `0` with the desired starting ledger sequence number.
 
 ## Mainnet checklist
 
 - [ ] Audit all four contracts
+- [ ] Review storage TTL cost model (`docs/STORAGE_COST_MODEL.md`) and budget for ongoing TTL renewal
 - [ ] Replace testnet XLM token address with mainnet address in `.env`
 - [ ] Set `STELLAR_NETWORK=mainnet` and update RPC/Horizon URLs
+- [ ] Build with `--locked` to confirm the committed `Cargo.lock` is current: `cargo build --workspace --target wasm32v1-none --release --locked`
 - [ ] Run `./scripts/deploy.sh mainnet`
 - [ ] Run `./scripts/initialize.sh mainnet`
 - [ ] Verify all contract IDs in `.env.contracts`
+- [ ] **Run `./scripts/full-readiness-check.sh mainnet`** — confirms all four contracts are healthy and all eight wiring links are consistently set, with no partial re-wiring (recommended one-command post-deploy check)
 - [ ] Regenerate bindings: `./scripts/generate-bindings.sh mainnet`
+- [ ] Review [docs/STORAGE_COST_MODEL.md](STORAGE_COST_MODEL.md) and confirm the projected monthly storage rent is within budget at expected launch-day scale. Re-measure rent figures if the Stellar fee schedule has changed since the document's last-reviewed date.
 
 ## Upgrading a Deployed Contract
 
@@ -318,6 +468,10 @@ stellar contract invoke --id $PROGRESS_CONTRACT_ID \
 
 ### Address migration (new contract ID)
 
+> **See [`docs/MIGRATION_GAPS.md`](MIGRATION_GAPS.md) for the canonical per-category
+> list of what can and cannot be automatically migrated, including in-flight milestone
+> disputes and other gaps not covered in this section.**
+
 If a bug cannot be fixed via `upgrade()` (e.g. the storage layout must change in a way that requires a fresh deploy), you must migrate to a new contract address. This is a breaking change — all clients and the off-chain indexer must be updated.
 
 This is the highest-risk operation in the deployment lifecycle, so most of it is
@@ -350,16 +504,26 @@ Migration procedure:
 7. **Redeploy the backend and frontend** (manual) with the new contract IDs.
 8. **Announce the migration** (manual) in release notes with the old and new contract IDs.
 
-#### Step 4 in detail — what can and cannot be replayed
+#### Step 4 in detail — automated replay scope
 
-`scripts/replay-state.sh` reads state from the old contracts and writes what it
-legitimately can to the new ones. **It is not a full automatic migration**, because
-of an authorization asymmetry between the two data categories:
+`scripts/replay-state.sh` reads the old contract set and replays the supported
+state categories onto the new set using the admin key. It opens the migration
+windows on `progress`, `verification`, and `scout_access` only for the replay
+and closes them before returning, including after a failed invocation.
 
-- **Validators — replayed automatically.** `verification.register_validator(wallet, credentials)` is **admin-only** (`require_admin`, no wallet self-auth). The operator holds the admin key, so the script reads every active validator via `get_validators()` + `get_validator()` on the old contract and re-registers each one on the new contract, signed by `DEPLOYER_SECRET`. No user action required.
-- **Players and scouts — replayed via admin-only seeding entrypoints.** The replay script now exports the player and scout payloads (via `get_player_count()`/`get_player(id)` and `get_scout_count()`/`get_scout(id)`) to timestamped JSON files under `migration-export/` and then calls `registration.admin_seed_player(...)` / `registration.admin_seed_scout(...)` on the new contract, signed by `DEPLOYER_SECRET`. This avoids the wallet-auth requirement of `register_player` / `register_scout` while preserving the full profile state.
+The automated replay covers validators, player/scout profiles, resolved player
+levels, full progress history plus its Merkle root, milestones, disputes,
+subscriptions, contacts, trial offers including in-flight escrow records,
+auto-renew flags, and the current fee configuration plus its bounded history.
+Each category is exported to timestamped JSON under `migration-export/` for
+post-migration auditing and reconciliation. All seeders are idempotent and
+reject conflicting records.
 
-  > Note on levels: the registration contract does **not** store a player's level — the progress contract is the source of truth (`resolve_level` / `set_player_level`). The exported `PlayerProfile` already carries the `level` field resolved from the old progress contract, so it is captured in the export and re-seeded through `admin_seed_player`.
+**Pre-authorized migration tickets** remain available for operators that do not
+want to use the admin replay path: players and scouts can sign an off-chain
+`MigrationAuthorization` ahead of a migration, and a relayer can redeem it via
+`registration.redeem_migration_player(...)` or
+`registration.redeem_migration_scout(...)`. See `docs/CONTRACT_REFERENCE.md`.
 
 #### Testing a migration against the local sandbox
 
@@ -400,7 +564,10 @@ You skipped the cross-contract wiring step. `approve_milestone` calls `advance_l
 ./scripts/verify-cross-contract-wiring.sh testnet
 ```
 
-This prints a ✅/❌ table for all five wiring links in one command. If any link shows ❌, fix it by running:
+This prints a ✅/❌ table for all eight wiring links in one command, plus a
+per-target-contract consistency rollup that flags a partial re-wiring
+separately from a link that was simply never configured. If any link shows
+❌, fix it by running:
 
 ```bash
 ./scripts/initialize.sh testnet
@@ -429,10 +596,26 @@ stellar contract invoke --id $PROGRESS_CONTRACT_ID \
   -- set_registration_contract \
   --addr $REGISTRATION_CONTRACT_ID
 
-# 5. Scout Access → Progress link
+# 5. Verification → Registration link (same first-call-only guard as #1;
+#    use update_registration_contract instead if this returns AlreadyConfigured)
+stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
+  -- set_registration_contract \
+  --reg_contract $REGISTRATION_CONTRACT_ID
+
+# 6. Progress → Scout Access link
+stellar contract invoke --id $PROGRESS_CONTRACT_ID \
+  -- set_scout_access_contract \
+  --addr $SCOUT_ACCESS_CONTRACT_ID
+
+# 7. Scout Access → Progress link
 stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
   -- set_progress_contract \
   --addr $PROGRESS_CONTRACT_ID
+
+# 8. Scout Access → Registration link
+stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
+  -- set_registration_contract \
+  --addr $REGISTRATION_CONTRACT_ID
 ```
 
 This must be done once after every fresh deployment.

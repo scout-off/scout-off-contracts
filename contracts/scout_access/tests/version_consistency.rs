@@ -9,10 +9,10 @@ fn test_all_contracts_version_consistency() {
     let env = Env::default();
 
     // Deploy all four contracts
-    let reg_id = env.register_contract(None, RegistrationContract);
-    let ver_id = env.register_contract(None, VerificationContract);
-    let prog_id = env.register_contract(None, ProgressContract);
-    let sa_id = env.register_contract(None, ScoutAccessContract);
+    let reg_id = env.register(RegistrationContract, ());
+    let ver_id = env.register(VerificationContract, ());
+    let prog_id = env.register(ProgressContract, ());
+    let sa_id = env.register(ScoutAccessContract, ());
 
     let reg_client = RegistrationContractClient::new(&env, &reg_id);
     let ver_client = VerificationContractClient::new(&env, &ver_id);
@@ -49,5 +49,5 @@ fn test_all_contracts_version_consistency() {
     );
 
     // Assert non-empty
-    assert!(reg_ver.len() > 0, "Contract version string is empty");
+    assert!(!reg_ver.is_empty(), "Contract version string is empty");
 }

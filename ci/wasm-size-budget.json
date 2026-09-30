@@ -4,13 +4,12 @@
     "'wasm-size-and-cpu-budget' step of the abi-export CI job against the",
     "output of `stellar contract optimize`.",
     "",
-    "These starting values are deliberately generous placeholders, not",
-    "measured baselines: this environment could not run `cargo build` /",
-    "`stellar contract optimize` to capture real current sizes when this",
-    "budget file was first introduced (see the PR that added this file for",
-    "why). Tighten each budget to roughly current-size-plus-headroom after",
-    "the first real CI run reports actual numbers — that tightening is a",
-    "follow-up, not a blocker for this file existing and being enforced.",
+    "Budgets are calibrated automatically by `scripts/calibrate-budgets.py`",
+    "from measured CI artifacts (abi/wasm-sizes.json + cpu-cost-budget-*).",
+    "The script adds a documented headroom percentage (default 20%) to the",
+    "latest measured size.  To re-calibrate manually:",
+    "  1. Ensure CI artifacts are present locally (abi/wasm-sizes.json, cpu-cost-budget-report.txt).",
+    "  2. Run: CALIBRATE_WRITE=1 python scripts/calibrate-budgets.py",
     "",
     "To intentionally raise a budget (e.g. a legitimate new feature grows a",
     "contract past its current ceiling): update the number below and add a",
@@ -19,7 +18,7 @@
   ],
   "budgets": {
     "registration": 100000,
-    "verification": 100000,
+    "verification": 140000,
     "progress": 100000,
     "scout_access": 100000
   }

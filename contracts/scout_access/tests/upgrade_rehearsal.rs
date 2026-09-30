@@ -12,7 +12,7 @@
 //! `scout_access` is the richest row-set in the DEPLOYMENT.md table:
 //!   * Persistent: subscription records, contact records and scout indexes.
 //!   * Instance:   Initialized / Paused flags, fee config, XLM token address,
-//!                 accumulated fees, and the progress-contract link.
+//!     accumulated fees, and the progress-contract link.
 //!
 //! The fee config and XLM token address are checked both directly
 //! (`get_fee_config`, `get_accumulated_fees`) and behaviourally — a fresh
@@ -145,7 +145,10 @@ fn test_scout_access_upgrade_preserves_state() {
 
     // --- Assert: instance state survived (fee config, XLM token, counters, flags) ---
     let fees_after = h.scout_access.get_fee_config();
-    assert_eq!(fees_after.contact_fee_stroops, fees_before.contact_fee_stroops);
+    assert_eq!(
+        fees_after.contact_fee_stroops,
+        fees_before.contact_fee_stroops
+    );
     assert_eq!(fees_after.elite_sub_stroops, fees_before.elite_sub_stroops);
     assert_eq!(fees_after.sub_duration_secs, fees_before.sub_duration_secs);
     assert_eq!(fees_after.pro_contact_limit, fees_before.pro_contact_limit);
