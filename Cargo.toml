@@ -5,11 +5,17 @@ members = [
     "contracts/verification",
     "contracts/progress",
     "contracts/scout_access",
+    "contracts/chaos-tests",
 ]
 resolver = "2"
 
+[workspace.package]
+version = "2.0.0"
+edition = "2021"
+
 [workspace.dependencies]
-soroban-sdk = { version = "25.3.1", features = ["testutils"] }
+soroban-sdk = "25.3.1"
+ed25519-dalek = "=3.0.0-rc.0"
 
 [profile.release]
 opt-level = "z"
@@ -24,3 +30,8 @@ lto = true
 [profile.release-with-logs]
 inherits = "release"
 debug-assertions = true
+
+[patch.crates-io]
+# Pin hashbrown to the v0.14.5 source known to compile for Soroban SDK 25.x
+# WASM builds; this override was introduced with validator vector tracking.
+hashbrown = { git = 'https://github.com/rust-lang/hashbrown.git', tag = 'v0.14.5' }

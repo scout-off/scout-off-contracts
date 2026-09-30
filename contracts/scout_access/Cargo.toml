@@ -1,13 +1,17 @@
 [package]
 name = "scoutchain-scout-access"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 soroban-sdk = { workspace = true }
+scoutchain-shared-types = { path = "../shared-types" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+scoutchain-progress = { path = "../progress" }
+scoutchain-registration = { path = "../registration" }
+scoutchain-verification = { path = "../verification" }

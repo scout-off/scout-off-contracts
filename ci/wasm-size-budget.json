@@ -1,0 +1,25 @@
+{
+  "_comment": [
+    "Per-contract optimized WASM size budget in bytes, checked by the",
+    "'wasm-size-and-cpu-budget' step of the abi-export CI job against the",
+    "output of `stellar contract optimize`.",
+    "",
+    "Budgets are calibrated automatically by `scripts/calibrate-budgets.py`",
+    "from measured CI artifacts (abi/wasm-sizes.json + cpu-cost-budget-*).",
+    "The script adds a documented headroom percentage (default 20%) to the",
+    "latest measured size.  To re-calibrate manually:",
+    "  1. Ensure CI artifacts are present locally (abi/wasm-sizes.json, cpu-cost-budget-report.txt).",
+    "  2. Run: CALIBRATE_WRITE=1 python scripts/calibrate-budgets.py",
+    "",
+    "To intentionally raise a budget (e.g. a legitimate new feature grows a",
+    "contract past its current ceiling): update the number below and add a",
+    "one-line justification in the PR description explaining why the growth",
+    "is expected and acceptable."
+  ],
+  "budgets": {
+    "registration": 100000,
+    "verification": 140000,
+    "progress": 100000,
+    "scout_access": 100000
+  }
+}

@@ -1,14 +1,17 @@
 [package]
 name = "scoutchain-registration"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-soroban-sdk = { workspace = true }
+soroban-sdk = { workspace = true, features = ["hazmat-address"] }
 scoutchain-shared-types = { path = "../shared-types" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+scoutchain-progress = { path = "../progress" }
+scoutchain-verification = { path = "../verification" }
+ed25519-dalek = { workspace = true }

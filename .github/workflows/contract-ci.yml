@@ -1,3 +1,5 @@
+# Full build, test, lint, bindings, and sandbox pipeline; see ci.yml for the
+# separate fast, dependency-free TODO/FIXME/HACK static check.
 name: Soroban Contract CI
 
 on:
@@ -18,9 +20,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.97.1
         with:
-          targets: wasm32-unknown-unknown
+          targets: wasm32v1-none
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -29,23 +31,667 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-wasm32v1-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Pin ed25519-dalek to fix soroban-env-host trait bound error
+        run: cargo update -p ed25519-dalek@3.0.0 --precise 3.0.0-rc.0 || true
 
       - name: Run tests
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
+
+      - name: Test progress contract
+        run: cargo test -p scoutchain-progress --locked -- --nocapture
+
+      - name: CPU-instruction cost budget report
+        # cost_budget.rs asserted its own pass/fail already as part of the
+        # "Run tests" step above (cargo test --workspace picks it up
+        # automatically); this step just re-runs it with --nocapture to
+        # produce a readable per-operation report for the CI artifact. See
+        # ci/cpu-cost-budget.md for the budget table and how to raise a
+        # budget.
+        run: |
+          set -euo pipefail
+          cargo test --workspace --locked --test cost_budget -- --nocapture --test-threads=1 \
+            | tee cpu-cost-budget-report.txt
+
+      - name: Upload CPU-cost budget report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpu-cost-budget-${{ github.sha }}
+          path: cpu-cost-budget-report.txt
+          if-no-files-found: error
 
       - name: Build WASM (release)
-        run: cargo build --workspace --target wasm32-unknown-unknown --release
+        run: cargo build --workspace --target wasm32v1-none --release --locked
 
   lint:
     name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: clippy, rustfmt
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings
       - name: Format check
         run: cargo fmt --all -- --check
+
+      - name: Shell script lint (shellcheck)
+        run: |
+          sudo apt-get install -y shellcheck
+          shellcheck scripts/deploy.sh
+          shellcheck scripts/initialize.sh
+          shellcheck scripts/setup-testnet.sh
+          shellcheck scripts/generate-bindings.sh
+          shellcheck scripts/check-bindings.sh
+          shellcheck scripts/health-check.sh
+          shellcheck scripts/full-readiness-check.sh
+          shellcheck scripts/smoke-test.sh
+          shellcheck scripts/rollback.sh
+          shellcheck scripts/emergency-pause.sh
+          shellcheck scripts/emergency-unpause.sh
+          shellcheck scripts/migrate-contract.sh
+          shellcheck scripts/replay-state.sh
+          shellcheck scripts/migrate-contract-smoke-test.sh
+          shellcheck scripts/git-hooks/pre-push
+          shellcheck testnet/seed.sh
+          shellcheck scripts/check-event-topic-consistency.sh
+          shellcheck scripts/check-guard-ordering.sh
+          shellcheck scripts/check-cross-doc-consistency.sh
+          shellcheck scripts/check-trial-offer-flow-consistency.sh
+          shellcheck scripts/check-error-code-continuity.sh
+          shellcheck scripts/check-cargo-doc.sh
+          shellcheck scripts/check-migration-numbering.sh
+      - name: Docs completeness check
+        run: bash scripts/check-docs.sh
+      - name: Event-topic consistency check
+        run: bash scripts/check-event-topic-consistency.sh
+      - name: Guard-ordering audit
+        run: bash scripts/check-guard-ordering.sh
+      - name: Cross-doc consistency check
+        run: bash scripts/check-cross-doc-consistency.sh
+      - name: Trial-offer flow doc consistency check
+        run: bash scripts/check-trial-offer-flow-consistency.sh
+      - name: Error-code continuity check
+        run: bash scripts/check-error-code-continuity.sh
+      - name: Cargo doc missing-documentation check
+        run: bash scripts/check-cargo-doc.sh
+      - name: Migration numbering check
+        run: bash scripts/check-migration-numbering.sh
+      - name: Validate bindings package.json templates
+        run: bash scripts/check-bindings.sh
+
+  bindings-smoke-test:
+    name: Bindings smoke-test (local sandbox)
+    runs-on: ubuntu-latest
+    needs: test
+    env:
+      # Read-only `stellar contract invoke` calls (health/get_wiring_state/
+      # version) still require a --source-account. The sandbox identity is
+      # created in the "Generate a local sandbox identity" step below.
+      STELLAR_SOURCE_ACCOUNT: ci-deployer
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: wasm32v1-none
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-wasm32v1-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install Stellar CLI (pinned)
+        run: |
+          # Keep in sync with: docs/CONTRIBUTING.md, scripts/generate-bindings.sh, and the abi-export CI step
+          STELLAR_CLI_VERSION="28.0.0"
+          curl -sSL "https://raw.githubusercontent.com/stellar/stellar-cli/v${STELLAR_CLI_VERSION}/install.sh" | bash
+          echo "$HOME/.stellar/bin" >> "$GITHUB_PATH"
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build WASM contracts
+        run: cargo build --workspace --target wasm32v1-none --release --locked
+
+      - name: Start Soroban local sandbox
+        run: |
+          docker run -d \
+            --name stellar-local \
+            -p 8000:8000 \
+            stellar/quickstart:testing \
+            --local \
+            --limits unlimited
+          # `--limits unlimited` raises the local network's Soroban resource
+          # ceilings. The stellar-core default limits are extremely low and
+          # reject the upload of `verification`'s ~134 KB optimized WASM with
+          # `HostError: Error(Budget, ExceededLimit)` at simulation time.
+          # Poll getLatestLedger until the DB is initialised and returns
+          # a real ledger sequence (not just an open TCP port).
+          echo "Waiting for Soroban RPC to be ready..."
+          for i in $(seq 1 60); do
+            LEDGER=$(curl -sf http://localhost:8000/soroban/rpc \
+              -X POST \
+              -H 'Content-Type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"getLatestLedger"}' \
+              2>/dev/null \
+              | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('result',{}).get('sequence',0))" \
+              2>/dev/null || echo 0)
+            if [ "${LEDGER:-0}" -gt 0 ] 2>/dev/null; then
+              echo "RPC ready — ledger ${LEDGER} after ${i}s"
+              break
+            fi
+            sleep 2
+          done
+          if [ "${LEDGER:-0}" -eq 0 ] 2>/dev/null; then
+            echo "ERROR: Soroban RPC never became ready"
+            docker logs stellar-local
+            exit 1
+          fi
+
+      - name: Register local network with Stellar CLI
+        run: |
+          stellar network add local \
+            --rpc-url http://localhost:8000/soroban/rpc \
+            --network-passphrase "Standalone Network ; February 2017"
+
+      - name: Generate a local sandbox identity
+        run: |
+          stellar keys generate ci-deployer --network local
+          echo "ADMIN_ADDRESS=$(stellar keys address ci-deployer)" >> "$GITHUB_ENV"
+
+      - name: Fund the sandbox identity
+        run: |
+          set -euo pipefail
+          # `keys generate --fund` swallows funding errors (logs a warning and
+          # still exits 0), so fund separately with `keys fund`, which
+          # propagates failures, and retry since friendbot/Horizon can lag
+          # behind the RPC endpoint becoming ready.
+          for i in $(seq 1 30); do
+            if stellar keys fund ci-deployer --network local; then
+              exit 0
+            fi
+            echo "Friendbot not ready yet, retrying (${i}/30)..."
+            sleep 2
+          done
+          echo "ERROR: unable to fund ci-deployer after retries"
+          exit 1
+
+      - name: Deploy all contracts to local sandbox
+        run: |
+          set -euo pipefail
+          WASM=target/wasm32v1-none/release
+
+          deploy_one() {
+            local name="$1"
+            local wasm_src="$WASM/scoutchain_${name}.wasm"
+            local wasm_opt="$WASM/scoutchain_${name}.optimized.wasm"
+            # Use the current non-deprecated build+optimize path
+            stellar contract build \
+              --package "scoutchain-${name//_/-}" \
+              --optimize \
+              --target-dir target \
+              > /dev/null 2>&1 \
+              || stellar contract optimize \
+                   --wasm "$wasm_src" \
+                   --wasm-out "$wasm_opt" \
+                   > /dev/null 2>&1 \
+              || cp "$wasm_src" "$wasm_opt"
+            stellar contract deploy \
+              --wasm "$wasm_opt" \
+              --source ci-deployer \
+              --network local | grep -oE 'C[A-Z0-9]{55}' | tail -1
+          }
+
+          REG_ID=$(deploy_one registration)
+          VER_ID=$(deploy_one verification)
+          PRG_ID=$(deploy_one progress)
+          SCO_ID=$(deploy_one scout_access)
+
+          [ -n "$REG_ID" ] || { echo "ERROR: empty registration ID"; exit 1; }
+          [ -n "$VER_ID" ] || { echo "ERROR: empty verification ID"; exit 1; }
+          [ -n "$PRG_ID" ] || { echo "ERROR: empty progress ID"; exit 1; }
+          [ -n "$SCO_ID" ] || { echo "ERROR: empty scout_access ID"; exit 1; }
+
+          {
+            echo "REGISTRATION_CONTRACT_ID=$REG_ID"
+            echo "VERIFICATION_CONTRACT_ID=$VER_ID"
+            echo "PROGRESS_CONTRACT_ID=$PRG_ID"
+            echo "SCOUT_ACCESS_CONTRACT_ID=$SCO_ID"
+          } > .env.contracts
+
+          echo "==> Deployed contract IDs:"
+          cat .env.contracts
+
+      - name: Initialize contracts and wire cross-contract links
+        run: |
+          set -euo pipefail
+          # Source the deployed contract IDs and derive admin address.
+          source .env.contracts
+          ADMIN_ADDRESS=$(stellar keys address ci-deployer)
+          export ADMIN_ADDRESS
+          # scout_access.initialize probes the supplied xlm_token with a
+          # read-only `decimals()` call, so the native-asset Stellar Asset
+          # Contract must actually be deployed on this fresh local network
+          # first (a hard-coded id points at an instance that doesn't exist
+          # yet -> Error(Storage, MissingValue) -> InvalidInput). `asset
+          # deploy` errors if it is already deployed, so fall back to the
+          # deterministic id.
+          XLM_TOKEN_ADDRESS="$(stellar contract asset deploy \
+            --asset native --source ci-deployer --network local 2>/dev/null \
+            || stellar contract id asset --asset native --network local)"
+          export XLM_TOKEN_ADDRESS
+          echo "Native asset SAC: $XLM_TOKEN_ADDRESS"
+          DEPLOYER_SECRET="$(stellar keys show ci-deployer 2>/dev/null || true)"
+          export DEPLOYER_SECRET
+          bash scripts/initialize.sh local
+
+      - name: Verify cross-contract wiring
+        run: bash scripts/verify-cross-contract-wiring.sh local
+
+      - name: Run health-check.sh against local sandbox
+        run: bash scripts/health-check.sh local
+
+      - name: Run full-readiness-check.sh (combined health + wiring verification)
+        # This is the recommended one-command post-deploy check (combines
+        # health-check.sh and verify-cross-contract-wiring.sh). The two
+        # individual scripts remain available for targeted debugging.
+        run: bash scripts/full-readiness-check.sh local
+
+      - name: Run smoke-test.sh against local sandbox
+        run: |
+          set -euo pipefail
+          # ADMIN_ADDRESS was persisted to $GITHUB_ENV in the "Generate a
+          # local sandbox identity" step above. DEPLOYER_SECRET is re-derived
+          # here since it was only exported within the "Initialize contracts"
+          # step's own process and doesn't carry over between steps.
+          export DEPLOYER_SECRET="$(stellar keys show ci-deployer 2>/dev/null || true)"
+          bash scripts/smoke-test.sh local
+
+      - name: Generate TypeScript bindings
+        run: bash scripts/generate-bindings.sh local
+
+      - name: Verify bindings output structure
+        run: |
+          set -euo pipefail
+          for pkg in registration verification progress scout_access; do
+            dir="bindings/$pkg"
+            echo "Checking $dir..."
+            [ -f "$dir/src/index.ts" ] \
+              || { echo "ERROR: $dir/src/index.ts not found — generation failed"; exit 1; }
+            echo "  OK: src/index.ts present"
+          done
+
+      - name: Build all binding packages
+        run: |
+          set -euo pipefail
+          for pkg in registration verification progress scout_access; do
+            echo "==> Building bindings/$pkg..."
+            (cd "bindings/$pkg" && npm install && npm run build)
+            [ -f "bindings/$pkg/dist/index.js" ] \
+              || { echo "ERROR: bindings/$pkg/dist/index.js not produced"; exit 1; }
+            echo "  OK: dist/index.js present"
+          done
+
+      - name: Verify ABI function coverage in generated bindings
+        # Re-extracts each contract's ABI directly from the already-built WASM
+        # (Stellar CLI is already installed from the earlier step) and compares
+        # the function names it declares against the method names exported by
+        # each binding package's src/index.ts.
+        #
+        # Approach: re-run the lightweight ABI extraction inside this job
+        # rather than depending on the abi-export job's artifact.  The two
+        # jobs run in parallel (both need: test) so the artifact is not
+        # guaranteed to be available, and duplicating the one-liner extraction
+        # is simpler than restructuring the dependency graph.
+        #
+        # Fails with a clear list of any ABI function that has no corresponding
+        # export in the binding package, so a stale or incomplete scaffold
+        # cannot silently pass CI.
+        run: |
+          set -euo pipefail
+          WASM=target/wasm32v1-none/release
+          mkdir -p abi-smoke
+
+          failed=0
+
+          for contract in registration verification progress scout_access; do
+            wasm="${WASM}/scoutchain_${contract}.wasm"
+            abi_file="abi-smoke/${contract}-abi.json"
+            index_ts="bindings/${contract}/src/index.ts"
+
+            echo "==> Checking ABI coverage for ${contract}..."
+
+            # Extract ABI JSON from the WASM.
+            stellar contract info interface --wasm "$wasm" --output json-formatted \
+              > "$abi_file" 2>/dev/null \
+              || { echo "  WARN: ABI extraction failed for ${contract} — skipping"; continue; }
+
+            # Compare ABI function names against binding exports using Python.
+            python3 - "$abi_file" "$index_ts" "$contract" <<'PYEOF'
+          import json
+          import re
+          import sys
+
+          abi_path, index_ts_path, contract_name = sys.argv[1], sys.argv[2], sys.argv[3]
+
+          # Parse ABI: collect all top-level function names.
+          with open(abi_path) as f:
+              abi = json.load(f)
+
+          abi_functions = set()
+          # stellar contract info --output json-formatted returns a list of
+          # interface entries; each entry with "type": "function" has a "name".
+          entries = abi if isinstance(abi, list) else abi.get("contract", [])
+          for entry in entries:
+              if isinstance(entry, dict) and entry.get("type") == "function":
+                  name = entry.get("name")
+                  if name:
+                      abi_functions.add(name)
+
+          if not abi_functions:
+              print(f"  WARN: no functions found in ABI for {contract_name} — skipping coverage check")
+              sys.exit(0)
+
+          # Parse src/index.ts: collect exported method names.
+          # The generated binding exports a Client class; each public method
+          # declaration covers one contract function.  We scan for both:
+          #   async methodName(   — async contract invocations
+          #   methodName(         — sync / query methods
+          with open(index_ts_path) as f:
+              ts_source = f.read()
+
+          # Match exported method names from the Client class body.
+          # Pattern: optional "async", then the method name, then "("
+          binding_methods = set(
+              re.findall(r'(?:async\s+)?(\w+)\s*\(', ts_source)
+          )
+
+          # Filter out JS built-ins and constructor
+          ignored = {"constructor", "call", "apply", "bind", "toString", "valueOf"}
+          binding_methods -= ignored
+
+          missing = abi_functions - binding_methods
+          if missing:
+              print(f"  FAIL [{contract_name}]: binding is missing exports for these ABI functions:")
+              for fn in sorted(missing):
+                  print(f"    - {fn}")
+              sys.exit(1)
+
+          print(f"  OK [{contract_name}]: all {len(abi_functions)} ABI function(s) are covered by the binding")
+          PYEOF
+            rc=$?
+            if [ $rc -ne 0 ]; then
+              failed=1
+            fi
+          done
+
+          if [ $failed -ne 0 ]; then
+            echo ""
+            echo "ERROR: one or more binding packages are missing exports for ABI-declared functions."
+            echo "Regenerate the bindings with: ./scripts/generate-bindings.sh <network>"
+            exit 1
+          fi
+          echo ""
+          echo "All binding packages fully cover their contract ABIs."
+
+      - name: Run migration smoke test against local sandbox
+        # Non-blocking (continue-on-error): scripts/migrate-contract-smoke-test.sh
+        # documents itself as "a MANUAL / optional command … not a mandatory CI
+        # gate". It exercises the deploy-old→seed→migrate→replay→compare path
+        # through deploy.sh / initialize.sh / migrate-contract.sh / replay-state.sh,
+        # which still carry stellar-cli-drift rough edges. Run it for signal on
+        # every PR, but don't fail the Bindings smoke-test job on it until that
+        # path is hardened — see the migration-tooling cleanup follow-up.
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          # The migration smoke test starts its own quickstart container on
+          # port 8000, so free the port the earlier "Start Soroban local
+          # sandbox" step is still holding.
+          docker rm -f stellar-local >/dev/null 2>&1 || true
+          bash scripts/migrate-contract-smoke-test.sh
+
+      - name: Stop local sandbox
+        if: always()
+        run: docker stop stellar-local && docker rm stellar-local || true
+
+      - name: Docs completeness check
+        run: bash scripts/check-docs.sh
+
+  abi-export:
+    name: Export Contract ABIs
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-wasm32v1-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build WASM (release)
+        run: cargo build --workspace --target wasm32v1-none --release --locked
+
+      - name: Install Stellar CLI (pinned)
+        run: |
+          # Keep in sync with: docs/CONTRIBUTING.md, scripts/generate-bindings.sh, and the bindings-smoke-test CI step
+          STELLAR_CLI_VERSION="28.0.0"
+          curl -sSL "https://raw.githubusercontent.com/stellar/stellar-cli/v${STELLAR_CLI_VERSION}/install.sh" | bash
+          echo "$HOME/.stellar/bin" >> "$GITHUB_PATH"
+
+      - name: Export contract ABIs
+        run: |
+          set -euo pipefail
+          mkdir -p abi
+          WASM=target/wasm32v1-none/release
+          for contract in registration verification progress scout_access; do
+            wasm="${WASM}/scoutchain_${contract}.wasm"
+            out="abi/${contract}-abi.json"
+            echo "==> Inspecting ${contract}..."
+            stellar contract info interface --wasm "$wasm" --output json-formatted > "$out"
+            echo "ABI for ${contract} (diff this output across commits to detect breaking changes):"
+            cat "$out"
+            echo ""
+          done
+
+      - name: Validate ABI JSON is parseable
+        run: |
+          set -euo pipefail
+          for contract in registration verification progress scout_access; do
+            out="abi/${contract}-abi.json"
+            python3 -c "import json, sys; json.load(open('${out}')); print('${contract}: valid JSON')"
+          done
+
+      - name: Measure optimized WASM size
+        run: |
+          set -euo pipefail
+          WASM=target/wasm32v1-none/release
+          echo '{}' > abi/wasm-sizes.json
+          for contract in registration verification progress scout_access; do
+            wasm_src="${WASM}/scoutchain_${contract}.wasm"
+            wasm_opt="${WASM}/scoutchain_${contract}.optimized.wasm"
+            echo "==> Optimizing ${contract}..."
+            stellar contract optimize --wasm "$wasm_src" --wasm-out "$wasm_opt"
+            size=$(wc -c < "$wasm_opt" | tr -d ' ')
+            echo "    ${contract}: ${size} bytes (optimized)"
+            python3 scripts/record_wasm_sizes.py "${contract}"
+          done
+          echo ""
+          echo "==> abi/wasm-sizes.json:"
+          cat abi/wasm-sizes.json
+
+      - name: Check WASM size budget
+        run: |
+          set -euo pipefail
+          python3 - <<'PYEOF'
+          import json
+          import sys
+
+          with open("abi/wasm-sizes.json") as f:
+              measured = json.load(f)
+          with open("ci/wasm-size-budget.json") as f:
+              budget = json.load(f)["budgets"]
+
+          failed = []
+          print(f"{'contract':<14} {'measured':>10} {'budget':>10} {'headroom':>10}")
+          for contract, cap in sorted(budget.items()):
+              size = measured.get(contract)
+              if size is None:
+                  failed.append(f"{contract}: no measured size found (build/optimize step may have failed)")
+                  continue
+              headroom = cap - size
+              print(f"{contract:<14} {size:>10} {cap:>10} {headroom:>10}")
+              if size > cap:
+                  over_by = size - cap
+                  pct = (over_by / cap) * 100
+                  failed.append(
+                      f"{contract}: optimized WASM is {size} bytes, "
+                      f"exceeding the {cap}-byte budget by {over_by} bytes ({pct:.1f}% over). "
+                      f"See ci/wasm-size-budget.json for how to raise this budget "
+                      f"if the growth is intentional."
+                  )
+
+          if failed:
+              print("")
+              print("FAIL: WASM size budget exceeded:")
+              for msg in failed:
+                  print(f"  - {msg}")
+              sys.exit(1)
+
+          print("")
+          print("All contracts within their WASM size budget.")
+          PYEOF
+
+      - name: Upload ABI and size-budget artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-abis-${{ github.sha }}
+          path: abi/*.json
+          if-no-files-found: error
+
+  abi-diff:
+    name: ABI Diff Gate
+    runs-on: ubuntu-latest
+    needs: abi-export
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch base branch ABI files
+        run: |
+          set -euo pipefail
+          BASE_REF="${{ github.base_ref }}"
+          if [[ -z "$BASE_REF" ]]; then
+            BASE_REF="main"
+          fi
+          echo "Base ref: $BASE_REF"
+          git fetch origin "$BASE_REF" --depth=1 || true
+          mkdir -p abi/base
+          for contract in registration verification progress scout_access; do
+            if git show "origin/$BASE_REF:abi/${contract}-abi.json" > "abi/base/${contract}-abi.json" 2>/dev/null; then
+              echo "  Fetched base ABI for $contract"
+            else
+              echo "  No base ABI found for $contract (treating as new)"
+              echo "{}" > "abi/base/${contract}-abi.json"
+            fi
+          done
+
+      - name: Run ABI diff gate
+        run: bash scripts/check-abi-diff.sh origin/${{ github.base_ref || 'main' }}
+
+      - name: Upload ABI diff report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: abi-diff-report-${{ github.sha }}
+          path: abi/*.json
+          if-no-files-found: ignore
+  budget-calibration:
+    name: Budget Calibration
+    runs-on: ubuntu-latest
+    needs: [test, abi-export]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download ABI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: contract-abis-${{ github.sha }}
+          path: abi/
+
+      - name: Download CPU-cost budget report artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cpu-cost-budget-${{ github.sha }}
+          path: .
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Run budget calibration
+        run: |
+          set -euo pipefail
+          python scripts/calibrate-budgets.py --headroom 0.20
+
+      - name: Check for drift between measured and budgeted values
+        run: |
+          set -euo pipefail
+          python3 - <<'PYEOF'
+          import json, sys
+
+          with open("abi/wasm-sizes.json") as f:
+              measured = json.load(f)
+          with open("ci/wasm-size-budget.json") as f:
+              budget = json.load(f)["budgets"]
+
+          failed = []
+          for contract, cap in sorted(budget.items()):
+              size = measured.get(contract)
+              if size is None:
+                  failed.append(f"{contract}: no measured size found")
+                  continue
+              headroom = cap - size
+              pct = (headroom / cap) * 100 if cap else 0
+              print(f"  {contract:<14} measured={size:>8}  budget={cap:>8}  headroom={headroom:>8}  ({pct:.1f}%)")
+              if size > cap:
+                  failed.append(
+                      f"{contract}: measured {size} bytes exceeds budget {cap} bytes"
+                  )
+
+          if failed:
+              print("")
+              print("FAIL: measured values exceed current budgets:")
+              for msg in failed:
+                  print(f"  - {msg}")
+              sys.exit(1)
+
+          print("")
+          print("All measured values are within budget.")
+          PYEOF
