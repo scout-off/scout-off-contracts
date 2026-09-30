@@ -89,6 +89,7 @@ jobs:
           shellcheck scripts/full-readiness-check.sh
           shellcheck scripts/smoke-test.sh
           shellcheck scripts/rollback.sh
+          shellcheck scripts/upgrade.sh
           shellcheck scripts/emergency-pause.sh
           shellcheck scripts/emergency-unpause.sh
           shellcheck scripts/migrate-contract.sh
