@@ -1,0 +1,15 @@
+# Normalize line endings across all text files on checkout, defaulting to LF.
+# This prevents CRLF line endings (common on Windows) from being committed,
+# which would break shell script execution on Linux/macOS CI and production.
+# See: https://github.com/scoutchain/scout-off-contracts/issues/683
+* text=auto eol=lf
+
+# Shell scripts MUST use LF — CRLF causes "bad interpreter: /bin/bash^M" errors.
+*.sh text eol=lf
+
+# SQL migration files MUST use LF for consistent execution on all platforms.
+*.sql text eol=lf
+
+# Optimized WASM binaries should never be line-ending-converted.
+*.wasm binary
+*.optimized.wasm binary
