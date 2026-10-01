@@ -1,17 +1,18 @@
 #![no_std]
-use soroban_sdk::{contracttype, Address, Env, IntoVal, String};
+
+use soroban_sdk::{contracttype, Address, Env, IntoVal, String, Vec};
 
 /// Four-tier progress level for a player profile
 #[contracttype]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum ProgressLevel {
-    /// Level 0 — profile created, no verification yet
+    /// Level 0 - profile created, no verification yet
     Unverified,
-    /// Level 1 — identity confirmed by academy or KYC
+    /// Level 1 - identity confirmed by academy or KYC
     VerifiedIdentity,
-    /// Level 2 — performance milestones verified by approved third party
+    /// Level 2 - performance milestones verified by approved third party
     PerformanceMilestones,
-    /// Level 3 — scout feedback or trial offer logged
+    /// Level 3 - scout feedback or trial offer logged
     EliteTier,
 }
 
@@ -22,10 +23,59 @@ pub struct ContractHealth {
     pub initialized: bool,
     /// Whether state-changing operations are currently paused.
     pub paused: bool,
+    /// Whether the `scout_access.pay_to_contact` function is paused independently
+    /// of the whole-contract pause (function-scoped circuit breaker).
+    /// Always `false` for contracts that do not implement a `pay_to_contact`
+    /// function (`registration`, `verification`, `progress`).
+    pub pay_to_contact_paused: bool,
+}
+
+/// Progress of a bounded, resumable storage migration.
+///
+/// A migration is reported rather than hidden: an operator has to be able to
+/// tell "not started" from "half done" from "finished", because `migrate` is
+/// expected to be called repeatedly until `complete` is true.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct MigrationStatus {
+    /// Schema version the contract was on when this call started.
+    pub from: u32,
+    /// Schema version this call targeted.
+    pub to: u32,
+    /// Schema version compiled into the running WASM.
+    pub code: u32,
+    /// Schema version currently recorded in storage.
+    pub current: u32,
+    /// True while storage is still behind the code's layout.
+    pub pending: bool,
+    /// True once `current` has reached `code`.
+    pub complete: bool,
+    /// Highest id the cursor has already visited. `0` means "not started".
+    pub last_visited_id: u64,
+    /// Total items rewritten across all calls so far.
+    pub processed: u32,
 }
 
 impl ProgressLevel {
-    /// Returns the next valid level, or None if already at the top.
+    /// Monotonic ordering used by contracts that compare minimum progress tiers.
+    pub fn rank(&self) -> u8 {
+        match self {
+            ProgressLevel::Unverified => 0,
+            ProgressLevel::VerifiedIdentity => 1,
+            ProgressLevel::PerformanceMilestones => 2,
+            ProgressLevel::EliteTier => 3,
+        }
+    }
+
+    /// Returns `Some(next_tier)` for `Unverified`, `VerifiedIdentity`, and
+    /// `PerformanceMilestones`, and `None` for `EliteTier`.
+    ///
+    /// `progress::advance_level` uses this to compute the next tier and maps
+    /// the `None` case to `ProgressError::AlreadyAtMaxLevel`, signalling that
+    /// a player is already at the top tier.
+    ///
+    /// This is the canonical implementation of the four-tier progression model
+    /// described in `docs/GLOSSARY.md`.
     pub fn next(&self) -> Option<ProgressLevel> {
         match self {
             ProgressLevel::Unverified => Some(ProgressLevel::VerifiedIdentity),
@@ -34,6 +84,80 @@ impl ProgressLevel {
             ProgressLevel::EliteTier => None,
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Cross-contract shared player types (issue #1455)
+// Single authoritative definitions used by registration and its consumers
+// (verification, scout_access) to avoid silent drift from mirror types.
+// ---------------------------------------------------------------------------
+
+/// Basic player vitals stored on-chain
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlayerVitals {
+    /// Player age in years at the time the profile was last written.
+    pub age: u32,
+    /// Player position label used for discovery filtering.
+    pub position: String,
+    /// Player region used for scout discovery filtering.
+    pub region: String,
+    /// Player nationality label displayed in profile results.
+    pub nationality: String,
+}
+
+/// Internal on-chain player profile (no level — progress contract is the source of truth)
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct StoredPlayerProfile {
+    /// Unique player identifier assigned by the registration contract.
+    pub player_id: u64,
+    /// Player wallet that owns and can update this profile.
+    pub wallet: Address,
+    /// Player vitals stored with the profile.
+    pub vitals: PlayerVitals,
+    /// IPFS/Arweave CIDs for highlight reels and photos
+    pub ipfs_hashes: Vec<String>,
+    /// Ledger timestamp when the player was first registered, in Unix seconds.
+    pub registered_at: u64,
+    /// Ledger timestamp when the profile was last updated, in Unix seconds.
+    pub updated_at: u64,
+}
+
+/// Full on-chain player profile returned to callers.
+/// `level` is derived from the progress contract at read time — it is NOT
+/// persisted here.  `progress::get_level` is the single source of truth.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PlayerProfile {
+    /// Unique player identifier assigned by the registration contract.
+    pub player_id: u64,
+    /// Player wallet that owns and can update this profile.
+    pub wallet: Address,
+    /// Player vitals stored with the profile.
+    pub vitals: PlayerVitals,
+    /// IPFS/Arweave CIDs for highlight reels and photos
+    pub ipfs_hashes: Vec<String>,
+    /// Current player level loaded from the progress contract at read time.
+    pub level: ProgressLevel,
+    /// Ledger timestamp when the player was first registered, in Unix seconds.
+    pub registered_at: u64,
+    /// Ledger timestamp when the profile was last updated, in Unix seconds.
+    pub updated_at: u64,
+}
+
+/// Lightweight player view for scout discovery (no IPFS hashes or wallet).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PlayerSummary {
+    /// Unique player identifier for fetching the full profile.
+    pub player_id: u64,
+    /// Player vitals exposed for scout discovery.
+    pub vitals: PlayerVitals,
+    /// Current player level loaded from the progress contract at read time.
+    pub level: ProgressLevel,
+    /// Ledger timestamp when the profile was last updated, in Unix seconds.
+    pub updated_at: u64,
 }
 
 /// Adapter trait for contract-specific error enums used by the shared
@@ -86,6 +210,110 @@ where
         .persistent()
         .extend_ttl(admin_key, admin_bump_ledgers, admin_bump_ledgers);
     Ok(admin)
+}
+
+/// One cross-contract peer-address pointer: the currently configured
+/// `address` (if any) and a monotonically incrementing `epoch` bumped on
+/// every successful write via [`write_wiring_link`].
+///
+/// Every contract's `get_wiring_state()` getter returns one `WiringLink` per
+/// peer pointer it holds (`verification` and `scout_access` each hold two;
+/// `progress` holds three; `registration` holds one) — see
+/// `docs/WIRING_REGISTRY_DESIGN.md` for the full cross-contract picture and
+/// how an off-chain caller uses `epoch` to detect a partially-applied
+/// re-wiring.
+///
+/// # Why `epoch` in addition to `address: Option<Address>`
+///
+/// `Option::None` already distinguishes "never configured" from "configured
+/// to *something*" — `epoch` adds a dimension `Option` cannot: it lets an
+/// operator distinguish *how many times* a link has been (re-)wired. Given
+/// only a single snapshot this mostly matters for the specific interrupted
+/// re-wiring scenario this design exists to catch: comparing `epoch` across
+/// **all pointers that target the same contract** (e.g. `verification`'s,
+/// `registration`'s, and `scout_access`'s independent `ProgressContract`
+/// pointers) reveals a mid-migration state that a bare address comparison
+/// alone would describe correctly but less diagnostically — an operator
+/// re-running a re-wiring script can tell "my calls aren't landing at all"
+/// (epoch unchanged from a prior snapshot) apart from "my calls are landing,
+/// but with the wrong address" (epoch changed, address still wrong), which
+/// point to two entirely different bugs (an auth/network failure vs. a
+/// typo'd argument).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct WiringLink {
+    pub address: Option<Address>,
+    pub epoch: u32,
+}
+
+impl WiringLink {
+    /// The zero-value link: never configured.
+    pub const fn unconfigured() -> Self {
+        WiringLink {
+            address: None,
+            epoch: 0,
+        }
+    }
+
+    /// Whether this link currently has an address set. Equivalent to
+    /// `epoch > 0` — every successful [`write_wiring_link`] call sets both
+    /// the address and bumps the epoch together, so the two can never
+    /// disagree about "configured or not."
+    pub fn is_configured(&self) -> bool {
+        self.address.is_some()
+    }
+}
+
+/// Read a wiring link's current address + epoch from instance storage.
+///
+/// `addr_key` and `epoch_key` are two variants of the calling contract's own
+/// `DataKey` enum (e.g. `DataKey::ProgressContract` and
+/// `DataKey::ProgressContractEpoch`). Returns [`WiringLink::unconfigured`]
+/// (address `None`, epoch `0`) if the link has never been written.
+pub fn read_wiring_link<K>(env: &Env, addr_key: &K, epoch_key: &K) -> WiringLink
+where
+    K: IntoVal<Env, soroban_sdk::Val>,
+{
+    let address = env.storage().instance().get::<K, Address>(addr_key);
+    let epoch = env
+        .storage()
+        .instance()
+        .get::<K, u32>(epoch_key)
+        .unwrap_or(0);
+    WiringLink { address, epoch }
+}
+
+/// Write a wiring link's address and atomically bump its epoch by one.
+///
+/// Every `set_*_contract` / `update_*_contract` setter across all four
+/// contracts calls this so epoch bookkeeping cannot silently drift between
+/// per-contract implementations — see `docs/WIRING_REGISTRY_DESIGN.md`
+/// ("Open Question 1", resolved by this shared helper). Returns the new
+/// epoch value; callers pass it straight into their `wiring_updated` event.
+///
+/// This does not perform admin authorization itself — callers must call
+/// [`require_admin`] (or otherwise authorize the caller) before invoking
+/// this.
+///
+/// # Overflow policy
+///
+/// The epoch is a `u32` incremented with [`u32::saturating_add`]. With
+/// `overflow-checks = true` in the release profile, a plain `epoch + 1` would
+/// **trap** on the 4,294,967,296th re-wiring. `saturating_add` saturates at
+/// `u32::MAX` rather than trapping.
+pub fn write_wiring_link<K>(env: &Env, addr_key: &K, epoch_key: &K, addr: &Address) -> u32
+where
+    K: IntoVal<Env, soroban_sdk::Val>,
+{
+    let next_epoch = env
+        .storage()
+        .instance()
+        .get::<K, u32>(epoch_key)
+        .unwrap_or(0)
+        .saturating_add(1);
+    env.storage().instance().set(addr_key, addr);
+    env.storage().instance().set(epoch_key, &next_epoch);
+    next_epoch
 }
 
 /// Safe (checked) arithmetic helpers shared across all four contracts.
@@ -290,8 +518,8 @@ pub mod safe_math {
 
         #[test]
         fn i128_sub_overflow_returns_err() {
-            // MIN - (-1) would overflow positively
-            assert_eq!(safe_sub_i128(i128::MIN, -1), Err(ArithmeticError));
+            // MAX - (-1) would overflow positively
+            assert_eq!(safe_sub_i128(i128::MAX, -1), Err(ArithmeticError));
         }
 
         #[test]
@@ -347,9 +575,7 @@ pub mod safe_math {
 
         #[test]
         fn i128_all_ops_exhaustive_no_panic() {
-            let values: &[i128] = &[
-                i128::MIN, i128::MIN + 1, -1, 0, 1, i128::MAX - 1, i128::MAX,
-            ];
+            let values: &[i128] = &[i128::MIN, i128::MIN + 1, -1, 0, 1, i128::MAX - 1, i128::MAX];
             for &a in values {
                 for &b in values {
                     let _ = safe_add_i128(a, b);
@@ -394,22 +620,73 @@ pub mod safe_math {
     }
 }
 
+// ── Shared pagination types ───────────────────────────────────────────────────
+//
+// All list-returning query functions that accept an `offset` + `limit` use one
+// of these page-result structs so callers receive both the requested window of
+// entries **and** the total count (which tells them when to stop paging).
+//
+// Soroban's `#[contracttype]` macro does not support Rust generics, so each
+// per-element type needs its own concrete Page struct.  The naming convention
+// is `<ElementType>Page`.  New structs should be added here rather than
+// reinvented per-contract.
+//
+// The `total` field reflects the size of the underlying collection at the
+// moment the function was called; it is not a ledger-snapshotted value.
+// Callers should treat it as an advisory guide for loop termination rather
+// than a guarantee of consistency across multiple calls.
 
+/// A page of `u64` IDs (e.g. player IDs) returned by a paginated query.
 ///
-/// Rules:
-/// - CIDv0: starts with "Qm", exactly 46 characters, base58btc charset
-///   (no 0, O, I, l characters).
-/// - CIDv1 (base32): starts with "bafy", 59–128 characters.
+/// `entries` contains at most `limit` (capped at 50) items starting at
+/// `offset`.  `total` is the total number of items in the underlying
+/// collection at call time — use it to detect when paging is complete.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct U64Page {
+    /// The items in this page, in insertion order.
+    pub entries: soroban_sdk::Vec<u64>,
+    /// Total number of items in the underlying collection.
+    pub total: u32,
+}
+
+/// Lightweight syntactic validation for IPFS CIDs used as evidence and media references.
+///
+/// Accepted forms:
+/// - **CIDv0**: starts with `"Qm"`, exactly 46 characters, base58btc charset
+///   (digits 1–9, upper A–Z except I/O, lower a–z except l).
+/// - **CIDv1 base32**: starts with `"baf"` (multibase prefix `b` followed by
+///   base32-encoded version=1 varint and codec varint). This covers all common
+///   codecs: `bafy` (dag-pb, 0x70), `bafk` (raw, 0x55), `bafyr` (dag-cbor,
+///   0x71), `bagu` (dag-json, 0x0129), etc. Length must be 59–128 characters
+///   and only RFC 4648 lowercase base32 characters (a–z, 2–7) are accepted.
+///
+/// This is a lightweight format sanity check, not a full CID decoder — it does
+/// not parse the multibase prefix, multicodec, or multihash the way a real CID
+/// library would. Any CID that passes this check but is still malformed will
+/// simply fail to resolve against the downstream IPFS/Arweave gateway, which
+/// acts as the real source of truth for CID validity. This function only needs
+/// to catch obviously wrong input (wrong prefix, wrong length, or bytes outside
+/// the expected alphabet — e.g. whitespace or control characters), not
+/// guarantee byte-for-byte correctness.
+///
+/// # Errors
+///
+/// Returns `Err(&'static str)` with a human-readable message describing the
+/// validation failure. These messages are intended for tests and debugging;
+/// callers should map them to the appropriate contract error variant (e.g.
+/// `InvalidInput`) rather than surfacing the raw string to end users.
 pub fn validate_cid(hash: &String) -> Result<(), &'static str> {
     let hash_len = hash.len();
     let bytes = hash.to_bytes();
 
     let starts_with_qm = bytes.get(0) == Some(b'Q') && bytes.get(1) == Some(b'm');
-    let starts_with_bafy = hash_len >= 4
+    // Accept any CIDv1 base32 starting with "baf" — covers bafy (dag-pb),
+    // bafk (raw), bafyr (dag-cbor), bagu (dag-json) and future codecs.
+    let starts_with_baf = hash_len >= 3
         && bytes.get(0) == Some(b'b')
         && bytes.get(1) == Some(b'a')
-        && bytes.get(2) == Some(b'f')
-        && bytes.get(3) == Some(b'y');
+        && bytes.get(2) == Some(b'f');
 
     if starts_with_qm {
         // CIDv0: exactly 46 chars
@@ -428,17 +705,9 @@ pub fn validate_cid(hash: &String) -> Result<(), &'static str> {
             }
         }
         Ok(())
-    } else if starts_with_bafy {
+    } else if starts_with_baf {
         // CIDv1 (base32): 59–128 chars, RFC4648 lowercase base32 charset
-        // (a–z, 2–7). This is a lightweight format sanity check, not a full
-        // CID decoder — it does not parse the multibase prefix, multicodec,
-        // or multihash the way a real CID library would. Any CID that
-        // passes this check but is still malformed will simply fail to
-        // resolve against the downstream IPFS/Arweave gateway, which acts
-        // as the real source of truth for CID validity. This function only
-        // needs to catch obviously wrong input (wrong prefix, wrong length,
-        // or bytes outside the expected alphabet — e.g. whitespace or
-        // control characters), not guarantee byte-for-byte correctness.
+        // (a–z, 2–7).
         if !(59..=128).contains(&hash_len) {
             return Err("invalid cid: CIDv1 must be 59–128 characters");
         }
@@ -452,7 +721,7 @@ pub fn validate_cid(hash: &String) -> Result<(), &'static str> {
         }
         Ok(())
     } else {
-        Err("invalid cid: must start with 'Qm' (CIDv0) or 'bafy' (CIDv1)")
+        Err("invalid cid: must start with 'Qm' (CIDv0) or 'baf' (CIDv1 base32)")
     }
 }
 
@@ -474,9 +743,83 @@ fn is_base32_char(b: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use soroban_sdk::testutils::Address as _;
 
     fn s(env: &Env, v: &str) -> String {
         String::from_str(env, v)
+    }
+
+    // ── write_wiring_link tests (#1466) ───────────────────────────────────────
+
+    /// First wiring: epoch starts at 0, advances to 1.
+    #[test]
+    fn test_write_wiring_link_first_call_sets_epoch_to_one() {
+        let env = Env::default();
+        let addr = Address::generate(&env);
+
+        write_wiring_link(&env, &1u32, &2u32, &addr);
+
+        let stored_addr: Address = env.storage().instance().get(&1u32).unwrap();
+        let stored_epoch: u32 = env.storage().instance().get(&2u32).unwrap();
+
+        assert_eq!(stored_addr, addr);
+        assert_eq!(stored_epoch, 1u32);
+    }
+
+    /// Re-wiring increments the epoch and updates the address.
+    #[test]
+    fn test_write_wiring_link_increments_epoch_on_rewiring() {
+        let env = Env::default();
+        let addr1 = Address::generate(&env);
+        let addr2 = Address::generate(&env);
+
+        write_wiring_link(&env, &1u32, &2u32, &addr1);
+        write_wiring_link(&env, &1u32, &2u32, &addr2);
+
+        let stored_addr: Address = env.storage().instance().get(&1u32).unwrap();
+        let stored_epoch: u32 = env.storage().instance().get(&2u32).unwrap();
+
+        assert_eq!(stored_addr, addr2);
+        assert_eq!(stored_epoch, 2u32);
+    }
+
+    /// Boundary: epoch at u32::MAX must saturate, not trap (issue #1466).
+    #[test]
+    fn test_write_wiring_link_saturates_at_u32_max_epoch() {
+        let env = Env::default();
+
+        // Seed the epoch key at u32::MAX.
+        env.storage().instance().set(&2u32, &u32::MAX);
+
+        let addr = Address::generate(&env);
+        // saturating_add(1) keeps epoch at u32::MAX — must not trap.
+        write_wiring_link(&env, &1u32, &2u32, &addr);
+
+        let stored_epoch: u32 = env.storage().instance().get(&2u32).unwrap();
+        assert_eq!(stored_epoch, u32::MAX,
+            "epoch must saturate at u32::MAX, not overflow or trap");
+        let stored_addr: Address = env.storage().instance().get(&1u32).unwrap();
+        assert_eq!(stored_addr, addr,
+            "address must still be updated at boundary epoch");
+    }
+
+    #[test]
+    fn wiring_link_unconfigured_is_not_configured() {
+        let link = WiringLink::unconfigured();
+        assert_eq!(link.address, None);
+        assert_eq!(link.epoch, 0);
+        assert!(!link.is_configured());
+    }
+
+    #[test]
+    fn wiring_link_with_address_is_configured() {
+        let env = Env::default();
+        let addr = Address::generate(&env);
+        let link = WiringLink {
+            address: Some(addr),
+            epoch: 1,
+        };
+        assert!(link.is_configured());
     }
 
     #[test]
@@ -552,6 +895,36 @@ mod tests {
     fn test_validate_cid_rejects_bad_prefix() {
         let env = Env::default();
         let cid = s(&env, "XmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB");
+        assert!(validate_cid(&cid).is_err());
+    }
+
+    #[test]
+    fn test_validate_cid_v1_bafk_raw_codec_accepted() {
+        let env = Env::default();
+        // Real bafkrei CID (raw codec, 0x55) — 59 chars, valid base32
+        let cid = s(
+            &env,
+            "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku",
+        );
+        assert!(validate_cid(&cid).is_ok());
+    }
+
+    #[test]
+    fn test_validate_cid_v1_bafy_still_accepted() {
+        let env = Env::default();
+        // dag-pb CID (bafy prefix) still works after broadening to baf
+        let cid = s(
+            &env,
+            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        );
+        assert!(validate_cid(&cid).is_ok());
+    }
+
+    #[test]
+    fn test_validate_cid_v1_rejects_unknown_base_prefix() {
+        let env = Env::default();
+        // 'z' multibase (base58btc) — not a CIDv0 (no Qm) and not base32 (baf)
+        let cid = s(&env, "zdj7WgYnAMFGPMT7eaZMcFr3BzURoW1KYJdH6EBtEaHJQ");
         assert!(validate_cid(&cid).is_err());
     }
 }

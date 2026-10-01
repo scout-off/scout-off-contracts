@@ -121,15 +121,29 @@ Add a gate before charging the subscription fee:
 
 ```rust
 if tier == SubscriptionTier::Pro {
-    // Fetch scout profile from registration contract via cross-contract call
-    let scout_profile = Self::fetch_scout_profile(&env, &scout)?;
-    if !scout_profile.verified {
-        return Err(ScoutAccessError::ScoutNotVerified);
+    if let Some(reg_contract_addr) = env
+        .storage()
+        .instance()
+        .get::<DataKey, Address>(&DataKey::RegistrationContract)
+    {
+        let reg_client = registration_contract::Client::new(&env, &reg_contract_addr);
+        match reg_client.try_get_scout_by_wallet(&scout) {
+            Ok(Ok(scout_profile)) => {
+                if !scout_profile.verification.verified {
+                    return Err(ScoutAccessError::ScoutNotVerified);
+                }
+            }
+            _ => {
+                // Scout not found in registration contract; deny Pro-tier access
+                return Err(ScoutAccessError::ScoutNotVerified);
+            }
+        }
     }
+    // If registration contract is not wired, allow Pro-tier subscription (graceful degradation)
 }
 ```
 
-Requires a cross-contract call to the registration contract. See "Cross-Contract Integration" below.
+Requires a cross-contract call to the registration contract. See "Cross-Contract Integration" below. Note that the check reads `scout_profile.verification.verified` (the structured `ScoutVerificationRecord`), not the top-level `ScoutProfile.verified` legacy bool — `verify_scout` keeps both in sync today, but the structured field is the one this gate actually depends on.
 
 ### Error Codes
 
@@ -139,30 +153,23 @@ Requires a cross-contract call to the registration contract. See "Cross-Contract
 ScoutNotVerified = 27,
 ```
 
-**New error in registration contract:**
+**Reused (pre-existing) error in registration contract:** `ScoutNotFound` already existed as code `12` before this feature (used by `get_scout` and other lookups) and is reused as-is for `get_scout_by_wallet` — no new registration-contract error variant was needed:
 ```rust
-/// Scout wallet was not found in the registry.
-ScoutNotFound = 5,
+/// Invalid `scout_id`.
+ScoutNotFound = 12,
 ```
 
 ### Cross-Contract Integration
 
-The scout_access contract must call the registration contract to fetch and validate scout verification status. This requires:
+The scout_access contract calls the registration contract to fetch and validate scout verification status. As implemented, this uses the registration contract's existing wallet-lookup function rather than a new, verification-specific one:
 
-1. A new function in the registration contract:
-   ```rust
-   pub fn get_scout_profile(env: Env, wallet: Address) -> Result<ScoutProfile, ScoutChainError>
-   ```
+1. `get_scout_by_wallet(env: Env, wallet: Address) -> Result<ScoutProfile, ScoutChainError>` (`contracts/registration/src/lib.rs`) — a general-purpose, pre-existing wallet-lookup function (its doc comment reads "Get a scout profile by wallet address. Used by scout_access contract for Pro-tier verification gating."), reused here rather than adding a verification-specific `get_scout_profile` function. It resolves the wallet to a `scout_id` via the `DataKey::ScoutByWallet` index and returns the full `ScoutProfile`, which includes the `verification: ScoutVerificationRecord` the gate inspects.
 
-2. A scout_access contract client call before `subscribe()`:
-   ```rust
-   let scout_profile = registration_client.get_scout_profile(&scout)?;
-   if tier == SubscriptionTier::Pro && !scout_profile.verified {
-       return Err(ScoutAccessError::ScoutNotVerified);
-   }
-   ```
+2. `scout_access`'s `subscribe()` (`contracts/scout_access/src/lib.rs`) declares a local `registration_contract` module with its own `#[contractclient]`-derived `Client` and a minimal `RegistrationContractClient` trait exposing only `get_scout_by_wallet`, plus a local copy of the `ScoutProfile`/`ScoutVerificationRecord` shapes it needs (contracts can't share Rust types directly across the WASM boundary — each side keeps a client-side mirror of the other's public interface, the same pattern `progress_contract`'s client module uses). Before charging the Pro-tier fee, `subscribe()` calls `try_get_scout_by_wallet` and checks `scout_profile.verification.verified`, returning `ScoutAccessError::ScoutNotVerified` if the scout isn't found or isn't verified. If no registration contract is wired (`DataKey::RegistrationContract` unset), the gate is skipped (graceful degradation) rather than blocking Pro-tier subscriptions outright.
 
 This mirrors the existing progress-contract wiring (see `set_progress_contract`).
+
+If a dedicated `get_scout_profile` function (or a narrower verification-only query) is ever wanted as the long-term API — e.g. to avoid exposing the full `ScoutProfile` over a call whose only real need is the `verified` flag — that would be a new addition to the registration contract, not a rename of `get_scout_by_wallet`. Per `docs/VERSIONING.md`'s append-only/no-removal rules for public contract functions, `get_scout_by_wallet` cannot simply be renamed or removed once shipped, regardless of how many callers it has today.
 
 ---
 
@@ -204,9 +211,9 @@ Per ai.md and standard microservice patterns:
 
 | Component | Repo | Owner | Responsibility |
 |-----------|------|-------|-----------------|
-| On-chain verified-tier gating | this repo | @StellarCN | Reject Pro subscriptions for unverified scouts via contract enforcement |
+| On-chain verified-tier gating | this repo | @scout-off | Reject Pro subscriptions for unverified scouts via contract enforcement |
 | Off-chain KYC gate | frontend/backend | @frontend-team | Prevent UI submission of `register_scout` calls from unverified identities |
-| Scout identity verification (admin) | this repo | @StellarCN | Admin `verify_scout` function to mark scouts as verified |
+| Scout identity verification (admin) | this repo | @scout-off | Admin `verify_scout` function to mark scouts as verified |
 | KYC service (identity provider) | external | e.g., Stripe, Onfido | Provide proof-of-personhood, document verification, etc. |
 | Wallet tracking (if any) | frontend/backend | @frontend-team | Optional: maintain off-chain ledger of identity → wallet mappings for audit trails |
 

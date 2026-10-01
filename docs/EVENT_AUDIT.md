@@ -131,11 +131,24 @@ The tool reconstructs state from these events:
 | `progress_updated` | progress | Level progression | `old_level` must match current; transition must follow rules |
 | `player_level_reset` | progress | Level reset | Must be valid reset-to level |
 | `milestone_approved` | verification | Milestone registry | Milestone must be unique per (player, index) |
-| `milestone_disputed` | verification | Dispute state | Milestone must exist |
-| `dispute_resolved` | verification | Dispute outcome | Dispute must be in "disputed" state |
+| `milestone_disputed` | verification | Dispute state (including impact_score, jury_required, quorum, voting_deadline) | Milestone must exist |
+| `dispute_vote_cast` | verification | Per-validator jury vote | Dispute must be jury-required and unresolved; validator must be eligible |
+| `dispute_tallied` | verification | Jury dispute outcome | Dispute must be jury-required; votes_for+votes_against must match accumulated cast events |
+| `dispute_resolved` | verification | Admin dispute outcome | Dispute must be non-jury and in "disputed" state |
 | `trial_offer_logged` | scout_access | Trial offer creation | Trial must be unique per (player, index) |
 | `trial_offer_confirmed` | scout_access | Trial state transition | Must follow logged → confirmed or expired path |
 | `trial_offer_expired` | scout_access | Trial state transition | Must follow logged → expired or confirmed path |
+| `milestone_flagged` | verification | Milestone pending-re-review flag | Milestone must exist; validator must be revoked for cause |
+| `milestone_flag_cleared` | verification | Flag clearance | Flag must be set; reviewer must be an active validator |
+| `revocation_cascade_complete` | verification | End of cascade sweep | Emitted after all milestones for a for-cause revocation are flagged |
+| `revocation_cascade_continued` | verification | Partial cascade sweep | Cursor stored; `continue_revocation_cascade` required to finish |
+| `jury_config_updated` | verification | Jury parameter change | Snapshot fields for config history; does not alter in-flight disputes |
+| `milestone_threshold_updated` | verification | k-of-n threshold change | Operators / indexers track threshold history |
+| `milestone_threshold_unreachable` | verification | Active set dropped below threshold | Health signal after revocation (or similar) |
+
+### Attestation key registration
+
+The verification contract emits `attestation_key_registered` after an active validator registers or rotates a key. Its topics are `(event_name, wallet)` and its data is `(public_key, rotated_from)`. `rotated_from` is `None` for a new key and contains the previous key when a validator rotates keys. The event-history audit tool does not currently replay the attestation-key registry.
 
 ---
 
@@ -159,6 +172,8 @@ To speed up audits:
 2. **Does not validate external data** (e.g., whether an evidence hash is a valid IPFS CID). Only validates the event chain itself.
 3. **Requires database access** for indexer comparison. Without `DATABASE_URL`, only validates internal consistency and live state.
 4. **Does not audit fee_config_history, admin_transfers, or validator_history** — these are pure event logs with no "current state" to reconstruct (they are audited separately, see [INDEXER.md](INDEXER.md)).
+5. **Does not replay `evidence_access_granted` / `evidence_access_revoked`** — `scripts/reconcile-indexer.js` reconciles the `evidence_access_grants` table directly against `scout_access.get_player_access_grants` (a current-state getter, not an event replay), which is sufficient for that data shape; see [INDEXER.md](INDEXER.md) and [EVIDENCE_PRIVACY.md](EVIDENCE_PRIVACY.md). Event-chain validation here (e.g. "no `evidence_access_revoked` without a prior `evidence_access_granted` for the same pair") is a reasonable future extension of this tool but is not implemented yet.
+6. **Does not audit the k-of-n attestation flow** — `attestation_recorded`, `attestation_window_expired`, and `validator_votes_invalidated` are not currently replayed or chain-validated by this tool. Pending vote tallies, per-validator vote status, and round resets are therefore not cross-validated against on-chain state by `audit-event-history.js` today.
 
 ---
 

@@ -78,7 +78,6 @@ fn default_fees() -> FeeConfig {
 struct Harness {
     env: Env,
     xlm: Address,
-    admin: Address,
     progress: ProgressContractClient<'static>,
     scout_access: ScoutAccessContractClient<'static>,
     verification: VerificationContractClient<'static>,
@@ -91,11 +90,11 @@ fn setup() -> Harness {
 
     let admin = Address::generate(&env);
 
-    let ver_id = env.register_contract(None, VerificationContract);
+    let ver_id = env.register(VerificationContract, ());
     let verification = VerificationContractClient::new(&env, &ver_id);
     verification.initialize(&admin);
 
-    let progress_id = env.register_contract(None, ProgressContract);
+    let progress_id = env.register(ProgressContract, ());
     let progress = ProgressContractClient::new(&env, &progress_id);
     progress.initialize(&admin);
     progress.set_verification_contract(&ver_id);
@@ -104,7 +103,7 @@ fn setup() -> Harness {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    let sa_id = env.register_contract(None, ScoutAccessContract);
+    let sa_id = env.register(ScoutAccessContract, ());
     let scout_access = ScoutAccessContractClient::new(&env, &sa_id);
     scout_access.initialize(&admin, &xlm, &default_fees());
     scout_access.set_progress_contract(&progress_id);
@@ -113,7 +112,6 @@ fn setup() -> Harness {
     Harness {
         env,
         xlm,
-        admin,
         progress,
         scout_access,
         verification,
@@ -137,13 +135,18 @@ fn advance_player(h: &Harness, player_id: u64, levels: u32) {
 
 fn approve_milestone(h: &Harness, player_id: u64, evidence_hash: &str) {
     let validator = Address::generate(&h.env);
-    h.verification
-        .register_validator(&validator, &String::from_str(&h.env, "UEFA-B-License"));
+    h.verification.register_validator(
+        &validator,
+        &String::from_str(&h.env, "UEFA-B-License"),
+        &String::from_str(&h.env, "Default Academy"),
+        &soroban_sdk::Vec::new(&h.env),
+    );
     h.verification.approve_milestone(
         &validator,
         &player_id,
         &String::from_str(&h.env, "scored"),
         &String::from_str(&h.env, evidence_hash),
+        &None,
     );
 }
 
@@ -224,9 +227,9 @@ fn test_pay_to_contact_with_sufficient_balance_creates_record() {
     h.scout_access.pay_to_contact(&scout, &player_id);
 
     // ContactRecord must exist — get_contacts returns the player id.
-    let contacts = h.scout_access.get_contacts(&scout);
+    let contacts = h.scout_access.get_scout_contacts(&scout);
     assert!(
-        contacts.contains(&player_id),
+        contacts.contains(player_id),
         "ContactRecord must exist after successful pay_to_contact"
     );
 
@@ -256,13 +259,17 @@ fn test_log_trial_offer_escrow_transfer_failure_leaves_no_escrow() {
     h.scout_access.subscribe(&scout, &SubscriptionTier::Elite);
     h.scout_access.pay_to_contact(&scout, &player_id);
 
-    approve_milestone(&h, player_id, "QmAtom1AtomAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAa");
+    approve_milestone(
+        &h,
+        player_id,
+        "QmAtom1AtomAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    );
 
     // Zero balance — escrow transfer will fail, must panic.
     h.scout_access.log_trial_offer(
         &scout,
         &player_id,
-        &String::from_str(&h.env, "QmAtomHashAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+        &String::from_str(&h.env, "QmAtomHashAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
     );
 }
 
@@ -280,12 +287,16 @@ fn test_log_trial_offer_with_sufficient_balance_creates_escrow() {
     h.scout_access.subscribe(&scout, &SubscriptionTier::Elite);
     h.scout_access.pay_to_contact(&scout, &player_id);
 
-    approve_milestone(&h, player_id, "QmAtom2AtomBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBb");
+    approve_milestone(
+        &h,
+        player_id,
+        "QmAtom2AtomAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    );
 
     let index = h.scout_access.log_trial_offer(
         &scout,
         &player_id,
-        &String::from_str(&h.env, "QmAtomHashBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
+        &String::from_str(&h.env, "QmAtomHashAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
     );
 
     assert_eq!(index, 1);
@@ -316,12 +327,16 @@ fn test_confirm_expiry_refund_is_atomic_with_escrow_cleanup() {
     h.scout_access.subscribe(&scout, &SubscriptionTier::Elite);
     h.scout_access.pay_to_contact(&scout, &player_id);
 
-    approve_milestone(&h, player_id, "QmAtom3AtomCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCc");
+    approve_milestone(
+        &h,
+        player_id,
+        "QmAtom3AtomAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    );
 
     let index = h.scout_access.log_trial_offer(
         &scout,
         &player_id,
-        &String::from_str(&h.env, "QmAtomHashCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"),
+        &String::from_str(&h.env, "QmAtomHashAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
     );
 
     let bal_after_log = balance(&h, &scout);
@@ -329,12 +344,12 @@ fn test_confirm_expiry_refund_is_atomic_with_escrow_cleanup() {
     // Advance past expiry.
     h.env.ledger().with_mut(|l| l.timestamp += EXPIRY + 1);
 
-    // confirm_trial_offer returns Err(TrialOfferExpired) — the error is the
-    // contract's logical return, but the transfer still went through.
+    // The expiry-refund path succeeds so the refund, cleanup, and event are
+    // committed atomically. The expiry event identifies the outcome.
     let result = h
         .scout_access
-        .try_confirm_trial_offer(&player_wallet, &player_id, &index);
-    assert!(result.is_err(), "expired confirm must return an error");
+        .try_confirm_trial_offer(&player_wallet, &player_id, &index, &None);
+    assert!(result.is_ok(), "expired confirm must commit the refund");
 
     // Scout's balance must be restored — transfer + escrow removal are atomic.
     let bal_after_refund = balance(&h, &scout);
@@ -347,7 +362,7 @@ fn test_confirm_expiry_refund_is_atomic_with_escrow_cleanup() {
     // Trying to confirm again errors — escrow is gone (TrialOfferAlreadyConfirmed).
     let second = h
         .scout_access
-        .try_confirm_trial_offer(&player_wallet, &player_id, &index);
+        .try_confirm_trial_offer(&player_wallet, &player_id, &index, &None);
     assert!(
         second.is_err(),
         "second confirm after refund must error (escrow already cleaned up)"
@@ -426,7 +441,10 @@ fn test_refund_subscription_is_atomic_with_balance_debit() {
     h.scout_access.subscribe(&scout, &SubscriptionTier::Elite);
 
     let scout_bal_before = balance(&h, &scout);
-    assert_eq!(scout_bal_before, 0, "scout balance must be zero after paying full Elite fee");
+    assert_eq!(
+        scout_bal_before, 0,
+        "scout balance must be zero after paying full Elite fee"
+    );
 
     // Admin issues a partial refund of 1_000_000 stroops.
     let refund_amount: i128 = 1_000_000;
@@ -434,8 +452,7 @@ fn test_refund_subscription_is_atomic_with_balance_debit() {
 
     let scout_bal_after = balance(&h, &scout);
     assert_eq!(
-        scout_bal_after,
-        refund_amount,
+        scout_bal_after, refund_amount,
         "scout balance must increase by exactly the refund amount"
     );
 }
@@ -457,7 +474,8 @@ fn test_failed_subscribe_does_not_increment_accumulated_fees() {
     // First, get some real fees in via a successful subscription.
     let scout_good = Address::generate(&h.env);
     mint(&h, &scout_good, BASIC_FEE);
-    h.scout_access.subscribe(&scout_good, &SubscriptionTier::Basic);
+    h.scout_access
+        .subscribe(&scout_good, &SubscriptionTier::Basic);
 
     // Capture fees after the successful subscription.
     // We can infer accumulated fees = BASIC_FEE from the successful withdrawal check below.

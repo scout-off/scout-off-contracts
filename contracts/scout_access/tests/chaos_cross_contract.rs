@@ -46,7 +46,9 @@ use scoutchain_scout_access::{
     FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
 };
 use scoutchain_shared_types::ProgressLevel;
-use scoutchain_verification::{VerificationContract, VerificationContractClient};
+use scoutchain_verification::{
+    RevocationSeverity, VerificationContract, VerificationContractClient,
+};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
     token::StellarAssetClient,
@@ -132,8 +134,18 @@ fn build_harness() -> ChaosHarness {
     // --- Register validators ---
     let v0 = Address::generate(&env);
     let v1 = Address::generate(&env);
-    verification.register_validator(&v0, &String::from_str(&env, "UEFA-B-License-A"));
-    verification.register_validator(&v1, &String::from_str(&env, "UEFA-B-License-B"));
+    verification.register_validator(
+        &v0,
+        &String::from_str(&env, "UEFA-B-License-A"),
+        &String::from_str(&env, "Default Academy"),
+        &soroban_sdk::Vec::new(&env),
+    );
+    verification.register_validator(
+        &v1,
+        &String::from_str(&env, "UEFA-B-License-B"),
+        &String::from_str(&env, "Default Academy"),
+        &soroban_sdk::Vec::new(&env),
+    );
 
     // --- Register scouts (Pro and Elite) ---
     let scout_pro = Address::generate(&env);
@@ -168,6 +180,7 @@ fn op_approve_milestone(h: &mut ChaosHarness, v_idx: usize, player_id: u64, cid:
         &player_id,
         &String::from_str(&h.env, "chaos milestone"),
         &String::from_str(&h.env, cid),
+        &None,
     );
     // Note: may return AlreadyAtMaxLevel or DuplicateEvidence — both are fine.
 }
@@ -208,11 +221,10 @@ fn op_log_trial_offer(
 ) -> Option<u32> {
     let scout = h.pool.scouts[s_idx].clone();
     StellarAssetClient::new(&h.env, &h.xlm).mint(&scout, &TRIAL_ESCROW);
-    match h.scout_access.try_log_trial_offer(
-        &scout,
-        &player_id,
-        &String::from_str(&h.env, cid),
-    ) {
+    match h
+        .scout_access
+        .try_log_trial_offer(&scout, &player_id, &String::from_str(&h.env, cid))
+    {
         Ok(Ok(idx)) => Some(idx),
         _ => None,
     }
@@ -227,19 +239,20 @@ fn op_confirm_trial_offer(
     let player_wallet = Address::generate(&h.env);
     match h
         .scout_access
-        .try_confirm_trial_offer(&player_wallet, &player_id, &index)
+        .try_confirm_trial_offer(&player_wallet, &player_id, &index, &None)
     {
         Ok(Ok(())) => Ok(()),
-        Ok(Err(e)) => Err(e),
-        Err(_) => Err(scoutchain_scout_access::ScoutAccessError::ProgressCallFailed),
+        Err(Ok(e)) => Err(e),
+        _ => Err(scoutchain_scout_access::ScoutAccessError::ProgressCallFailed),
     }
 }
 
 /// Revoke validator at `v_idx`.
 fn op_revoke_validator(h: &mut ChaosHarness, v_idx: usize) {
     let v = h.pool.validators[v_idx].clone();
-    let _ = h.scout_access.try_withdraw_fees; // just to keep the borrow happy
-    let _ = h.verification.try_revoke_validator(&v, &None);
+    let _ = h
+        .verification
+        .try_revoke_validator(&v, &RevocationSeverity::Routine, &None);
 }
 
 // ---------------------------------------------------------------------------
@@ -281,13 +294,15 @@ fn check_invariants(h: &ChaosHarness, state: &ScheduleState, schedule_name: &str
         // a second confirm_trial_offer attempt must return TrialOfferAlreadyConfirmed,
         // not TrialOfferNotFound — proving the offer record exists but escrow was removed.
         let player_wallet = Address::generate(&h.env);
-        let result = h
-            .scout_access
-            .try_confirm_trial_offer(&player_wallet, &player_id, &index);
+        let result =
+            h.scout_access
+                .try_confirm_trial_offer(&player_wallet, &player_id, &index, &None);
         assert!(
             matches!(
                 result,
-                Ok(Err(scoutchain_scout_access::ScoutAccessError::TrialOfferAlreadyConfirmed))
+                Err(Ok(
+                    scoutchain_scout_access::ScoutAccessError::TrialOfferAlreadyConfirmed
+                ))
             ),
             "[{schedule_name}] INVARIANT BROKEN: no-orphaned-escrow violated — \
              second confirm_trial_offer for confirmed offer ({player_id}, {index}) \

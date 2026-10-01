@@ -25,15 +25,16 @@ category into one place so a migration operator has a single checklist.
 | 2 | **Player profiles** | `registration` | ✅ Fully replayable | `replay-state.sh` exports player payloads via `get_player_count`/`get_player` and re-seeds them through `admin_seed_player`, which bypasses the wallet-auth requirement of `register_player`. The exported payload includes the resolved `level` field from the progress contract. | — |
 | 3 | **Scout profiles** | `registration` | ✅ Fully replayable | Same path as players: `get_scout_count`/`get_scout` → `admin_seed_scout`. | — |
 | 4 | **Player progress levels** | `progress` | ✅ Fully replayable | The `level` field is captured in the player export (see row 2) and written via `admin_seed_player` on the new registration contract, then synced to the new progress contract by the cross-contract `set_player_level` call that `admin_seed_player` triggers. | — |
-| 5 | **Progress history entries** | `progress` | ⚠️ Partially replayable | `get_history_count`/`get_history_entry` expose the full history, but there is no admin-seed entrypoint to re-write individual `HistoryEntry` records on a new contract. The current script captures a snapshot for audit purposes but does **not** replay history into the new contract. | Open — no tracking issue yet |
-| 6 | **Milestone records** | `verification` | ⚠️ Partially replayable | Each approved milestone is readable via `get_milestone_count`/`get_milestone`, but there is no admin-seed entrypoint to replay them onto a new contract. The evidence-hash uniqueness index (`EvidenceUsed`) also cannot be reconstructed without replaying every `approve_milestone` call with validator auth. Indices (MilestoneCounter, GlobalMilestoneIndex) would require careful reconstruction. | Open — no tracking issue yet |
-| 7 | **In-flight milestone disputes** | `verification` | ❌ Not replayable | `dispute_milestone` requires player auth, and `resolve_dispute` requires admin auth. There is no admin-seed path for disputes. An active dispute on the old contract has no equivalent on the new contract after migration. Operators must manually resolve or acknowledge open disputes before migrating. | Open — **identified in this documentation audit** |
-| 8 | **Scout subscriptions** | `scout_access` | ⚠️ Partially replayable | `get_subscription` exposes the current subscription record per scout. A future `admin_seed_subscription` entrypoint could replay them, but none exists today. XLM balances are on-chain; the contract-held `AccumulatedFees` are replayed via the normal withdrawal path before migration. | Open — no tracking issue yet |
-| 9 | **Contact records** | `scout_access` | ⚠️ Partially replayable | `get_player_contacts` / `ScoutContacts` index expose which scouts contacted which players, but there is no admin-seed path. Replaying would require re-invoking `pay_to_contact` or an admin seed entrypoint. | Open — no tracking issue yet |
-| 10 | **Trial offers** | `scout_access` | ⚠️ Partially replayable | `get_trial_count`/`get_trial_offer` expose offer records, but there is no admin-seed entrypoint. In-flight trial escrows (unconfirmed, un-expired) are at risk of loss. | Open — no tracking issue yet |
-| 11 | **Fee configuration history** | `scout_access` | ⚠️ Partially replayable | The last 5 `FeeConfig` snapshots are on-chain via `get_fee_config_history`. The current config is re-applied by `initialize.sh` on the new contract; the bounded history is not replayed. | Open — cosmetic gap only |
-| 12 | **Player deactivation state** | `registration` | ❌ Not tracked in indexer | `registration.deactivate_player` / `reactivate_player` have no `active` column in the PostgreSQL `players` table. A deactivated player appears indistinguishable from an active one in the off-chain index. | Open — indexer schema gap, see [INDEXER.md](INDEXER.md#known-gaps-between-the-contracts-and-this-schema) |
-| 13 | **Auto-renewal flags** | `scout_access` | ⚠️ Partially replayable | `get_auto_renew` exposes per-scout opt-in state, but there is no admin-seed path. Scouts would need to re-opt-in after a contract migration. | Open — no tracking issue yet |
+| 5 | **Progress history entries** | `progress` | ✅ Fully replayable | `replay-state.sh` exports every old history entry, seeds it in order through `admin_seed_history`, and verifies the old Merkle root on the final entry. | — |
+| 6 | **Milestone records** | `verification` | ✅ Fully replayable | `replay-state.sh` replays every milestone through `admin_seed_milestone`, rebuilding evidence, counters, global, and validator indexes. | — |
+| 7 | **In-flight milestone disputes** | `verification` | ✅ Fully replayable | `replay-state.sh` enumerates each old milestone's dispute and replays it through `admin_seed_dispute`, rebuilding all dispute indexes and counts. | — |
+| 8 | **Scout subscriptions** | `scout_access` | ✅ Fully replayable | `replay-state.sh` replays each active subscription through `admin_seed_subscription`, rebuilding tier and expiry indexes. XLM balances remain on-chain. | — |
+| 9 | **Contact records** | `scout_access` | ✅ Fully replayable | `replay-state.sh` enumerates each scout's contacts and replays records through `admin_seed_contact`, rebuilding both reverse indexes. | — |
+| 10 | **Trial offers** | `scout_access` | ✅ Fully replayable | `replay-state.sh` replays every offer and reads the escrow getter so in-flight escrow state is preserved through `admin_seed_trial_offer`. | — |
+| 11 | **Fee configuration history** | `scout_access` | ✅ Fully replayable | `replay-state.sh` atomically restores the current `FeeConfig` and all bounded history entries through `admin_seed_fee_config`. | — |
+| 12 | **Player deactivation state** | `registration` | ✅ Reconciled | The PostgreSQL schema contains `players.deactivated`; the reconciliation tool now compares it against the registration contract's deactivation getter. | — |
+| 13 | **Auto-renewal flags** | `scout_access` | ✅ Fully replayable | `replay-state.sh` reads and replays every scout's flag through `admin_seed_auto_renew`. | — |
+| 14 | **Milestone pending-re-review flags** | `verification` | ⚠️ Partially replayable | `is_milestone_flagged(player_id, milestone_index)` exposes per-milestone flag state on-chain. `migrations/007_milestone_flags.sql` adds the `milestone_flags` and `revocation_records` tables; the indexer consumes `milestone_flagged`, `milestone_flag_cleared`, and `revocation_cascade_complete` events to keep these tables current. There is no admin-seed path to replay flags onto a new contract; flags are recreated by re-running the bounded revocation cascade. | Closed via #1039 — see [INDEXER.md](INDEXER.md#known-gaps-between-the-contracts-and-this-schema) |
 
 ---
 
@@ -51,23 +52,18 @@ category into one place so a migration operator has a single checklist.
 
 Before running `scripts/migrate-contract.sh`, verify the following:
 
-1. **Milestone disputes** — run `verification.list_disputes_page(0, 50)` on the
-   old contract and confirm all open disputes are resolved or explicitly
-   acknowledged as lost. There is currently no replay path (row 7).
+1. **Migration exports** — retain and review the timestamped JSON files under
+   `migration-export/` after the replay.
 
-2. **Trial escrows** — run `scout_access.get_trial_count` per active player and
-   check for unconfirmed, non-expired `TrialEscrow` entries. Consider calling
-   `expire_trial_offers` to clean up stale escrows before migrating (row 10).
+2. **Trial escrows** — verify the replay report contains the expected escrow
+   records and that `get_trial_escrow` matches the old contract (row 10).
 
-3. **Player deactivations** — if `deactivate_player` has ever been called,
-   cross-check the off-chain `players` table against on-chain state before
-   migrating, since the database has no `active` column (row 12).
+3. **Player deactivations** — run the indexer reconciliation check after cutover
+   to confirm `players.deactivated` matches the registration getter (row 12).
 
-4. **Scout subscriptions** — note any subscriptions that expire soon; scouts
-   will need to re-subscribe on the new contract (row 8).
+4. **Scout subscriptions and auto-renewal** — verify the replay report contains
+   the expected active subscriptions and per-scout renewal flags (rows 8 and 13).
 
-5. **Auto-renewal flags** — notify scouts that auto-renewal opt-in state will
-   not carry over and they must re-enable it after migration (row 13).
 
 ---
 

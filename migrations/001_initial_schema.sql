@@ -1,20 +1,31 @@
 -- ScoutChain — initial PostgreSQL schema
 -- Run by the backend on first startup or via a migration tool (e.g. node-pg-migrate)
+--
+-- Note: validator deactivation status is tracked via the `active` BOOLEAN column
+-- in the `validators` table below (see #837).
 -- Note: CREATE TABLE IF NOT EXISTS does not retroactively add constraints to existing tables.
 -- Existing deployed databases require a companion ALTER TABLE ... ADD CONSTRAINT migration.
 
 -- -----------------------------------------------------------------------
 -- Players
+-- Known gap: player deactivation status is not tracked here.
+-- registration.deactivate_player / reactivate_player have no corresponding
+-- column in this table.  See docs/INDEXER.md — "Known gaps" for details.
 -- -----------------------------------------------------------------------
+-- Note: the deactivated column was added in #837 to track
+-- registration.deactivate_player / reactivate_player events.
+-- This resolves the "Known gap" previously documented in docs/INDEXER.md.
+-- Reconciliation for this column is tracked in #1060.
 CREATE TABLE IF NOT EXISTS players (
     player_id       BIGINT PRIMARY KEY,
     wallet          VARCHAR(56)  NOT NULL UNIQUE,   -- Stellar G-address
     age             INTEGER      NOT NULL,
-    position        VARCHAR(64)  NOT NULL,
-    region          VARCHAR(128) NOT NULL,
-    nationality     VARCHAR(128) NOT NULL,
+    position        VARCHAR(16)  NOT NULL,
+    region          VARCHAR(10)  NOT NULL,
+    nationality     VARCHAR(2)   NOT NULL,
     ipfs_hashes     TEXT[]       NOT NULL DEFAULT '{}',
     level           SMALLINT     NOT NULL DEFAULT 0, -- 0-3
+    deactivated     BOOLEAN      NOT NULL DEFAULT FALSE,
     registered_at   BIGINT       NOT NULL,           -- Unix timestamp
     updated_at      BIGINT       NOT NULL,
     created_db_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
@@ -44,9 +55,13 @@ CREATE INDEX IF NOT EXISTS idx_player_level_history_player ON player_level_histo
 
 -- -----------------------------------------------------------------------
 -- Scouts
+-- Known gap: the `verified` column below is not yet populated by the
+-- indexer — registration.get_scout(...).verified exists on-chain but
+-- the event stream currently has no field to drive this column.
+-- See docs/INDEXER.md — "Known gaps" for details.
 -- -----------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS scouts (
-    scout_id        BIGINT PRIMARY KEY,
+    scout_id        BIGINT       PRIMARY KEY,
     wallet          VARCHAR(56)  NOT NULL UNIQUE,
     region          VARCHAR(128) NOT NULL,
     verified        BOOLEAN      NOT NULL DEFAULT FALSE, -- mirrors registration.get_scout(...).verified
@@ -253,3 +268,13 @@ CREATE TABLE IF NOT EXISTS indexer_cursor (
 INSERT INTO indexer_cursor (id, last_ledger, updated_at)
 VALUES (1, 0, NOW())
 ON CONFLICT (id) DO NOTHING;
+
+-- -----------------------------------------------------------------------
+-- Retroactive migrations for already-deployed databases
+-- -----------------------------------------------------------------------
+-- These ALTER TABLE statements are idempotent and can be run against an
+-- existing database to add columns introduced after initial deployment.
+
+ALTER TABLE players ADD COLUMN IF NOT EXISTS deactivated BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE scouts ADD COLUMN IF NOT EXISTS verified BOOLEAN NOT NULL DEFAULT FALSE;
+

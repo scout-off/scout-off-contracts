@@ -6,9 +6,11 @@
 //! - Interaction between whole-contract pause and function-scoped pause
 //! - Admin controls for pause/unpause
 
-use scoutchain_verification::{VerificationContract, VerificationContractClient};
+use scoutchain_verification::{
+    RevocationSeverity, VerificationContract, VerificationContractClient,
+};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke},
     Address, Env, String,
 };
 
@@ -22,7 +24,6 @@ const DESCRIPTION: &str = "Scored 5 goals in season";
 
 struct Harness {
     env: Env,
-    admin: Address,
     validator: Address,
     client: VerificationContractClient<'static>,
 }
@@ -35,17 +36,19 @@ fn setup() -> Harness {
     let admin = Address::generate(&env);
     let validator = Address::generate(&env);
 
-    let contract_id = env.register_contract(None, VerificationContract);
+    let contract_id = env.register(VerificationContract, ());
     let client = VerificationContractClient::new(&env, &contract_id);
 
-    client.initialize(&admin).expect("initialize should succeed");
-    client
-        .register_validator(&validator, &String::from_str(&env, CREDENTIALS))
-        .expect("validator registration should succeed");
+    client.initialize(&admin);
+    client.register_validator(
+        &validator,
+        &String::from_str(&env, CREDENTIALS),
+        &String::from_str(&env, "Default Academy"),
+        &soroban_sdk::Vec::new(&env),
+    );
 
     Harness {
         env,
-        admin,
         validator,
         client,
     }
@@ -64,6 +67,7 @@ fn test_approve_milestone_succeeds_when_not_paused() {
         &1u64,
         &String::from_str(&h.env, DESCRIPTION),
         &String::from_str(&h.env, VALID_CID),
+        &None,
     );
 
     assert!(
@@ -77,9 +81,7 @@ fn test_approve_milestone_blocked_by_function_scoped_pause() {
     let h = setup();
 
     // Pause only approve_milestone
-    h.client
-        .pause_approve_milestone()
-        .expect("pause_approve_milestone should succeed");
+    h.client.pause_approve_milestone();
 
     // Try to approve a milestone
     let result = h.client.try_approve_milestone(
@@ -87,6 +89,7 @@ fn test_approve_milestone_blocked_by_function_scoped_pause() {
         &1u64,
         &String::from_str(&h.env, DESCRIPTION),
         &String::from_str(&h.env, VALID_CID),
+        &None,
     );
 
     assert!(
@@ -100,14 +103,10 @@ fn test_approve_milestone_succeeds_after_unpause() {
     let h = setup();
 
     // Pause approve_milestone
-    h.client
-        .pause_approve_milestone()
-        .expect("pause_approve_milestone should succeed");
+    h.client.pause_approve_milestone();
 
     // Unpause approve_milestone
-    h.client
-        .unpause_approve_milestone()
-        .expect("unpause_approve_milestone should succeed");
+    h.client.unpause_approve_milestone();
 
     // Now approve_milestone should work
     let result = h.client.try_approve_milestone(
@@ -115,6 +114,7 @@ fn test_approve_milestone_succeeds_after_unpause() {
         &1u64,
         &String::from_str(&h.env, DESCRIPTION),
         &String::from_str(&h.env, VALID_CID),
+        &None,
     );
 
     assert!(
@@ -128,9 +128,7 @@ fn test_approve_milestone_blocked_by_whole_contract_pause() {
     let h = setup();
 
     // Pause entire contract
-    h.client
-        .pause_contract()
-        .expect("pause_contract should succeed");
+    h.client.pause_contract();
 
     // Try to approve a milestone
     let result = h.client.try_approve_milestone(
@@ -138,6 +136,7 @@ fn test_approve_milestone_blocked_by_whole_contract_pause() {
         &1u64,
         &String::from_str(&h.env, DESCRIPTION),
         &String::from_str(&h.env, VALID_CID),
+        &None,
     );
 
     assert!(
@@ -151,12 +150,8 @@ fn test_approve_milestone_blocked_by_both_pauses() {
     let h = setup();
 
     // Pause both whole-contract and function-scoped
-    h.client
-        .pause_contract()
-        .expect("pause_contract should succeed");
-    h.client
-        .pause_approve_milestone()
-        .expect("pause_approve_milestone should succeed");
+    h.client.pause_contract();
+    h.client.pause_approve_milestone();
 
     // Try to approve a milestone
     let result = h.client.try_approve_milestone(
@@ -164,6 +159,7 @@ fn test_approve_milestone_blocked_by_both_pauses() {
         &1u64,
         &String::from_str(&h.env, DESCRIPTION),
         &String::from_str(&h.env, VALID_CID),
+        &None,
     );
 
     assert!(result.is_err(), "approve_milestone should be blocked");
@@ -171,17 +167,27 @@ fn test_approve_milestone_blocked_by_both_pauses() {
 
 #[test]
 fn test_pause_approve_milestone_requires_admin() {
-    let h = setup();
-    let non_admin = Address::generate(&h.env);
+    // Fresh env WITHOUT mock_all_auths so the admin gate can actually fail.
+    let env = Env::default();
+    env.ledger().with_mut(|l| l.timestamp = 1_000_000);
+    let admin = Address::generate(&env);
+    let contract_id = env.register(VerificationContract, ());
+    let client = VerificationContractClient::new(&env, &contract_id);
 
-    h.env
-        .mock_all_auths_allow_address(vec![non_admin.clone()]);
+    // Mock ONLY the admin's initialize auth; pause_approve_milestone's
+    // require_admin check then fails for any unauthenticated caller.
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "initialize",
+            args: soroban_sdk::vec![&env, admin.to_val()],
+            sub_invokes: &[],
+        },
+    }]);
+    client.initialize(&admin);
 
-    let result = h
-        .client
-        .with_address(&non_admin)
-        .try_pause_approve_milestone();
-
+    let result = client.try_pause_approve_milestone();
     assert!(
         result.is_err(),
         "non-admin should not be able to pause approve_milestone"
@@ -190,23 +196,38 @@ fn test_pause_approve_milestone_requires_admin() {
 
 #[test]
 fn test_unpause_approve_milestone_requires_admin() {
-    let h = setup();
+    // Fresh env WITHOUT mock_all_auths so the admin gate can actually fail.
+    let env = Env::default();
+    env.ledger().with_mut(|l| l.timestamp = 1_000_000);
+    let admin = Address::generate(&env);
+    let contract_id = env.register(VerificationContract, ());
+    let client = VerificationContractClient::new(&env, &contract_id);
 
-    // First pause as admin
-    h.client
-        .pause_approve_milestone()
-        .expect("pause should succeed");
+    // Mock ONLY the admin's auth for the calls that must succeed.
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "initialize",
+            args: soroban_sdk::vec![&env, admin.to_val()],
+            sub_invokes: &[],
+        },
+    }]);
+    client.initialize(&admin);
 
-    // Try to unpause as non-admin
-    let non_admin = Address::generate(&h.env);
-    h.env
-        .mock_all_auths_allow_address(vec![non_admin.clone()]);
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "pause_approve_milestone",
+            args: soroban_sdk::vec![&env],
+            sub_invokes: &[],
+        },
+    }]);
+    client.pause_approve_milestone();
 
-    let result = h
-        .client
-        .with_address(&non_admin)
-        .try_unpause_approve_milestone();
-
+    // Try to unpause with no auth mocked — must be rejected.
+    let result = client.try_unpause_approve_milestone();
     assert!(
         result.is_err(),
         "non-admin should not be able to unpause approve_milestone"
@@ -223,14 +244,15 @@ fn test_register_validator_works_when_approve_milestone_paused() {
     let new_validator = Address::generate(&h.env);
 
     // Pause only approve_milestone
-    h.client
-        .pause_approve_milestone()
-        .expect("pause_approve_milestone should succeed");
+    h.client.pause_approve_milestone();
 
     // register_validator should still work
-    h.client
-        .register_validator(&new_validator, &String::from_str(&h.env, CREDENTIALS))
-        .expect("register_validator should work while approve_milestone is paused");
+    h.client.register_validator(
+        &new_validator,
+        &String::from_str(&h.env, CREDENTIALS),
+        &String::from_str(&h.env, "Default Academy"),
+        &soroban_sdk::Vec::new(&h.env),
+    );
 }
 
 #[test]
@@ -242,20 +264,26 @@ fn test_batch_register_validators_works_when_approve_milestone_paused() {
     let entries = soroban_sdk::Vec::from_array(
         &h.env,
         [
-            (validator1, String::from_str(&h.env, CREDENTIALS)),
-            (validator2, String::from_str(&h.env, "UEFA A License")),
+            (
+                validator1,
+                String::from_str(&h.env, CREDENTIALS),
+                String::from_str(&h.env, "Default Academy"),
+                soroban_sdk::Vec::new(&h.env),
+            ),
+            (
+                validator2,
+                String::from_str(&h.env, "UEFA A License"),
+                String::from_str(&h.env, "Default Academy"),
+                soroban_sdk::Vec::new(&h.env),
+            ),
         ],
     );
 
     // Pause only approve_milestone
-    h.client
-        .pause_approve_milestone()
-        .expect("pause_approve_milestone should succeed");
+    h.client.pause_approve_milestone();
 
     // batch_register_validators should still work
-    h.client
-        .batch_register_validators(&entries)
-        .expect("batch_register_validators should work while approve_milestone is paused");
+    h.client.batch_register_validators(&entries);
 }
 
 #[test]
@@ -263,14 +291,11 @@ fn test_revoke_validator_works_when_approve_milestone_paused() {
     let h = setup();
 
     // Pause only approve_milestone
-    h.client
-        .pause_approve_milestone()
-        .expect("pause_approve_milestone should succeed");
+    h.client.pause_approve_milestone();
 
     // revoke_validator should still work
     h.client
-        .revoke_validator(&h.validator, &None)
-        .expect("revoke_validator should work while approve_milestone is paused");
+        .revoke_validator(&h.validator, &RevocationSeverity::Routine, &None);
 }
 
 #[test]
@@ -278,19 +303,14 @@ fn test_get_validator_works_when_approve_milestone_paused() {
     let h = setup();
 
     // Pause only approve_milestone
-    h.client
-        .pause_approve_milestone()
-        .expect("pause_approve_milestone should succeed");
+    h.client.pause_approve_milestone();
 
     // Read query should work (always, regardless of pause)
-    let validator_status = h
-        .client
-        .get_validator_status(&h.validator)
-        .expect("get_validator_status should work");
+    let validator_status = h.client.get_validator_status(&h.validator);
 
     assert_eq!(
-        validator_status.to_string(),
-        "Active".to_string(),
+        validator_status,
+        scoutchain_verification::ValidatorStatus::Active,
         "validator should still be Active"
     );
 }
@@ -309,13 +329,14 @@ fn test_health_reflects_approve_milestone_pause_state() {
     // Note: health structure should include approve_milestone_paused field
 
     // Pause approve_milestone
-    h.client
-        .pause_approve_milestone()
-        .expect("pause should succeed");
+    h.client.pause_approve_milestone();
 
     // Health should now reflect it
     let health_after = h.client.health();
-    assert!(!health_after.paused, "whole-contract should still not be paused");
+    assert!(
+        !health_after.paused,
+        "whole-contract should still not be paused"
+    );
     // Note: approve_milestone_paused field should be true if exposed
 }
 
@@ -328,9 +349,7 @@ fn test_whole_contract_pause_overrides_unpause_approve_milestone() {
     let h = setup();
 
     // Pause whole-contract
-    h.client
-        .pause_contract()
-        .expect("pause_contract should succeed");
+    h.client.pause_contract();
 
     // Try to approve milestone
     let result = h.client.try_approve_milestone(
@@ -338,6 +357,7 @@ fn test_whole_contract_pause_overrides_unpause_approve_milestone() {
         &1u64,
         &String::from_str(&h.env, DESCRIPTION),
         &String::from_str(&h.env, VALID_CID),
+        &None,
     );
 
     assert!(
@@ -351,15 +371,16 @@ fn test_function_pause_independent_of_whole_contract_pause() {
     let h = setup();
 
     // Pause only function-scoped
-    h.client
-        .pause_approve_milestone()
-        .expect("pause_approve_milestone should succeed");
+    h.client.pause_approve_milestone();
 
     // Verify register_validator still works (whole-contract is not paused)
     let new_validator = Address::generate(&h.env);
-    h.client
-        .register_validator(&new_validator, &String::from_str(&h.env, CREDENTIALS))
-        .expect("register_validator should work");
+    h.client.register_validator(
+        &new_validator,
+        &String::from_str(&h.env, CREDENTIALS),
+        &String::from_str(&h.env, "Default Academy"),
+        &soroban_sdk::Vec::new(&h.env),
+    );
 
     // Verify approve_milestone is still blocked
     let result = h.client.try_approve_milestone(
@@ -367,6 +388,7 @@ fn test_function_pause_independent_of_whole_contract_pause() {
         &1u64,
         &String::from_str(&h.env, DESCRIPTION),
         &String::from_str(&h.env, VALID_CID),
+        &None,
     );
 
     assert!(result.is_err(), "approve_milestone should be blocked");
@@ -380,9 +402,7 @@ fn test_function_pause_independent_of_whole_contract_pause() {
 fn test_pause_approve_milestone_emits_event() {
     let h = setup();
 
-    h.client
-        .pause_approve_milestone()
-        .expect("pause_approve_milestone should succeed");
+    h.client.pause_approve_milestone();
 
     // Verify event was emitted (can check via contract logs if needed)
 }
@@ -391,13 +411,9 @@ fn test_pause_approve_milestone_emits_event() {
 fn test_unpause_approve_milestone_emits_event() {
     let h = setup();
 
-    h.client
-        .pause_approve_milestone()
-        .expect("pause should succeed");
+    h.client.pause_approve_milestone();
 
-    h.client
-        .unpause_approve_milestone()
-        .expect("unpause should succeed");
+    h.client.unpause_approve_milestone();
 
     // Verify event was emitted
 }

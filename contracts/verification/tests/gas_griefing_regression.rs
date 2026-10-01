@@ -5,7 +5,9 @@
 //!
 //! See docs/GAS_GRIEFING_AUDIT.md — Vector 1: ValidatorVector Monotonic Growth.
 
-use scoutchain_verification::{VerificationContract, VerificationContractClient};
+use scoutchain_verification::{
+    RevocationSeverity, VerificationContract, VerificationContractClient,
+};
 use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
 fn setup() -> (Env, VerificationContractClient<'static>) {
@@ -33,7 +35,12 @@ fn test_validator_cap_enforced_at_100() {
 
     for _ in 0..100 {
         let v = Address::generate(&env);
-        client.register_validator(&v, &String::from_str(&env, "UEFA-B-License-2026"));
+        client.register_validator(
+            &v,
+            &String::from_str(&env, "UEFA-B-License-2026"),
+            &String::from_str(&env, "Default Academy"),
+            &soroban_sdk::Vec::new(&env),
+        );
     }
 
     // Active validator count must be exactly 100.
@@ -48,11 +55,15 @@ fn test_validator_cap_enforced_at_100() {
     let result = client.try_register_validator(
         &extra,
         &String::from_str(&env, "UEFA-A-License-2026"),
+        &String::from_str(&env, "Default Academy"),
+        &soroban_sdk::Vec::new(&env),
     );
     assert!(
         matches!(
             result,
-            Err(Ok(scoutchain_verification::VerificationError::ValidatorCapReached))
+            Err(Ok(
+                scoutchain_verification::VerificationError::ValidatorCapReached
+            ))
         ),
         "101st validator registration must return ValidatorCapReached: {result:?}"
     );
@@ -77,13 +88,18 @@ fn test_get_validators_with_revoked_entries_bounded() {
     let mut validators: Vec<Address> = Vec::new();
     for _ in 0..10 {
         let v = Address::generate(&env);
-        client.register_validator(&v, &String::from_str(&env, "UEFA-B-License-2026"));
+        client.register_validator(
+            &v,
+            &String::from_str(&env, "UEFA-B-License-2026"),
+            &String::from_str(&env, "Default Academy"),
+            &soroban_sdk::Vec::new(&env),
+        );
         validators.push(v);
     }
 
     // Revoke the first 5.
     for v in validators.iter().take(5) {
-        client.revoke_validator(v, &None);
+        client.revoke_validator(v, &RevocationSeverity::Routine, &None);
     }
 
     // get_validators() must return only the 5 active ones.
@@ -126,7 +142,12 @@ fn test_get_validators_cpu_cost_at_cap() {
 
     for _ in 0..100 {
         let v = Address::generate(&env);
-        client.register_validator(&v, &String::from_str(&env, "UEFA-B-License-2026"));
+        client.register_validator(
+            &v,
+            &String::from_str(&env, "UEFA-B-License-2026"),
+            &String::from_str(&env, "Default Academy"),
+            &soroban_sdk::Vec::new(&env),
+        );
     }
 
     env.cost_estimate().budget().reset_default();

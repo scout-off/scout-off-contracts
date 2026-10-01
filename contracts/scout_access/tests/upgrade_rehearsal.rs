@@ -12,7 +12,7 @@
 //! `scout_access` is the richest row-set in the DEPLOYMENT.md table:
 //!   * Persistent: subscription records, contact records and scout indexes.
 //!   * Instance:   Initialized / Paused flags, fee config, XLM token address,
-//!                 accumulated fees, and the progress-contract link.
+//!     accumulated fees, and the progress-contract link.
 //!
 //! The fee config and XLM token address are checked both directly
 //! (`get_fee_config`, `get_accumulated_fees`) and behaviourally — a fresh
@@ -145,7 +145,10 @@ fn test_scout_access_upgrade_preserves_state() {
 
     // --- Assert: instance state survived (fee config, XLM token, counters, flags) ---
     let fees_after = h.scout_access.get_fee_config();
-    assert_eq!(fees_after.contact_fee_stroops, fees_before.contact_fee_stroops);
+    assert_eq!(
+        fees_after.contact_fee_stroops,
+        fees_before.contact_fee_stroops
+    );
     assert_eq!(fees_after.elite_sub_stroops, fees_before.elite_sub_stroops);
     assert_eq!(fees_after.sub_duration_secs, fees_before.sub_duration_secs);
     assert_eq!(fees_after.pro_contact_limit, fees_before.pro_contact_limit);
@@ -191,4 +194,31 @@ fn test_scout_access_broken_upgrade_left_paused_is_caught() {
     let scout2 = Address::generate(&h.env);
     fund(&h, &scout2, 50_000_000);
     h.scout_access.subscribe(&scout2, &SubscriptionTier::Basic);
+}
+
+/// Assert that `upgrade()` emits a `contract_upgraded` event before swapping
+/// the WASM, so the event is attributed to the old code version.
+#[test]
+fn test_scout_access_upgrade_emits_contract_upgraded_event() {
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::{symbol_short, IntoVal};
+
+    let h = setup();
+    let _ = seed(&h);
+
+    let new_wasm_hash = h.env.deployer().upload_contract_wasm(Bytes::new(&h.env));
+    h.scout_access.upgrade(&new_wasm_hash);
+
+    let events = h.env.events().all();
+    let found = events.iter().any(|(_, topics, _)| {
+        topics.get(0).map_or(false, |first| {
+            let expected: soroban_sdk::Val = symbol_short!("contract_upgraded").into_val(&h.env);
+            first == expected
+        })
+    });
+
+    assert!(
+        found,
+        "expected a 'contract_upgraded' event to be emitted by upgrade()"
+    );
 }

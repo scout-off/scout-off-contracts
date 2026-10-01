@@ -7,14 +7,19 @@
 //! See docs/GAS_GRIEFING_AUDIT.md — Vector 2: register_player Spam Inflates
 //! filter_players Cost.
 
+pub use scoutchain_registration::PlayerVitals;
 use scoutchain_registration::{RegistrationContract, RegistrationContractClient};
 use scoutchain_shared_types::ProgressLevel;
-pub use scoutchain_registration::PlayerVitals;
 use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
 
 fn setup() -> (Env, RegistrationContractClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
+    // These tests register 50–60 players and paginate through them; the test
+    // env's default mainnet-style invocation resource limits (100 footprint
+    // ledger entries) would reject that much state, so disable them. The CPU
+    // cost budget is asserted separately per test below.
+    env.host().set_invocation_resource_limits(None).unwrap();
     let contract_id = env.register(RegistrationContract, ());
     let client = RegistrationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
@@ -71,15 +76,16 @@ fn test_filter_players_page_limit_enforced() {
     );
 
     assert!(
-        result.players.len() <= 50,
+        result.profiles.len() <= 50,
         "filter_players must return at most 50 results; got {}",
-        result.players.len()
+        result.profiles.len()
     );
     assert_eq!(
-        result.players.len(),
+        result.profiles.len(),
         50,
         "with 60 matching players and limit=100, exactly 50 should be returned"
     );
+    assert!(result.has_more, "page with 50 results out of 60 must have has_more=true");
 }
 
 // ---------------------------------------------------------------------------
@@ -109,20 +115,100 @@ fn test_filter_players_pagination_retrieves_all() {
         &0u32,
         &50u32,
     );
-    assert_eq!(page1.players.len(), 50, "page 1 must return 50 results");
+    assert_eq!(page1.profiles.len(), 50, "page 1 must return 50 results");
+    assert!(page1.next_cursor > 0, "page 1 must indicate more results");
 
     let page2 = client.filter_players(
         &String::from_str(&env, "EastAfrica"),
         &String::from_str(&env, "Midfielder"),
         &ProgressLevel::Unverified,
-        &50u32,
+        &(page1.next_cursor as u32),
         &50u32,
     );
-    assert_eq!(page2.players.len(), 10, "page 2 must return the remaining 10 results");
+    assert_eq!(
+        page2.profiles.len(),
+        10,
+        "page 2 must return the remaining 10 results"
+    );
+    assert_eq!(page2.next_cursor, 0, "page 2 must indicate no more results");
+    assert_eq!(page2.has_more, false, "page 2 must have has_more=false");
 
     // Total across both pages = 60.
-    let total = page1.players.len() + page2.players.len();
+    let total = page1.profiles.len() + page2.profiles.len();
     assert_eq!(total, 60, "total players across both pages must be 60");
+}
+
+// ---------------------------------------------------------------------------
+// Test 4: limit=0 returns InvalidInput (no infinite paging)
+// ---------------------------------------------------------------------------
+
+/// Regression test for Issue #1407: `limit=0` must return `InvalidInput`
+/// rather than producing a non-advancing cursor that causes infinite paging.
+#[test]
+fn test_filter_players_limit_zero_rejected() {
+    let (env, client) = setup();
+
+    for _ in 0..5 {
+        let wallet = Address::generate(&env);
+        client.register_player(
+            &wallet,
+            &dummy_vitals(&env, "Forward", "WestAfrica"),
+            &dummy_hashes(&env),
+        );
+    }
+
+    let result = client.filter_players(
+        &String::from_str(&env, "WestAfrica"),
+        &String::from_str(&env, "Forward"),
+        &ProgressLevel::Unverified,
+        &0u32,
+        &0u32,
+    );
+
+    assert!(
+        result.is_err(),
+        "filter_players with limit=0 must return InvalidInput"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 5: has_more is true when more results exist
+// ---------------------------------------------------------------------------
+
+/// Regression test for Issue #1407: `has_more` must be `true` when
+/// additional pages exist after the current one.
+#[test]
+fn test_filter_players_has_more_flag() {
+    let (env, client) = setup();
+
+    for _ in 0..60 {
+        let wallet = Address::generate(&env);
+        client.register_player(
+            &wallet,
+            &dummy_vitals(&env, "Midfielder", "EastAfrica"),
+            &dummy_hashes(&env),
+        );
+    }
+
+    let page1 = client.filter_players(
+        &String::from_str(&env, "EastAfrica"),
+        &String::from_str(&env, "Midfielder"),
+        &ProgressLevel::Unverified,
+        &0u32,
+        &50u32,
+    );
+    assert_eq!(page1.profiles.len(), 50);
+    assert!(page1.has_more, "page 1 must have has_more=true when more results exist");
+
+    let page2 = client.filter_players(
+        &String::from_str(&env, "EastAfrica"),
+        &String::from_str(&env, "Midfielder"),
+        &ProgressLevel::Unverified,
+        &(page1.next_cursor as u32),
+        &50u32,
+    );
+    assert_eq!(page2.profiles.len(), 10);
+    assert_eq!(page2.has_more, false, "last page must have has_more=false");
 }
 
 // ---------------------------------------------------------------------------
@@ -160,7 +246,7 @@ fn test_filter_players_cpu_cost_at_50_results() {
          (budget {FILTER_PLAYERS_BUDGET})"
     );
 
-    assert_eq!(result.players.len(), 50);
+    assert_eq!(result.profiles.len(), 50);
     assert!(
         cpu <= FILTER_PLAYERS_BUDGET,
         "filter_players(50 results) exceeded budget: {cpu} > {FILTER_PLAYERS_BUDGET}"

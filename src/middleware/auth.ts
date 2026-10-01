@@ -1,100 +1,77 @@
-/**
- * src/middleware/auth.ts
- *
- * Express middleware for authenticating requests via SEP-10 JWT.
- *
- * Usage:
- *   router.get("/protected", requireAuth, (req, res) => { ... });
- *
- * The middleware:
- *   1. Extracts the Bearer token from the Authorization header.
- *   2. Verifies the JWT signature using the configured JWT_SECRET.
- *   3. Validates that `iss` matches JWT_ISSUER and `aud` matches JWT_AUDIENCE.
- *   4. Validates that the token has not expired.
- *   5. Sets `req.stellarAddress` to the authenticated Stellar account (sub claim).
- *
- * On failure, responds with 401 Unauthorized and a JSON error body.
- *
- * @see src/services/sep10.ts for JWT issuance and configuration.
- */
+import jwt from "jsonwebtoken";
+import { prisma } from "../db";
+import type { Request } from "express";
 
-import { Request, Response, NextFunction } from "express";
-import { JsonWebTokenError, TokenExpiredError } from "jsonwebtoken";
-import { verifySep10Token } from "../services/sep10.js";
+export async function isTokenRevoked(jti: string): Promise<boolean> {
+  if (!jti) {
+    return false;
+  }
 
-// ---------------------------------------------------------------------------
-// Augment Express Request type with the authenticated Stellar address
-// ---------------------------------------------------------------------------
+  const existingRevocation = await prisma.revokedToken.findFirst({
+    where: { jti },
+  });
 
-declare global {
-  // eslint-disable-next-line @typescript-eslint/no-namespace
-  namespace Express {
-    interface Request {
-      /** Authenticated Stellar G-address extracted from the JWT `sub` claim. */
-      stellarAddress?: string;
+  return !!existingRevocation;
+}
+
+export async function requireAuth(
+  req: Request,
+  res: any,
+  next: () => void
+) {
+  const authHeader = req.headers["authorization"];
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Unauthorized - no token provided" });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET!) as {
+      sub: string;
+      role: string;
+      jti?: string;
+    };
+
+    if (!payload.jti) {
+      return res.status(401).json({ error: "Unauthorized - token has no jti claim" });
     }
+
+    const isRevoked = await isTokenRevoked(payload.jti);
+
+    if (isRevoked) {
+      return res.status(401).json({ error: "Unauthorized - token has been revoked" });
+    }
+
+    req.user = {
+      sub: payload.sub,
+      role: payload.role,
+      jti: payload.jti,
+    };
+
+    next();
+  } catch (error) {
+    return res.status(401).json({ error: "Unauthorized - invalid token" });
   }
 }
 
-// ---------------------------------------------------------------------------
-// Middleware
-// ---------------------------------------------------------------------------
+export function requireRole(
+  allowedRoles: string[]
+) {
+  return function (
+    req: Request,
+    res: any,
+    next: () => void
+  ) {
+    if (!req.user || !req.user.role) {
+      return res.status(401).json({ error: "Unauthorized - no user role" });
+    }
 
-/**
- * Express middleware that enforces JWT authentication.
- *
- * Validates signature, expiry, issuer, and audience. Sets `req.stellarAddress`
- * on success. Returns 401 on any validation failure.
- *
- * @example
- * ```ts
- * import { requireAuth } from "./middleware/auth.js";
- *
- * router.get("/scouts/me", requireAuth, (req, res) => {
- *   res.json({ address: req.stellarAddress });
- * });
- * ```
- */
-export function requireAuth(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): void {
-  const authHeader = req.headers.authorization;
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ error: "Forbidden - insufficient role" });
+    }
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    res.status(401).json({
-      error: "Unauthorized",
-      message: "Missing or malformed Authorization header (expected: Bearer <token>)",
-    });
-    return;
-  }
-
-  const token = authHeader.slice("Bearer ".length).trim();
-
-  try {
-    const payload = verifySep10Token(token);
-    req.stellarAddress = payload.sub;
     next();
-  } catch (err) {
-    if (err instanceof TokenExpiredError) {
-      res.status(401).json({
-        error: "Unauthorized",
-        message: "Token has expired — please re-authenticate via SEP-10",
-      });
-      return;
-    }
-
-    if (err instanceof JsonWebTokenError) {
-      // Covers wrong issuer, wrong audience, bad signature, malformed token
-      res.status(401).json({
-        error: "Unauthorized",
-        message: "Invalid token — signature, issuer, or audience mismatch",
-      });
-      return;
-    }
-
-    // Unexpected error — let the global error handler deal with it
-    next(err);
-  }
+  };
 }

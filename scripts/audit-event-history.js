@@ -70,33 +70,74 @@ function requireEnv(names) {
 
 // --- Soroban Event Retrieval -------------------------------------------------
 
+// Maximum page size accepted by the Soroban RPC getEvents endpoint.
+const EVENTS_PAGE_SIZE = 200;
+
+/**
+ * Fetch ALL events for a contract from the Soroban RPC event stream using
+ * cursor-based pagination.
+ *
+ * The RPC getEvents endpoint returns at most EVENTS_PAGE_SIZE events per call
+ * and includes a `cursor` in the result pointing to the last returned event.
+ * Passing that cursor back as `cursor` in the next request yields the next
+ * page.  We loop until the page is smaller than the requested size, which
+ * signals we have reached the end of the stream.
+ *
+ * Without this loop the caller silently receives only the first page of
+ * results — dropping every event beyond the 200th — which causes missed
+ * milestone/subscription events and incorrect event-chain consistency checks.
+ */
 async function fetchEvents(rpcUrl, contractId, topic = null) {
-  const body = {
-    jsonrpc: "2.0",
-    id: 1,
-    method: "getEvents",
-    params: {
-      contractId,
-      limit: 10000,
-    },
-  };
+  const allEvents = [];
+  let cursor = undefined;
 
-  if (topic) {
-    body.params.filters = [{ topics: topic }];
+  while (true) {
+    const params = {
+      contractIds: [contractId],
+      limit: EVENTS_PAGE_SIZE,
+    };
+
+    if (cursor !== undefined) {
+      params.cursor = cursor;
+    }
+
+    if (topic) {
+      params.filters = [{ topics: topic }];
+    }
+
+    const body = {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "getEvents",
+      params,
+    };
+
+    const res = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    const result = await res.json();
+    if (result.error) {
+      throw new Error(`RPC error: ${result.error.message}`);
+    }
+
+    const page = (result.result && result.result.events) || [];
+    allEvents.push(...page);
+
+    // A page smaller than EVENTS_PAGE_SIZE means we are at the end of the
+    // stream.  Also stop if the RPC omitted the cursor (some implementations
+    // omit it on the final page).
+    if (page.length < EVENTS_PAGE_SIZE || !result.result.cursor) {
+      break;
+    }
+
+    // Advance cursor to the last event on this page.
+    cursor = result.result.cursor;
   }
 
-  const res = await fetch(rpcUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  const result = await res.json();
-  if (result.error) {
-    throw new Error(`RPC error: ${result.error.message}`);
-  }
-
-  return (result.result && result.result.events) || [];
+  return allEvents;
 }
 
 // --- Event Reconstruction State Machine ---------------------------------------
@@ -343,6 +384,39 @@ async function auditPlayerHistory(rpcUrl, contractIds, playerId, pg) {
 
   // Sort by ledger sequence
   events.sort((a, b) => Number(a.ledger) - Number(b.ledger));
+
+  // Reorg detection: after sorting, walk the full event list and flag any
+  // event whose ledger sequence is lower than the previous event's.  This
+  // signals that the RPC delivered events out of order — which can happen
+  // when a ledger reorg rolls back some ledgers and re-delivers their events
+  // interleaved with newer ones.  If this is detected the reconstructed state
+  // below may be incorrect because the sort cannot fully restore causal order
+  // when two events share the same ledger with different meanings.
+  let lastLedger = -1;
+  const reorgWarnings = [];
+  for (let i = 0; i < events.length; i++) {
+    const seq = Number(events[i].ledger);
+    if (seq < lastLedger) {
+      reorgWarnings.push(
+        `Possible reorg: event[${i}] ledger ${seq} < previous ledger ${lastLedger} ` +
+        `(contract ${events[i].contractName}, type ${events[i].type})`,
+      );
+    }
+    lastLedger = seq;
+  }
+  if (reorgWarnings.length > 0) {
+    for (const msg of reorgWarnings) {
+      reconstructor.addIssue("warning", "reorg", msg);
+    }
+    // Surface a single top-level error so the audit exits non-zero and the
+    // operator knows reconstructed state may be unreliable.
+    reconstructor.addIssue(
+      "error",
+      "reorg",
+      `${reorgWarnings.length} out-of-order ledger sequence(s) detected — ` +
+      "event stream may contain a reorg; reconstructed state may be unreliable",
+    );
+  }
 
   // Process relevant events
   for (const event of events) {

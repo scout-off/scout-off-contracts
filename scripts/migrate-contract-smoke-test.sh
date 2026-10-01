@@ -8,7 +8,7 @@
 # exercises the migration path this issue adds:
 #
 #   deploy OLD set -> seed a validator + a player -> migrate (deploy NEW set,
-#   pause OLD, replay validators + export players) -> compare OLD vs NEW state.
+#   pause OLD, replay full supported state) -> compare OLD vs NEW state.
 #
 # It is intended as a MANUAL / optional command (it needs docker + the stellar
 # CLI and pulls a container image), not a mandatory CI gate. Run it with:
@@ -25,6 +25,8 @@ NETWORK="local"
 CONTAINER="scoutchain-migrate-smoke"
 RPC_URL="http://localhost:8000/soroban/rpc"
 PASSPHRASE="Standalone Network ; February 2017"
+# Fallback only — replaced below with the id of the native-asset SAC this
+# script actually deploys onto the fresh local network.
 XLM_TOKEN_ADDRESS="CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA"
 WORKDIR="$(mktemp -d)"
 
@@ -57,7 +59,9 @@ trap cleanup EXIT
 # ---------------------------------------------------------------------------
 echo "==> Starting Soroban local sandbox ($CONTAINER)..."
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-docker run -d --name "$CONTAINER" -p 8000:8000 stellar/quickstart:testing --local >/dev/null
+# --limits unlimited: the stellar-core default Soroban resource ceilings are
+# extremely low and reject the upload of verification's ~134 KB optimized WASM.
+docker run -d --name "$CONTAINER" -p 8000:8000 stellar/quickstart:testing --local --limits unlimited >/dev/null
 
 echo "==> Waiting for Soroban RPC to be ready..."
 LEDGER=0
@@ -81,8 +85,10 @@ fi
 # 2. Register the local network + fund identities.
 # ---------------------------------------------------------------------------
 echo "==> Registering local network with Stellar CLI..."
-stellar network add "$NETWORK" --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" --overwrite \
-  || stellar network add "$NETWORK" --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE"
+# `stellar network add` on a name that already exists is a no-op-ish success
+# in current CLIs and errored on older ones; tolerate either.
+stellar network add "$NETWORK" --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" \
+  || true
 
 echo "==> Generating + funding admin identity..."
 stellar keys generate smoke-admin --network "$NETWORK" --overwrite >/dev/null 2>&1 \
@@ -93,6 +99,14 @@ for _ in $(seq 1 30); do
 done
 ADMIN_ADDRESS="$(stellar keys address smoke-admin)"
 DEPLOYER_SECRET="$(stellar keys show smoke-admin)"
+
+# Deploy the native-asset Stellar Asset Contract on this fresh local network
+# and use its real id — scout_access.initialize probes the token with a
+# read-only decimals() call, which fails against an id that was never
+# actually deployed.
+XLM_TOKEN_ADDRESS="$(stellar contract asset deploy \
+  --asset native --source smoke-admin --network "$NETWORK" 2>/dev/null \
+  || stellar contract id asset --asset native --network "$NETWORK")"
 export ADMIN_ADDRESS DEPLOYER_SECRET XLM_TOKEN_ADDRESS
 
 echo "==> Generating + funding a player identity (holds its own key — required"
@@ -124,21 +138,22 @@ OLD_REG_ID="$(grep -E '^REGISTRATION_CONTRACT_ID=' .env.contracts | cut -d= -f2-
 # ---------------------------------------------------------------------------
 echo "==> Seeding a validator on the OLD verification contract (admin-signed)..."
 stellar contract invoke --id "$OLD_VER_ID" --source smoke-admin --network "$NETWORK" \
-  -- register_validator --wallet "$ADMIN_ADDRESS" --credentials "smoke-test-credentials-0001"
+  -- register_validator --wallet "$ADMIN_ADDRESS" --credentials "smoke-test-credentials-0001" \
+  --affiliation "Smoke Test Academy" --specializations '[]'
 
 echo "==> Seeding a player on the OLD registration contract (player-signed)..."
 stellar contract invoke --id "$OLD_REG_ID" --source smoke-player --network "$NETWORK" \
   -- register_player \
   --wallet "$PLAYER_ADDRESS" \
   --vitals '{"age":21,"position":"ST","region":"EU","nationality":"NG"}' \
-  --ipfs_hashes '["QmSmokeTestHash0001"]'
+  --ipfs_hashes '["QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB"]'
 
 # ---------------------------------------------------------------------------
 # 5. BEFORE snapshot of OLD state.
 # ---------------------------------------------------------------------------
 echo "==> Capturing BEFORE state (old contracts)..."
-BEFORE_VALIDATORS="$(stellar contract invoke --id "$OLD_VER_ID" --network "$NETWORK" -- get_validators | jq -S '.')"
-BEFORE_PLAYER_COUNT="$(stellar contract invoke --id "$OLD_REG_ID" --network "$NETWORK" -- get_player_count | tr -dc '0-9')"
+BEFORE_VALIDATORS="$(stellar contract invoke --id "$OLD_VER_ID" --source smoke-admin --network "$NETWORK" -- get_validators | jq -S '.')"
+BEFORE_PLAYER_COUNT="$(stellar contract invoke --id "$OLD_REG_ID" --source smoke-admin --network "$NETWORK" -- get_player_count | tr -dc '0-9')"
 echo "    OLD validators   : $BEFORE_VALIDATORS"
 echo "    OLD player_count : $BEFORE_PLAYER_COUNT"
 
@@ -155,8 +170,8 @@ NEW_REG_ID="$(grep -E '^REGISTRATION_CONTRACT_ID=' .env.contracts | cut -d= -f2-
 # 7. AFTER snapshot of NEW state + comparison.
 # ---------------------------------------------------------------------------
 echo "==> Capturing AFTER state (new contracts)..."
-AFTER_VALIDATORS="$(stellar contract invoke --id "$NEW_VER_ID" --network "$NETWORK" -- get_validators | jq -S '.')"
-AFTER_PLAYER_COUNT="$(stellar contract invoke --id "$NEW_REG_ID" --network "$NETWORK" -- get_player_count | tr -dc '0-9')"
+AFTER_VALIDATORS="$(stellar contract invoke --id "$NEW_VER_ID" --source smoke-admin --network "$NETWORK" -- get_validators | jq -S '.')"
+AFTER_PLAYER_COUNT="$(stellar contract invoke --id "$NEW_REG_ID" --source smoke-admin --network "$NETWORK" -- get_player_count | tr -dc '0-9')"
 echo "    NEW validators   : $AFTER_VALIDATORS"
 echo "    NEW player_count : $AFTER_PLAYER_COUNT"
 
@@ -176,22 +191,20 @@ else
   FAIL=1
 fi
 
-# Players must NOT be auto-replayed (documented gap): new contract starts empty.
-if [ "${AFTER_PLAYER_COUNT:-0}" -eq 0 ]; then
-  echo "  PASS: new registration contract has 0 players — confirms the documented"
-  echo "        player replay gap (players are export-only, cannot be auto-seeded)."
+# Players must be replayed with their stable IDs and payloads.
+if [ "${AFTER_PLAYER_COUNT:-0}" -eq "${BEFORE_PLAYER_COUNT:-0}" ]; then
+  echo "  PASS: player count preserved across migration."
 else
-  echo "  FAIL: new contract unexpectedly has ${AFTER_PLAYER_COUNT} players — the"
-  echo "        replay tool must NOT be able to auto-register players."
+  echo "  FAIL: player count changed (before=${BEFORE_PLAYER_COUNT:-0}, after=${AFTER_PLAYER_COUNT:-0})."
   FAIL=1
 fi
 
-# The player must still have been EXPORTED so no data is lost.
+# The player must still be exported so the replay is auditable.
 LATEST_PLAYER_EXPORT="$(find migration-export -name 'players-*.json' -type f 2>/dev/null | sort | tail -1 || true)"
 if [ -n "$LATEST_PLAYER_EXPORT" ]; then
   EXPORTED_COUNT="$(jq 'length' "$LATEST_PLAYER_EXPORT" 2>/dev/null || echo 0)"
   if [ "${EXPORTED_COUNT:-0}" -ge 1 ]; then
-    echo "  PASS: $EXPORTED_COUNT player(s) exported to $LATEST_PLAYER_EXPORT (no data lost)."
+    echo "  PASS: $EXPORTED_COUNT player(s) exported to $LATEST_PLAYER_EXPORT."
   else
     echo "  FAIL: player export $LATEST_PLAYER_EXPORT is empty."
     FAIL=1

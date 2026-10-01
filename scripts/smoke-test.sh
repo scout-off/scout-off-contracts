@@ -77,13 +77,15 @@ stellar contract invoke \
   --id "$VER_ID" --source "$DEPLOYER" --network "$NETWORK" \
   -- register_validator \
   --wallet "$ADMIN" \
-  --credentials "Smoke Test Coach"
+  --credentials "Smoke Test Coach" \
+  --affiliation "Smoke Test Academy" \
+  --specializations '[]'
 
 # 7. Approve a milestone (this triggers the cross-contract call)
 echo ""
 echo "==> Approving milestone (cross-contract call)..."
 stellar contract invoke \
-  --id "$VER_ID" --source "$ADMIN" --network "$NETWORK" \
+  --id "$VER_ID" --source "$DEPLOYER" --network "$NETWORK" \
   -- approve_milestone \
   --validator_wallet "$ADMIN" \
   --player_id 1 \
@@ -94,7 +96,7 @@ stellar contract invoke \
 echo ""
 echo "==> Verifying cross-contract call succeeded..."
 LEVEL=$(stellar contract invoke \
-  --id "$PROG_ID" --network "$NETWORK" \
+  --id "$PROG_ID" --source "$DEPLOYER" --network "$NETWORK" \
   -- get_level \
   --player_id 1)
 

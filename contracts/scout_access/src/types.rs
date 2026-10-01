@@ -1,5 +1,24 @@
 use soroban_sdk::{contracttype, Address, String};
 
+pub use scoutchain_shared_types::WiringLink;
+
+/// Paginated response for `get_scout_contacts_page`.
+///
+/// Follows the `{ entries, total }` convention established by
+/// [`verification::GlobalMilestoneIndexPage`] so callers have a consistent
+/// stop condition when walking pages.
+///
+/// `entries` contains at most 50 player IDs per page; `total` is the full
+/// number of players the scout has ever contacted.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScoutContactsPage {
+    /// Page of contacted player IDs, in contact order (oldest first).
+    pub entries: soroban_sdk::Vec<u64>,
+    /// Total number of players this scout has contacted.
+    pub total: u32,
+}
+
 /// Subscription tier for scouts
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -68,7 +87,7 @@ pub struct ProContactPeriod {
 
 /// Escrow record for a trial offer
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TrialEscrow {
     /// Escrowed trial-offer amount in stroops, set from
     /// `FeeConfig.trial_offer_escrow_stroops` when `log_trial_offer` creates
@@ -93,7 +112,7 @@ pub struct FeeConfigProposal {
 
 /// Platform fee configuration
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FeeConfig {
     /// Contact fee in stroops (1 XLM = 10_000_000 stroops)
     pub contact_fee_stroops: i128,
@@ -105,24 +124,102 @@ pub struct FeeConfig {
     pub elite_sub_stroops: i128,
     /// Subscription duration in seconds (default: 30 days)
     pub sub_duration_secs: u64,
-    /// Maximum contacts per month for Pro tier (default: 10)
-    pub pro_contact_limit: u32,
-    /// Escrow amount for trial offers (stroops)
+    /// Escrow amount for trial offers (stroops).
+    /// Set to 0 to disable trial offers entirely; any positive value
+    /// is the amount escrowed per trial offer.
     pub trial_offer_escrow_stroops: i128,
-    /// Expiry window for trial offers (seconds)
+    /// Trial offer expiry window in seconds.
+    /// Must be > 0; defines how long an escrowed trial offer remains valid.
     pub trial_offer_expiry_secs: u64,
+    /// Maximum contacts per subscription period for Pro tier (default: 10). Resets on renewal.
+    /// Elite-tier scouts are exempt from this cap (no limit applies).
+    /// See `docs/CONTRACT_REFERENCE.md` — `FeeConfig` and `ProContactLimitReached`
+    /// (error 20) for the full per-tier access semantics, and `docs/GLOSSARY.md`
+    /// for the definition of "Pro tier" and the contact quota model.
+    pub pro_contact_limit: u32,
 }
 
 /// A single entry in the bounded on-chain fee configuration history.
 /// Stored in `DataKey::FeeConfigHistory` as a `Vec<FeeConfigHistoryEntry>`,
 /// oldest-first, capped at `FEE_CONFIG_HISTORY_CAP` entries.
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FeeConfigHistoryEntry {
     /// The fee configuration that was active before this change.
     pub config: FeeConfig,
     /// Ledger timestamp (Unix seconds) when this config was set via `update_fee_config`.
     pub updated_at: u64,
+}
+
+/// On-chain proof that `scout` is authorized to request the off-chain
+/// wrapped decryption key for `player_id`'s confidential evidence.
+///
+/// Written atomically by a successful `pay_to_contact` / `batch_contact_players`
+/// call (see `docs/EVIDENCE_PRIVACY.md`). This is an append-only fact about
+/// the past ("this scout was once entitled to see this evidence"), not a
+/// live entitlement check — it is never mutated except by
+/// `admin_revoke_evidence_access` or `revoke_evidence_access` flipping
+/// `revoked`. Subscription downgrade or expiry does not touch it.
+/// Revocation only ever gates *future* off-chain key-wrap requests; it
+/// cannot claw back a key that was already delivered before the revoke.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EvidenceAccessGrant {
+    /// Player identifier whose evidence this grant authorizes access to.
+    pub player_id: u64,
+    /// Scout wallet authorized by this grant.
+    pub scout: Address,
+    /// Ledger timestamp (Unix seconds) when the grant was issued.
+    pub granted_at: u64,
+    /// Ledger timestamp (Unix seconds) at which the grant expires and is
+    /// no longer considered active. `has_evidence_access` returns `false`
+    /// once the current ledger time exceeds this value. The grant record
+    /// itself is retained (append-only audit trail); only the *live*
+    /// entitlement check changes.
+    pub expires_at: u64,
+    /// The scout's subscription tier at the moment the grant was issued.
+    /// Recorded for audit purposes; it is not re-checked afterward.
+    pub tier_at_grant: SubscriptionTier,
+    /// True once a grant has been revoked via `admin_revoke_evidence_access`
+    /// (admin-initiated) or `revoke_evidence_access` (player-initiated).
+    /// The record is kept (never deleted) so the audit trail of who was
+    /// ever granted access stays intact.
+    pub revoked: bool,
+    /// Ledger timestamp (Unix seconds) of revocation, if any.
+    pub revoked_at: Option<u64>,
+}
+
+/// Indicates which activation path was used when a FeeConfig was applied.
+///
+/// Stored in each `FeeConfigHistoryEntry` so auditors can distinguish
+/// between an immediate admin update, a decrease-branch proposal bypass,
+/// a time-locked proposal activation, and a migration seed.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub enum FeeConfigSource {
+    /// Applied immediately via `update_fee_config` (admin direct call).
+    Immediate,
+    /// Applied via `propose_fee_config` instant-decrease branch.
+    Decrease,
+    /// Applied via `activate_fee_config` after a time-locked proposal.
+    Proposal,
+    /// Applied via `admin_seed_fee_config` migration helper.
+    Seed,
+}
+
+/// One entry in the fee-configuration history ring-buffer.
+///
+/// History is capped at `FEE_CONFIG_HISTORY_CAP` entries in instance
+/// storage; older entries are evicted when the cap is exceeded.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeConfigHistoryEntry {
+    /// The fee configuration that was activated.
+    pub config: FeeConfig,
+    /// Ledger timestamp when this config was activated, in Unix seconds.
+    pub activated_at: u64,
+    /// Which code path triggered this activation.
+    pub source: FeeConfigSource,
 }
 
 #[contracttype]
@@ -132,6 +229,10 @@ pub enum DataKey {
     PendingAdmin,
     Initialized,
     Paused,
+    /// Function-scoped pause flag for `pay_to_contact` (independent of the
+    /// whole-contract `Paused` flag). Stored in instance storage, defaults to
+    /// `false` when absent. Mirrors `verification`'s `PausedApproveMilestone`.
+    PausedPayToContact,
     FeeConfig,
     /// Proposed fee configuration awaiting activation after a 7-day delay
     PendingFeeConfig,
@@ -172,10 +273,103 @@ pub enum DataKey {
     /// (push on creation) and `confirm_trial_offer` (remove on cleanup) so
     /// `expire_trial_offers` can sweep stale escrows without an off-chain index.
     OutstandingTrialEscrows,
+    /// Idempotency marker written after a trial offer is successfully confirmed:
+    /// (player_id, index) → bool.
+    ///
+    /// `confirm_trial_offer` checks this key before executing the escrow
+    /// release and returns `Ok(())` immediately on a retry, without
+    /// re-running the escrow release or the progress-contract call. The key
+    /// is scoped to `(player_id, index)` so a confirmation for one offer
+    /// cannot no-op a confirmation for a different offer.
+    TrialOfferConfirmed(u64, u32),
+    /// day-bucket index (Unix timestamp / 86400) → Vec<Address> of scouts
+    /// whose subscription expires within that day. Updated by
+    /// `write_subscription` on every subscription write so that
+    /// `get_expiring_subscriptions` and keeper bots can find scouts
+    /// cheaply without scanning all Subscription records.
+    ExpiryBucket(u64),
     /// Bounded on-chain history of the last N FeeConfig values, oldest-first.
     /// Updated by `update_fee_config`. Exposed via `get_fee_config_history`.
     FeeConfigHistory,
+    /// Idempotency nonce for `confirm_trial_offer` retries.
+    /// Maps caller-supplied nonce → () so a retried call after a
+    /// `ProgressCallFailed` can safely detect that the offer was already
+    /// confirmed and skip the escrow cleanup / level-advance replay.
+    ConfirmationNonce(String),
     /// scout wallet → bool; true if the scout has opted in to auto-renewal.
     /// Set by `set_auto_renew`, consumed by `renew_if_due`.
     AutoRenew(Address),
+    /// Day-granularity expiry bucket: (expires_at / 86_400) → Vec<Address>.
+    ///
+    /// Maintained by `subscribe` alongside `Subscription(scout)` so that
+    /// `get_expiring_subscriptions` can page through soon-to-expire
+    /// subscriptions in O(days_covered) without walking every scout.
+    ///
+    /// Tradeoff: coarse day-bucket granularity keeps index storage cost low
+    /// (one Vec per day with at least one subscriber) at the cost of requiring
+    /// the caller to re-check `Subscription.expires_at` for exact filtering,
+    /// which `get_subscriptions_expiring_before` already does.
+    ExpiryBucket(u64),
+
+    /// Earliest day bucket (expires_at / 86_400) that may contain live
+    /// subscriptions. Updated on `add_to_expiry_bucket` and lazily advanced
+    /// when buckets are found empty during scans. Stored in instance storage
+    /// to avoid a persistent read per query. Defaults to u64::MAX when no
+    /// subscriptions exist.
+    ExpiryMinDay,
+
+    /// Boolean flag (`true`) written by `open_migration_window`; absent or
+    /// `false` means the migration window is closed. All `admin_seed_*`
+    /// functions on this contract check this flag before writing any state.
+    /// Cleared by `close_migration_window`. Stored in instance storage.
+    MigrationActive,
+    /// Re-wiring epoch for `DataKey::ProgressContract`, bumped by every
+    /// `set_progress_contract` / `update_progress_contract` call. See
+    /// `scoutchain_shared_types::WiringLink` and
+    /// `docs/WIRING_REGISTRY_DESIGN.md` (issue #1041).
+    ProgressContractEpoch,
+    /// Re-wiring epoch for `DataKey::RegistrationContract`, bumped by every
+    /// `set_registration_contract` call.
+    RegistrationContractEpoch,
+    /// (player_id, scout) → EvidenceAccessGrant. Canonical grant record;
+    /// see `docs/EVIDENCE_PRIVACY.md`. Written once by `pay_to_contact` /
+    /// `batch_contact_players` and only ever mutated by
+    /// `admin_revoke_evidence_access` or `revoke_evidence_access` (player-initiated)
+    /// flipping `revoked`/`revoked_at`.
+    EvidenceAccessGrant(u64, Address),
+    /// Monotonic count of grants ever issued for `player_id`, used to place
+    /// the next grant into `EvidenceAccessGrantPage(player_id, count / PAGE_SIZE)`.
+    /// Never decremented (grants are append-only, so revoking one does not
+    /// free its enumeration slot).
+    EvidenceAccessGrantCount(u64),
+    /// (player_id, page_index) → Vec<Address> of scouts, in issuance order,
+    /// fixed-size-paged so `get_player_access_grants` can seek directly to
+    /// the page(s) covering a given `offset`/`limit` window instead of
+    /// scanning every grant a popular player has ever accumulated. See
+    /// `ACCESS_GRANT_PAGE_SIZE` in `lib.rs`.
+    EvidenceAccessGrantPage(u64, u32),
+}
+
+/// Snapshot of both cross-contract peer address pointers held by the
+/// scout_access contract, each with its address and re-wiring epoch.
+/// Returned by `ScoutAccessContract::get_wiring_state`. See
+/// `docs/WIRING_REGISTRY_DESIGN.md` for the full cross-contract picture.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScoutAccessWiringState {
+    /// Peer link to the progress contract, set via `set_progress_contract`
+    /// (or its `update_progress_contract` alias). Used so `log_trial_offer`
+    /// can atomically advance a player to Level 3.
+    pub progress_contract: WiringLink,
+    /// Peer link to the registration contract, set via
+    /// `set_registration_contract`. Used for Pro-tier scout verification
+    /// gating.
+    pub registration_contract: WiringLink,
+}
+
+impl ScoutAccessWiringState {
+    /// Returns `true` iff both peer links are configured.
+    pub fn is_fully_wired(&self) -> bool {
+        self.progress_contract.is_configured() && self.registration_contract.is_configured()
+    }
 }

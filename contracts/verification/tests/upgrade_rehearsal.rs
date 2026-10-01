@@ -54,8 +54,7 @@ fn rehearse_upgrade(h: &Harness) {
 fn setup() -> Harness {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger()
-        .with_mut(|l| l.timestamp = 1_000_000);
+    env.ledger().with_mut(|l| l.timestamp = 1_000_000);
 
     let admin = Address::generate(&env);
     let id = env.register(VerificationContract, ());
@@ -75,6 +74,8 @@ fn seed(h: &Harness) -> Seeded {
     h.verification.register_validator(
         &validator,
         &String::from_str(&h.env, "UEFA-B-License"),
+        &String::from_str(&h.env, "Default Academy"),
+        &soroban_sdk::Vec::new(&h.env),
     );
 
     h.verification.approve_milestone(
@@ -82,12 +83,14 @@ fn seed(h: &Harness) -> Seeded {
         &1u64,
         &String::from_str(&h.env, "scored"),
         &String::from_str(&h.env, CID_1),
+        &None,
     );
     h.verification.approve_milestone(
         &validator,
         &2u64,
         &String::from_str(&h.env, "assisted"),
         &String::from_str(&h.env, CID_2),
+        &None,
     );
 
     // Initial progress-contract wiring (sets the one-time ProgressContractSet
@@ -145,7 +148,10 @@ fn test_verification_upgrade_preserves_state() {
     // --- Assert: instance flags / counters survived ---
     assert_eq!(h.verification.health(), health);
     assert_eq!(h.verification.get_total_milestone_count(), total_before);
-    assert_eq!(h.verification.get_active_validator_count(), active_validators);
+    assert_eq!(
+        h.verification.get_active_validator_count(),
+        active_validators
+    );
 
     // --- Assert: Admin (persistent) survived — admin-gated call still works ---
     h.verification.pause_contract();
@@ -173,4 +179,31 @@ fn test_verification_broken_upgrade_wrong_rewire_fn_is_caught() {
     // Wrong re-wiring function post-upgrade — must not silently succeed.
     let new_progress_link = Address::generate(&h.env);
     h.verification.set_progress_contract(&new_progress_link);
+}
+
+/// Assert that `upgrade()` emits a `contract_upgraded` event before swapping
+/// the WASM, so the event is attributed to the old code version.
+#[test]
+fn test_verification_upgrade_emits_contract_upgraded_event() {
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::{symbol_short, IntoVal};
+
+    let h = setup();
+    let _ = seed(&h);
+
+    let new_wasm_hash = h.env.deployer().upload_contract_wasm(Bytes::new(&h.env));
+    h.verification.upgrade(&new_wasm_hash);
+
+    let events = h.env.events().all();
+    let found = events.iter().any(|(_, topics, _)| {
+        topics.get(0).map_or(false, |first| {
+            let expected: soroban_sdk::Val = symbol_short!("contract_upgraded").into_val(&h.env);
+            first == expected
+        })
+    });
+
+    assert!(
+        found,
+        "expected a 'contract_upgraded' event to be emitted by upgrade()"
+    );
 }

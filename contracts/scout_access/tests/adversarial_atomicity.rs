@@ -91,7 +91,13 @@ fn setup_full() -> Harness {
     scout_access.set_progress_contract(&progress_id);
     progress.set_scout_access_contract(&sa_id);
 
-    Harness { env, xlm, progress, scout_access, verification }
+    Harness {
+        env,
+        xlm,
+        progress,
+        scout_access,
+        verification,
+    }
 }
 
 /// Harness with scout_access wired to a *garbage* progress address so
@@ -127,13 +133,20 @@ fn setup_bad_progress_for_scout_access() -> Harness {
 
     // (Do NOT whitelist sa_id in progress — it uses a bad address anyway.)
 
-    Harness { env, xlm, progress, scout_access, verification }
+    Harness {
+        env,
+        xlm,
+        progress,
+        scout_access,
+        verification,
+    }
 }
 
 /// Advance a player to `levels` tiers using the verification contract address.
 fn advance_player(h: &Harness, player_id: u64, levels: u32) {
     for i in 1..=levels {
-        h.progress.advance_level(&h.verification.address, &player_id, &i);
+        h.progress
+            .advance_level(&h.verification.address, &player_id, &i);
     }
 }
 
@@ -141,13 +154,18 @@ fn advance_player(h: &Harness, player_id: u64, levels: u32) {
 /// `milestone_ref` that `log_trial_offer` validates.
 fn approve_milestone(h: &Harness, player_id: u64, cid: &str) {
     let validator = Address::generate(&h.env);
-    h.verification
-        .register_validator(&validator, &String::from_str(&h.env, "UEFA-B-License"));
+    h.verification.register_validator(
+        &validator,
+        &String::from_str(&h.env, "UEFA-B-License"),
+        &String::from_str(&h.env, "Default Academy"),
+        &soroban_sdk::Vec::new(&h.env),
+    );
     h.verification.approve_milestone(
         &validator,
         &player_id,
         &String::from_str(&h.env, "milestone"),
         &String::from_str(&h.env, cid),
+        &None,
     );
 }
 
@@ -171,10 +189,17 @@ fn test_confirm_trial_offer_advances_player_to_elite_tier() {
 
     // Advance to PerformanceMilestones (level 2).
     advance_player(&h, player_id, 2);
-    assert_eq!(h.progress.get_level(&player_id), ProgressLevel::PerformanceMilestones);
+    assert_eq!(
+        h.progress.get_level(&player_id),
+        ProgressLevel::PerformanceMilestones
+    );
 
     subscribe_elite_and_contact(&h, &scout, player_id);
-    approve_milestone(&h, player_id, "QmRhbYsqpiYgUY9KfNCcbfopHPbLnWSVKBpDNs37aZ3kVC");
+    approve_milestone(
+        &h,
+        player_id,
+        "QmRhbYsqpiYgUY9KfNCcbfopHPbLnWSVKBpDNs37aZ3kVC",
+    );
 
     let trial_index = h.scout_access.log_trial_offer(
         &scout,
@@ -185,7 +210,7 @@ fn test_confirm_trial_offer_advances_player_to_elite_tier() {
 
     // Confirm the trial offer — must advance player to EliteTier.
     h.scout_access
-        .confirm_trial_offer(&player_wallet, &player_id, &trial_index);
+        .confirm_trial_offer(&player_wallet, &player_id, &trial_index, &None);
 
     assert_eq!(
         h.progress.get_level(&player_id),
@@ -218,7 +243,11 @@ fn test_confirm_trial_offer_bad_progress_returns_progress_call_failed() {
     advance_player(&h, player_id, 2);
 
     subscribe_elite_and_contact(&h, &scout, player_id);
-    approve_milestone(&h, player_id, "QmgzsER5ykyxoTsVUSePRkKXqkEzsRVLpUv511dp4c3vAs");
+    approve_milestone(
+        &h,
+        player_id,
+        "QmgzsER5ykyxoTsVUSePRkKXqkEzsRVLpUv511dp4c3vAs",
+    );
 
     let trial_index = h.scout_access.log_trial_offer(
         &scout,
@@ -228,15 +257,15 @@ fn test_confirm_trial_offer_bad_progress_returns_progress_call_failed() {
     assert_eq!(trial_index, 1);
 
     // confirm_trial_offer — must return ProgressCallFailed (code 14).
-    let result = h.scout_access.try_confirm_trial_offer(
-        &player_wallet,
-        &player_id,
-        &trial_index,
-    );
+    let result =
+        h.scout_access
+            .try_confirm_trial_offer(&player_wallet, &player_id, &trial_index, &None);
     assert!(
         matches!(
             result,
-            Err(Ok(scoutchain_scout_access::ScoutAccessError::ProgressCallFailed))
+            Err(Ok(
+                scoutchain_scout_access::ScoutAccessError::ProgressCallFailed
+            ))
         ),
         "expected ProgressCallFailed from confirm_trial_offer, got: {result:?}"
     );
@@ -261,7 +290,11 @@ fn test_double_confirm_trial_offer_is_blocked() {
 
     advance_player(&h, player_id, 2);
     subscribe_elite_and_contact(&h, &scout, player_id);
-    approve_milestone(&h, player_id, "QmcTzBPBmmVEd19W3UgvE4sGrZXdwrZ3UFzLAWQSmfYFvJ");
+    approve_milestone(
+        &h,
+        player_id,
+        "QmcTzBPBmmVEd19W3UgvE4sGrZXdwrZ3UFzLAWQSmfYFvJ",
+    );
 
     let trial_index = h.scout_access.log_trial_offer(
         &scout,
@@ -271,19 +304,19 @@ fn test_double_confirm_trial_offer_is_blocked() {
 
     // First confirm — succeeds.
     h.scout_access
-        .confirm_trial_offer(&player_wallet, &player_id, &trial_index);
+        .confirm_trial_offer(&player_wallet, &player_id, &trial_index, &None);
     assert_eq!(h.progress.get_level(&player_id), ProgressLevel::EliteTier);
 
     // Second confirm — must be rejected.
-    let result = h.scout_access.try_confirm_trial_offer(
-        &player_wallet,
-        &player_id,
-        &trial_index,
-    );
+    let result =
+        h.scout_access
+            .try_confirm_trial_offer(&player_wallet, &player_id, &trial_index, &None);
     assert!(
         matches!(
             result,
-            Err(Ok(scoutchain_scout_access::ScoutAccessError::TrialOfferAlreadyConfirmed))
+            Err(Ok(
+                scoutchain_scout_access::ScoutAccessError::TrialOfferAlreadyConfirmed
+            ))
         ),
         "second confirm_trial_offer must return TrialOfferAlreadyConfirmed: {result:?}"
     );
@@ -301,8 +334,9 @@ fn test_double_confirm_trial_offer_is_blocked() {
 // ---------------------------------------------------------------------------
 
 /// When `confirm_trial_offer` is called after the offer's expiry window,
-/// `TrialOfferExpired` (code 23) is returned and the escrowed XLM is
-/// refunded to the scout.
+/// the escrowed XLM is refunded to the scout and the expiry event is
+/// committed. The call succeeds because returning an error would roll back
+/// the refund and escrow cleanup.
 #[test]
 fn test_confirm_trial_offer_expired_refunds_scout() {
     let h = setup_full();
@@ -317,7 +351,11 @@ fn test_confirm_trial_offer_expired_refunds_scout() {
     h.scout_access.pay_to_contact(&scout, &player_id);
 
     let fees = default_fees();
-    approve_milestone(&h, player_id, "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG");
+    approve_milestone(
+        &h,
+        player_id,
+        "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+    );
 
     let trial_index = h.scout_access.log_trial_offer(
         &scout,
@@ -330,18 +368,13 @@ fn test_confirm_trial_offer_expired_refunds_scout() {
         l.timestamp += fees.trial_offer_expiry_secs + 1;
     });
 
-    // confirm after expiry — must return TrialOfferExpired.
-    let result = h.scout_access.try_confirm_trial_offer(
-        &player_wallet,
-        &player_id,
-        &trial_index,
-    );
+    // Confirm after expiry — refund and cleanup must commit successfully.
+    let result =
+        h.scout_access
+            .try_confirm_trial_offer(&player_wallet, &player_id, &trial_index, &None);
     assert!(
-        matches!(
-            result,
-            Err(Ok(scoutchain_scout_access::ScoutAccessError::TrialOfferExpired))
-        ),
-        "expected TrialOfferExpired after expiry, got: {result:?}"
+        result.is_ok(),
+        "expired confirmation should commit the refund, got: {result:?}"
     );
 
     // Player level must NOT have advanced.

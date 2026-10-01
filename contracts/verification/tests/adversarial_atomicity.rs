@@ -69,7 +69,12 @@ fn setup_unwired() -> (Env, VerificationContractClient<'static>, Address) {
     let admin = Address::generate(&env);
     client.initialize(&admin);
     let validator = Address::generate(&env);
-    client.register_validator(&validator, &String::from_str(&env, "UEFA-B-License-2026"));
+    client.register_validator(
+        &validator,
+        &String::from_str(&env, "UEFA-B-License-2026"),
+        &String::from_str(&env, "Default Academy"),
+        &soroban_sdk::Vec::new(&env),
+    );
     (env, client, validator)
 }
 
@@ -88,7 +93,12 @@ fn setup_bad_wiring() -> (Env, VerificationContractClient<'static>, Address) {
     client.set_progress_contract(&bad_progress);
 
     let validator = Address::generate(&env);
-    client.register_validator(&validator, &String::from_str(&env, "UEFA-B-License-2026"));
+    client.register_validator(
+        &validator,
+        &String::from_str(&env, "UEFA-B-License-2026"),
+        &String::from_str(&env, "Default Academy"),
+        &soroban_sdk::Vec::new(&env),
+    );
     (env, client, validator)
 }
 
@@ -113,6 +123,7 @@ fn test_approve_milestone_unwired_progress_records_milestone() {
         &player_id,
         &String::from_str(&env, "scored hat-trick"),
         &String::from_str(&env, CID_A),
+        &None,
     );
     assert!(
         result.is_ok(),
@@ -178,13 +189,16 @@ fn test_approve_milestone_bad_wiring_returns_progress_call_failed() {
         &player_id,
         &String::from_str(&env, "scored hat-trick"),
         &String::from_str(&env, CID_A),
+        &None,
     );
 
     // Must return ProgressCallFailed (VerificationError code 12).
     assert!(
         matches!(
             result,
-            Err(Ok(scoutchain_verification::VerificationError::ProgressCallFailed))
+            Err(Ok(
+                scoutchain_verification::VerificationError::ProgressCallFailed
+            ))
         ),
         "expected ProgressCallFailed, got: {result:?}"
     );
@@ -218,8 +232,12 @@ fn test_duplicate_evidence_idempotency_token_blocks_replay() {
         &player_id,
         &String::from_str(&env, "scored hat-trick"),
         &String::from_str(&env, CID_B),
+        &None,
     );
-    assert!(first.is_ok(), "first approve_milestone must succeed: {first:?}");
+    assert!(
+        first.is_ok(),
+        "first approve_milestone must succeed: {first:?}"
+    );
 
     // Second call with the SAME evidence hash — must be rejected.
     let second = client.try_approve_milestone(
@@ -227,11 +245,14 @@ fn test_duplicate_evidence_idempotency_token_blocks_replay() {
         &player_id,
         &String::from_str(&env, "different description"),
         &String::from_str(&env, CID_B), // same CID
+        &None,
     );
     assert!(
         matches!(
             second,
-            Err(Ok(scoutchain_verification::VerificationError::DuplicateEvidence))
+            Err(Ok(
+                scoutchain_verification::VerificationError::DuplicateEvidence
+            ))
         ),
         "second call with same evidence hash must return DuplicateEvidence: {second:?}"
     );
@@ -279,7 +300,12 @@ fn test_retry_with_fresh_evidence_hash_succeeds_after_wiring_fixed() {
     client.set_progress_contract(&prog_id);
 
     let validator = Address::generate(&env);
-    client.register_validator(&validator, &String::from_str(&env, "UEFA-B-License-2026"));
+    client.register_validator(
+        &validator,
+        &String::from_str(&env, "UEFA-B-License-2026"),
+        &String::from_str(&env, "Default Academy"),
+        &soroban_sdk::Vec::new(&env),
+    );
 
     let player_id: u64 = 42;
 
@@ -289,6 +315,7 @@ fn test_retry_with_fresh_evidence_hash_succeeds_after_wiring_fixed() {
         &player_id,
         &String::from_str(&env, "scored hat-trick"),
         &String::from_str(&env, CID_C),
+        &None,
     );
     assert!(
         result.is_ok(),
@@ -313,12 +340,17 @@ fn test_retry_with_fresh_evidence_hash_succeeds_after_wiring_fixed() {
 fn test_validator_cap_bounds_evidence_storage() {
     let (env, client, _) = setup_unwired();
 
-    // Register validators up to the cap minus one (already have 1 registered).
-    // MAX_VALIDATORS is 100, so we register 98 more (100 total including the one
-    // from setup_unwired).
-    for _ in 0..98 {
+    // Register validators up to the cap (already have 1 registered from
+    // setup_unwired). MAX_VALIDATORS is 100, so we register 99 more for
+    // exactly 100 total.
+    for _ in 0..99 {
         let v = Address::generate(&env);
-        client.register_validator(&v, &String::from_str(&env, "UEFA-B-License-2026"));
+        client.register_validator(
+            &v,
+            &String::from_str(&env, "UEFA-B-License-2026"),
+            &String::from_str(&env, "Default Academy"),
+            &soroban_sdk::Vec::new(&env),
+        );
     }
 
     // Next registration must fail with ValidatorCapReached (code 15).
@@ -326,11 +358,15 @@ fn test_validator_cap_bounds_evidence_storage() {
     let result = client.try_register_validator(
         &extra,
         &String::from_str(&env, "UEFA-A-License-2026"),
+        &String::from_str(&env, "Default Academy"),
+        &soroban_sdk::Vec::new(&env),
     );
     assert!(
         matches!(
             result,
-            Err(Ok(scoutchain_verification::VerificationError::ValidatorCapReached))
+            Err(Ok(
+                scoutchain_verification::VerificationError::ValidatorCapReached
+            ))
         ),
         "101st validator registration must return ValidatorCapReached: {result:?}"
     );

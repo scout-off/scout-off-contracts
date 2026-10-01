@@ -7,6 +7,18 @@
 | `main` (testnet) | ✅ Active development |
 | Older branches | ❌ Not supported |
 
+For deployed contracts, only the **latest released contract version** is patched.
+If a vulnerability is found in a deployed-but-not-latest version, the fix ships as a
+patch on the latest minor only — operators running older versions are expected to
+upgrade to the latest minor to receive the fix. See
+[docs/VERSIONING.md](docs/VERSIONING.md) for the versioning policy (SemVer
+MAJOR/MINOR/PATCH semantics and upgrade procedures).
+
+> **Testnet note:** The currently deployed testnet contracts are under active
+development and are upgraded in place as releases land; no backporting is performed
+for older versions. This policy will be revisited when a mainnet deployment is
+introduced.
+
 ## Reporting a Vulnerability
 
 We take the security of ScoutChain and its smart contracts seriously. If you believe you have discovered a security vulnerability, please report it to us privately.

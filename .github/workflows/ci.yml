@@ -15,9 +15,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Block TODO/FIXME/HACK markers in contract source
         run: |
-          if grep -rIn '\b(TODO|FIXME|HACK|XXX)\b' contracts/ --include='*.rs'; then
+          # The pattern uses grouping `(...)` and alternation `|`, which are
+          # extended-regex constructs. grep treats them as literal characters
+          # in basic mode, so without `-E` this gate would silently never match
+          # a TODO/FIXME/HACK/XXX marker and let them merge to main undetected.
+          if grep -rInE '\b(TODO|FIXME|HACK|XXX)\b' contracts/ --include='*.rs'; then
             echo "ERROR: TODO/FIXME/HACK/XXX markers found in contract source."
             echo "Resolve them or remove them before merging."
             exit 1
           fi
           echo "No TODO/FIXME/HACK/XXX markers found."
+      - name: Check database migration numbering
+        run: bash scripts/check-migration-numbering.sh
