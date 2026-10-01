@@ -2,9 +2,10 @@ import request from "supertest";
 import app from "../../src/app";
 import { issueSep10Token } from "../../src/services/sep10";
 import { prisma } from "../../src/db";
+import jwt from "jsonwebtoken";
 
 beforeEach(async () => {
-  await prisma.revoked_tokens.deleteMany();
+  await prisma.revokedToken.deleteMany();
 });
 
 afterAll(async () => {

@@ -10,7 +10,7 @@ ScoutChain contracts follow [Semantic Versioning 2.0.0](https://semver.org/) —
 | **MINOR** | Backward-compatible addition — new function, new event, new error code appended at end of enum |
 | **PATCH** | Backward-compatible fix — bug fix, gas optimisation, documentation update in source |
 
-The current workspace version of all four contracts is **v1.1.0**. Contract-specific
+The current workspace version of all four contracts is **v2.0.0**. Contract-specific
 releases in the Version History table may describe changes that were deployed to
 only one contract, but the shared workspace version remains the build-time value
 reported by every contract's `version()` function.
@@ -70,7 +70,7 @@ The upgrade procedure is implemented in `scripts/upgrade.sh` (see [DEPLOYMENT.md
 
 - [ ] Read all BREAKING CHANGES listed in the release notes for the target version
 - [ ] Snapshot current on-chain state that lives in **instance** storage (fee config, initialized flag, contract links) — these survive the WASM swap but must be re-verified
-- [ ] Check `version()` on all four contracts to confirm the baseline version before upgrade. Each contract should return the expected deployed workspace version (currently `1.1.0`, from `CARGO_PKG_VERSION`, with no `v` prefix).
+- [ ] Check `version()` on all four contracts to confirm the baseline version before upgrade. Each contract should return the expected deployed workspace version (currently `2.0.0`, from `CARGO_PKG_VERSION`, with no `v` prefix).
 - [ ] Run `cargo test --workspace` against the new code locally
 - [ ] Rehearse the upgrade locally with the storage-survival harness — **no testnet fees required.** For each contract it deploys v1, seeds representative state, calls `upgrade()`, and asserts every row of the "What survives an upgrade" table in `docs/DEPLOYMENT.md` (persistent state unchanged; instance `Initialized`/`Paused` flags intact; cross-contract links re-wirable), including the `verification` `AlreadyConfigured` re-wire quirk. Run:
   - `cargo test -p scoutchain-registration  --test upgrade_rehearsal`

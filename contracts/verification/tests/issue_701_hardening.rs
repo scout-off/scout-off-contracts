@@ -36,7 +36,7 @@ use soroban_sdk::{
 };
 
 const CREDENTIALS: &str = "UEFA-B-License-2026";
-const ATTESTATION_DOMAIN: &str = "ScoutChain-MilestoneAttestation-v1";
+const ATTESTATION_DOMAIN: &str = "ScoutChain-MilestoneAttestation-v2";
 const DEFAULT_VOTING_WINDOW_SECS: u64 = 1_209_600; // 14 days — must match lib.rs default
 
 fn setup() -> (Env, VerificationContractClient<'static>, Address, Address) {
@@ -132,18 +132,19 @@ fn pubkey_bytesn(env: &Env, sk: &SigningKey) -> BytesN<32> {
     BytesN::from_array(env, &sk.verifying_key().to_bytes())
 }
 
-fn attestation_message(env: &Env, attestation: &MilestoneAttestation) -> Bytes {
-    let mut message = Bytes::new(env);
-    message.extend_from_slice(ATTESTATION_DOMAIN.as_bytes());
-    message.append(&attestation.contract_id.clone().to_xdr(env));
-    message.append(&Bytes::from_slice(env, &attestation.network_id.to_array()));
-    message.append(&attestation.validator_wallet.clone().to_xdr(env));
-    message.extend_from_slice(&attestation.player_id.to_be_bytes());
-    message.append(&attestation.description.clone().to_xdr(env));
-    message.append(&attestation.evidence_hash.clone().to_xdr(env));
-    message.extend_from_slice(&attestation.nonce.to_be_bytes());
-    message
-}
+    fn attestation_message(env: &Env, attestation: &MilestoneAttestation) -> Bytes {
+        let mut message = Bytes::new(env);
+        message.extend_from_slice(ATTESTATION_DOMAIN.as_bytes());
+        message.append(&attestation.contract_id.clone().to_xdr(env));
+        message.append(&Bytes::from_slice(env, &attestation.network_id.to_array()));
+        message.append(&attestation.validator_wallet.clone().to_xdr(env));
+        message.extend_from_slice(&attestation.player_id.to_be_bytes());
+        message.append(&attestation.description.clone().to_xdr(env));
+        message.append(&attestation.evidence_hash.clone().to_xdr(env));
+        message.extend_from_slice(&attestation.nonce.to_be_bytes());
+        message.extend_from_slice(&attestation.expires_at.to_be_bytes());
+        message
+    }
 
 fn sign_attestation(env: &Env, sk: &SigningKey, attestation: &MilestoneAttestation) -> BytesN<64> {
     let message = attestation_message(env, attestation);
@@ -178,12 +179,15 @@ fn register_validator_with_key(
 #[test]
 fn submit_attested_milestone_is_closed_once_threshold_mode_is_configured() {
     let (env, client, _admin, contract_id) = setup();
-    client.set_milestone_threshold(&2u32);
 
     let validator = Address::generate(&env);
     let relayer = Address::generate(&env);
     let sk = signing_key(1);
     register_validator_with_key(&env, &client, &validator, &sk);
+    let extra = Address::generate(&env);
+    let sk2 = signing_key(2);
+    register_validator_with_key(&env, &client, &extra, &sk2);
+    client.set_milestone_threshold(&2u32);
 
     let attestation = MilestoneAttestation {
         validator_wallet: validator.clone(),
@@ -191,6 +195,7 @@ fn submit_attested_milestone_is_closed_once_threshold_mode_is_configured() {
         description: String::from_str(&env, "hat-trick in regional final"),
         evidence_hash: cid(&env, 100),
         nonce: 1,
+        expires_at: env.ledger().timestamp() + 300,
         contract_id: contract_id.clone(),
         network_id: env.ledger().network_id(),
     };
@@ -233,9 +238,11 @@ fn submit_attested_milestone_is_closed_once_threshold_mode_is_configured() {
 #[test]
 fn has_attested_returns_false_once_window_has_expired_even_before_the_next_vote_rolls_the_round() {
     let (env, client, _admin, _id) = setup();
-    client.set_milestone_threshold(&3u32);
 
     let v1 = register_validator(&env, &client);
+    let _v2 = register_validator(&env, &client);
+    let _v3 = register_validator(&env, &client);
+    client.set_milestone_threshold(&3u32);
     let player_id = 42u64;
     let description = String::from_str(&env, "identity confirmed by academy");
     let evidence = cid(&env, 200);
@@ -268,9 +275,9 @@ fn pending_vote_cap_does_not_double_count_a_validators_own_self_triggered_expiry
     // threshold=2 so a lone vote never auto-commits (which would remove the
     // claim and short-circuit the scenario) — every claim in this test stays
     // open on exactly one vote from `target`.
-    client.set_milestone_threshold(&2u32);
-
     let target = register_validator(&env, &client);
+    let _extra = register_validator(&env, &client);
+    client.set_milestone_threshold(&2u32);
 
     // Open 24 distinct claims with exactly one vote each from `target`. This
     // is the maximum that can be legitimately open while still leaving room

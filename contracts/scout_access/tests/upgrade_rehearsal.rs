@@ -195,3 +195,30 @@ fn test_scout_access_broken_upgrade_left_paused_is_caught() {
     fund(&h, &scout2, 50_000_000);
     h.scout_access.subscribe(&scout2, &SubscriptionTier::Basic);
 }
+
+/// Assert that `upgrade()` emits a `contract_upgraded` event before swapping
+/// the WASM, so the event is attributed to the old code version.
+#[test]
+fn test_scout_access_upgrade_emits_contract_upgraded_event() {
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::{symbol_short, IntoVal};
+
+    let h = setup();
+    let _ = seed(&h);
+
+    let new_wasm_hash = h.env.deployer().upload_contract_wasm(Bytes::new(&h.env));
+    h.scout_access.upgrade(&new_wasm_hash);
+
+    let events = h.env.events().all();
+    let found = events.iter().any(|(_, topics, _)| {
+        topics.get(0).map_or(false, |first| {
+            let expected: soroban_sdk::Val = symbol_short!("contract_upgraded").into_val(&h.env);
+            first == expected
+        })
+    });
+
+    assert!(
+        found,
+        "expected a 'contract_upgraded' event to be emitted by upgrade()"
+    );
+}

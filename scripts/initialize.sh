@@ -236,6 +236,16 @@ stellar contract invoke \
   --addr "$REGISTRATION_CONTRACT_ID"
 
 echo ""
+echo "==> Setting registration cooldown..."
+REG_COOLDOWN_SECS=$(python3 -c "import json; print(json.load(open('config/${NETWORK}.json')).get('reg_cooldown_secs', 86400))")
+stellar contract invoke \
+  --id "$REGISTRATION_CONTRACT_ID" \
+  --source "$DEPLOYER" \
+  --network "$NETWORK" \
+  -- set_reg_cooldown \
+  --cooldown_secs "$REG_COOLDOWN_SECS"
+
+echo ""
 echo "==> Verifying wiring consistency (post-wiring gate)..."
 # Every wiring call above is a separate, independently-failable
 # `stellar contract invoke` — Soroban has no atomic multi-contract

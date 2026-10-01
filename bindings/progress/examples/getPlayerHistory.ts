@@ -14,10 +14,11 @@
  * and how did they get here?"
  *
  * Covered functions:
- *   get_level(player_id)            → ProgressLevel (Unverified for unknown IDs)
- *   get_progress_history(player_id) → Vec<ProgressEntry> (O(1) single-key read)
- *   get_history_since(player_id, since_timestamp) → Vec<ProgressEntry>
+ *   get_level(player_id)                    → ProgressLevel (Unverified for unknown IDs)
+ *   get_progress_history(player_id)         → Vec<ProgressEntry> (DEPRECATED: unbounded cost)
+ *   get_history_since(player_id, since_timestamp, limit) → Vec<ProgressEntry> (bounded scan)
  *   get_progress_history_page(player_id, offset, limit) → Vec<ProgressEntry>
+ *   get_history_page_with_cursor(player_id, cursor_snapshot?, cursor_next_index?, limit) → Vec<ProgressEntry>
  *
  * See `contracts/progress/src/lib.rs` and `docs/CONTRACT_REFERENCE.md` for the
  * on-chain contract this wraps.
@@ -36,9 +37,14 @@ export interface GetPlayerHistoryParams {
   rpcUrl: string;
   /**
    * Optional: only return history entries at or after this Unix timestamp
-   * (seconds). When omitted, all history is returned.
+   * (seconds). When omitted, all history is returned (DEPRECATED: unbounded cost).
    */
   sinceTimestamp?: bigint;
+  /**
+   * Optional: maximum number of entries to return for `get_history_since`.
+   * Clamped to 1–50 on-chain. Only used when `sinceTimestamp` is provided.
+   */
+  sinceLimit?: number;
   /**
    * Optional: paginate results. When provided, `offset` and `limit` are
    * forwarded to `get_progress_history_page`. `limit` is clamped to 1–50
@@ -120,10 +126,12 @@ export async function getPlayerHistory(
 
   if (sinceTimestamp !== undefined) {
     // Incremental: only entries at or after the caller's last sync point.
+    // Bounded scan: returns up to `sinceLimit` (default 50) most recent matching entries.
     try {
       const assembled = await client.get_history_since({
         player_id: playerId,
         since_timestamp: sinceTimestamp,
+        limit: sinceLimit ?? 50,
       });
       history = unwrapResult<ProgressEntry[]>(assembled.result, `get_history_since(${playerId})`);
     } catch (err) {

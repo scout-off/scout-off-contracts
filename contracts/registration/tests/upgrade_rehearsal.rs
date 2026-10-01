@@ -277,3 +277,43 @@ fn test_registration_broken_upgrade_left_paused_is_caught() {
         .registration
         .register_player(&wallet, &vitals(&h.env, "Goalkeeper"), &hashes);
 }
+
+/// Assert that `upgrade()` emits a `contract_upgraded` event *before* swapping
+/// the WASM, so the event is attributed to the old code version.
+///
+/// The event must carry:
+///   topics : ("contract_upgraded", admin_address)
+///   data   : new_wasm_hash (BytesN<32>)
+#[test]
+fn test_registration_upgrade_emits_contract_upgraded_event() {
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::{symbol_short, IntoVal};
+
+    let h = setup();
+    let _ = seed(&h);
+
+    let new_wasm_hash = h.env.deployer().upload_contract_wasm(Bytes::new(&h.env));
+    h.registration.upgrade(&new_wasm_hash);
+
+    // Collect all events published during the `upgrade()` call.
+    let events = h.env.events().all();
+
+    // Find the contract_upgraded event.
+    let found = events.iter().any(|(contract_id, topics, data)| {
+        let _ = contract_id;
+        let _ = data;
+        // topics is a Vec<Val>; the first topic is the event name symbol.
+        if let Some(first) = topics.get(0) {
+            let expected: soroban_sdk::Val =
+                symbol_short!("contract_upgraded").into_val(&h.env);
+            first == expected
+        } else {
+            false
+        }
+    });
+
+    assert!(
+        found,
+        "expected a 'contract_upgraded' event to be emitted by upgrade()"
+    );
+}

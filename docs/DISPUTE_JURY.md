@@ -1,83 +1,99 @@
-# Dispute Jury Escalation Design
+# Dispute Jury — Eligibility Rules
 
-> **Status: Implemented** — shipped in `feature/dispute-jury-escalation-1036` (issue #1036).
-> See `docs/CONTRACT_REFERENCE.md` for the complete function reference and
-> `contracts/verification/src/lib.rs` for the canonical implementation.
+This document describes who may cast a vote on a jury-required milestone dispute
+and what happens when a validator is revoked for cause while a dispute is open.
 
-This document specifies the multi-validator jury mechanism for high-impact milestone
-disputes in the verification contract.
+## Background
 
-## Overview
+When a player calls `dispute_milestone` with an `impact_score` that meets or
+exceeds the configured `JuryConfig.impact_threshold`, the dispute is routed to
+the jury path (`jury_required = true`).  During the voting window any active,
+eligible validator may call `cast_dispute_vote`.  Once the window closes (or
+quorum is reached with a clear majority) anyone may call `tally_dispute` to
+finalise the outcome.
 
-When a milestone approval is challenged, the contract records a `MilestoneDispute`.
-Low-impact disputes use the existing **admin-only** `resolve_dispute` path.
-High-impact disputes (at or above a configurable threshold) require a **jury vote**
-from independent validators before the dispute can be finalized.
+## Eligibility Snapshot (`jury_eligibility_cutoff`)
 
-Player progress is **not** rolled back automatically when a dispute is upheld; resolution
-records the outcome on-chain for auditability and off-chain follow-up, matching the
-existing admin path behavior.
+At filing time, `dispute_milestone` records:
 
-## Impact threshold
+```
+dispute.jury_eligibility_cutoff = env.ledger().timestamp()   // "now"
+```
 
-| Path | Condition | Resolution |
-|------|-----------|------------|
-| Admin-only | `impact_score < jury_config.impact_threshold` | Admin calls `resolve_dispute` |
-| Jury | `impact_score >= jury_config.impact_threshold` | Validators vote; `tally_dispute` finalizes |
+A validator **must** satisfy `validator.registered_at < jury_eligibility_cutoff`
+to cast a vote.  Validators registered *after* the dispute was filed are rejected
+with `NotEligibleJuror` (error code 44).
 
-Default threshold: **100** (admin-configurable via `set_jury_config`).
+**Rationale**: without this snapshot, an admin (or a compromised admin key) could
+register N new validators mid-vote and immediately control the outcome.
 
-## Eligibility to vote
+## Conflict-of-Interest Exclusions
 
-A validator may call `cast_dispute_vote` only when **all** of the following hold:
+Two categories of validators are excluded regardless of registration date:
 
-1. Wallet is a registered **active** validator.
-2. Validator is **not** the original approver of the disputed milestone (conflict of interest).
-3. Validator has **not** already voted on this dispute.
-4. Dispute is **jury-required**, **unresolved**, and the voting window is **still open**.
+| Rule | Check | Error returned |
+|------|-------|----------------|
+| Milestone approver | `milestone.validator == voter` | `ConflictOfInterest` (code 40) |
+| Same-affiliation colleague | `validator.affiliation == dispute.approver_affiliation` | `ConflictOfInterest` (code 40) |
 
-The dispute filer is not restricted unless they are also the original approver (rule 2).
+`approver_affiliation` is snapshotted from the approver's `Validator` record at
+filing time and stored in the `MilestoneDispute` struct.  Changes to the
+approver's record after filing do not affect an open dispute.
 
-## Quorum and voting window
+**Rationale**: validators from the same academy or organisation share an
+institutional interest in protecting their colleague's approval.  Excluding
+them prevents bloc-voting within a single affiliation.
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `quorum` | 3 | Minimum votes before a jury outcome can be recorded |
-| `voting_window_secs` | 604800 (7 days) | Seconds after filing when voting closes |
+## For-Cause Revocation Vote Removal
 
-Configurable via `set_jury_config` (admin only).
+When `revoke_validator` is called with `RevocationSeverity::ForCause`, the
+contract's internal helper `remove_dispute_votes_for_validator` is invoked
+immediately after the validator record is deactivated.  The helper:
 
-A dispute snapshots its quorum and voting deadline when it is filed, so later
-configuration changes cannot alter an in-progress vote.
+1. Iterates the `OpenDisputeIndex` (all unresolved disputes).
+2. For each dispute, checks whether a `DisputeVote` record exists for the
+   revoked wallet.
+3. If found, decrements the appropriate tally counter
+   (`votes_for` or `votes_against`) on the `MilestoneDispute` record and
+   removes the `DisputeVote` storage entry.
+4. Also decrements the `DisputeVoteCount` counter for that dispute.
 
-## Tie-breaking
+`ActiveDisputesCount` and `OpenDisputeIndex` are kept consistent: the dispute
+itself is not removed (it remains open for further voting), only the revoked
+validator's individual vote contribution is undone.
 
-When `tally_dispute` runs:
+**Rationale**: a validator revoked for serious misconduct must not retain
+influence over ongoing jury decisions.  Routine (`Routine`) revocations do not
+trigger vote removal — only `ForCause` does.
 
-- **Majority for** (`votes_for > votes_against`): dispute **upheld** (`upheld = true`).
-- **Majority against** (`votes_against > votes_for`): dispute **rejected** (`upheld = false`).
-- **Tie** (`votes_for == votes_against`): dispute **rejected** (`upheld = false`); the original milestone stands.
+## Error Reference
 
-## When tally is allowed
+| Code | Variant | When raised |
+|------|---------|-------------|
+| 40 | `ConflictOfInterest` | Voter is the milestone approver, or shares `affiliation` with the approver |
+| 41 | `AlreadyVoted` | Validator has already cast a vote on this dispute |
+| 42 | `VotingWindowOpen` | `tally_dispute` called before deadline with a tied vote at/above quorum |
+| 43 | `QuorumNotReached` | `tally_dispute` called before deadline and quorum not yet met |
+| 44 | `NotEligibleJuror` | Validator registered after `jury_eligibility_cutoff` |
 
-`tally_dispute` succeeds when the dispute is jury-required and unresolved, and either:
+## Summary Flow
 
-1. **Early close**: total votes ≥ quorum **and** `votes_for ≠ votes_against` (clear majority), or
-2. **Deadline passed**: current time ≥ `voting_deadline` (majority rules apply; if total votes < quorum, outcome is **not upheld**).
+```
+dispute_milestone(...)
+  → snapshot jury_eligibility_cutoff = now
+  → snapshot approver_affiliation from Validator record
 
-Admin `resolve_dispute` is **blocked** for jury-required disputes (`DisputeRequiresJury`).
+cast_dispute_vote(validator, ...)
+  → validator.registered_at < jury_eligibility_cutoff ?  else → NotEligibleJuror
+  → milestone.validator != voter ?                        else → ConflictOfInterest
+  → validator.affiliation != approver_affiliation ?       else → ConflictOfInterest
+  → no prior vote ?                                       else → AlreadyVoted
+  → record vote, update tally
 
-## Events
+revoke_validator(ForCause)
+  → remove_dispute_votes_for_validator(wallet)
+      for each open dispute: undo vote tally if this validator voted
 
-| Event | When |
-|-------|------|
-| `milestone_disputed` | Dispute filed |
-| `dispute_vote_cast` | Validator casts a vote |
-| `dispute_tallied` | Jury outcome finalized |
-| `dispute_resolved` | Admin resolves a low-impact dispute |
-
-## Storage
-
-- `MilestoneDispute(player_id, milestone_index)` — dispute record and vote counters
-- `DisputeVote(player_id, milestone_index, validator)` — individual vote (audit trail)
-- `JuryConfig` — instance-level threshold, quorum, and window
+tally_dispute(...)
+  → quorum met or deadline passed → resolve with majority verdict
+```

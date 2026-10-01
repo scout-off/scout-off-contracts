@@ -245,3 +245,81 @@ fn test_snapshot_isolation_two_consumers() {
     );
     assert_eq!(next_a2, 0u32, "consumer A exhausted");
 }
+
+// ── #1465: overflow and validation tests ─────────────────────────────────────
+
+/// Passing cursor_snapshot = u32::MAX must not panic; it is clamped to the
+/// real count (0 for a player with no history) and returns empty.
+#[test]
+fn test_cursor_snapshot_umax_does_not_panic() {
+    let h = setup();
+    let player_id: u64 = 30;
+
+    // No history — real count is 0. Caller-supplied u32::MAX must not trap.
+    let (entries, next_index, snapshot) = h
+        .client
+        .get_history_page_with_cursor(&player_id, &Some(u32::MAX), &Some(1u32), &10u32);
+
+    assert_eq!(entries.len(), 0, "no entries for a player with no history");
+    assert_eq!(snapshot, 0u32, "snapshot clamped to real count (0)");
+    assert_eq!(next_index, 0u32);
+}
+
+/// cursor_next_index near u32::MAX must not cause overflow when computing
+/// `end = next_index + effective_limit - 1`.
+#[test]
+fn test_cursor_next_index_near_umax_does_not_panic() {
+    let h = setup();
+    let player_id: u64 = 31;
+    let ver = setup_secondary_caller(&h);
+    advance_n(&h, &ver, player_id, 3); // real count = 3
+
+    // next_index far beyond snapshot_count — must exit early, not overflow.
+    let (entries, next_index, _) = h.client.get_history_page_with_cursor(
+        &player_id,
+        &Some(3u32),
+        &Some(u32::MAX - 10),
+        &50u32,
+    );
+
+    assert_eq!(entries.len(), 0, "next_index beyond snapshot returns empty");
+    assert_eq!(next_index, 0u32);
+}
+
+/// A caller-supplied cursor_snapshot larger than the real count is clamped.
+#[test]
+fn test_cursor_snapshot_larger_than_real_count_is_clamped() {
+    let h = setup();
+    let player_id: u64 = 32;
+    let ver = setup_secondary_caller(&h);
+    advance_n(&h, &ver, player_id, 2); // real count = 2
+
+    // Pass snapshot = 1000 — must be clamped to 2, return at most 2 entries.
+    let (entries, _next, snapshot) = h
+        .client
+        .get_history_page_with_cursor(&player_id, &Some(1000u32), &Some(1u32), &50u32);
+
+    assert_eq!(snapshot, 2u32, "snapshot must be clamped to real count");
+    assert_eq!(entries.len(), 2);
+}
+
+/// get_progress_history_page with extreme offset/limit values must not panic.
+#[test]
+fn test_history_page_extreme_offset_limit_no_panic() {
+    let h = setup();
+    let player_id: u64 = 33;
+    let ver = setup_secondary_caller(&h);
+    advance_n(&h, &ver, player_id, 3);
+
+    // offset = u32::MAX — beyond count, must return empty
+    let entries = h
+        .client
+        .get_progress_history_page(&player_id, &u32::MAX, &50u32);
+    assert_eq!(entries.len(), 0);
+
+    // limit = u32::MAX — capped at 50, must return the 3 available entries
+    let entries = h
+        .client
+        .get_progress_history_page(&player_id, &0u32, &u32::MAX);
+    assert_eq!(entries.len(), 3);
+}

@@ -164,3 +164,46 @@ fn test_batch_register_validators_succeeds_with_cooldown_enabled() {
     client.batch_register_validators(&entries);
     assert_eq!(client.get_active_validator_count(), 2);
 }
+
+/// After a successful batch registration, `ValidatorRegLastSent` is written
+/// for every entry — a revoked batch-registered wallet cannot be re-registered
+/// until the cooldown elapses (issue #1392).
+#[test]
+fn test_batch_register_records_cooldown_blocking_reregister_after_revoke() {
+    use scoutchain_verification::{RevocationSeverity, VerificationError};
+
+    let (env, client) = setup();
+    let wallet = Address::generate(&env);
+    let entries = vec![&env, entry(&env, wallet.clone())];
+    client.batch_register_validators(&entries);
+
+    client.revoke_validator(&wallet, &RevocationSeverity::Routine, &None);
+
+    // Cooldown was recorded by the batch path — re-register is blocked first.
+    let result = client.try_register_validator(
+        &wallet,
+        &String::from_str(&env, CREDENTIALS),
+        &String::from_str(&env, AFFILIATION),
+        &vec![&env],
+    );
+    assert_eq!(
+        result,
+        Err(Ok(VerificationError::RegistrationCooldown)),
+        "batch path must write ValidatorRegLastSent so cooldown applies after revoke"
+    );
+
+    // After the window elapses, the still-present Validator record rejects
+    // re-registration as already registered (not a cooldown miss).
+    env.ledger()
+        .with_mut(|l| l.timestamp = START + COOLDOWN_SECS + 1);
+    let after = client.try_register_validator(
+        &wallet,
+        &String::from_str(&env, CREDENTIALS),
+        &String::from_str(&env, AFFILIATION),
+        &vec![&env],
+    );
+    assert_eq!(
+        after,
+        Err(Ok(VerificationError::ValidatorAlreadyRegistered))
+    );
+}

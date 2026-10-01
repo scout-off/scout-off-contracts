@@ -37,15 +37,19 @@ measured-cost trends can be tracked across commits.
 | registration   | `register_player`                | 20,000,000                |
 | registration   | `update_profile`                 | 10,000,000                |
 | registration   | `filter_players`                 | 15,000,000                |
+| registration   | `set_player_level` (typical)     |   350,000                 |
+| registration   | `set_player_level` (large bucket)|  500,000                 |
 | verification   | `register_validator`             | 15,000,000                |
-| verification   | `approve_milestone`              | 20,000,000                |
+| verification   | `approve_milestone`              | 25,000,000                |
 | verification   | `attest_milestone`               | 25,000,000                |
+| verification   | `attest_milestone` (threshold=k, k attestors) | 25,000,000 + 500,000×k |
 | verification   | `cast_dispute_vote`              | 20,000,000                |
 | verification   | `tally_dispute`                  | 30,000,000                |
 | verification   | `get_validator_milestones_page`  | 15,000,000                |
 | progress       | `advance_level`                  | 15,000,000                |
 | progress       | `reset_player_level`             | 12,000,000                |
 | progress       | `get_progress_history_page`      | 10,000,000                |
+| progress       | `advance_level_long_history` (≥ 64 entries) | 50,000,000   |
 | progress       | `verify_history_proof`           | 8,000,000                 |
 | scout_access   | `subscribe`                      | 20,000,000                |
 | scout_access   | `pay_to_contact`                 | 20,000,000                |

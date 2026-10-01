@@ -36,6 +36,12 @@ pub enum ProgressError {
     /// `accept_admin` called before an admin transfer was proposed.
     PendingAdminNotSet = 10,
 
+    // ── No-op guard ──
+    /// `reset_player_level` was called with a target level equal to the
+    /// player's current level. No history entry is written and no state is
+    /// changed. Callers must supply a different target level.
+    NoLevelChange = 11,
+
     // ── Migration ──
     /// Migration window is not currently active on this contract.
     /// Call `open_migration_window` (admin-only) before seeding state.
@@ -55,6 +61,14 @@ pub enum ProgressError {
     /// archival grace period has fully elapsed (evicted, not merely archived)
     /// and is unrecoverable.
     PlayerLevelRecordEvicted = 15,
+    /// No history entry exists at the requested index for this player.
+    HistoryEntryNotFound = 16,
+    /// The player's progress history is longer than `get_history_proof` will
+    /// build a proof for on-chain (issue #1368). Proof generation is O(n) in
+    /// the history length; the append path is incremental, but this view
+    /// function is not, so it is explicitly bounded. Stream the history with
+    /// `get_history_page_with_cursor` and build the proof off-chain instead.
+    HistoryTooLongForProof = 17,
 }
 
 impl AdminError for ProgressError {
@@ -79,5 +93,10 @@ mod tests {
         assert_eq!(ProgressError::Overflow as u32, 8);
         assert_eq!(ProgressError::RegistrationCallFailed as u32, 9);
         assert_eq!(ProgressError::PendingAdminNotSet as u32, 10);
+        assert_eq!(ProgressError::HistoryAlreadyExists as u32, 12);
+        assert_eq!(ProgressError::MerkleRootMismatch as u32, 13);
+        assert_eq!(ProgressError::InvalidHistoryIndex as u32, 14);
+        assert_eq!(ProgressError::PlayerLevelRecordEvicted as u32, 15);
+        assert_eq!(ProgressError::HistoryTooLongForProof as u32, 16);
     }
 }

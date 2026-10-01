@@ -106,6 +106,20 @@ fn reg_validator(env: &Env, client: &VerificationContractClient, creds: &str) ->
     wallet
 }
 
+fn seed_validators(env: &Env, client: &VerificationContractClient, n: u32) {
+    let creds = [
+        CREDENTIALS, CRED2, CRED3, CRED4, CRED5,
+        "Extra-License-A-2026", "Extra-License-B-2026", "Extra-License-C-2026",
+        "Extra-License-D-2026", "Extra-License-E-2026",
+    ];
+    for i in 0..n {
+        let c = creds[(i as usize) % creds.len()];
+        // Distinct credentials strings; wallet is always unique.
+        let _ = reg_validator(env, client, c);
+    }
+}
+
+
 fn file_jury_dispute(env: &Env, client: &VerificationContractClient, player: &Address) {
     // impact_score >= default threshold (100) → jury path
     client.dispute_milestone(
@@ -147,6 +161,7 @@ fn test_get_jury_config_defaults() {
 #[test]
 fn test_set_jury_config_updates_values() {
     let (env, client, _admin, player) = setup();
+    seed_validators(&env, &client, 5);
     client.set_jury_config(&50u32, &5u32, &86_400u64);
     let cfg = client.get_jury_config();
     assert_eq!(cfg.impact_threshold, 50);
@@ -216,6 +231,7 @@ fn test_dispute_at_threshold_is_jury_path() {
 #[test]
 fn test_jury_config_snapshotted_at_filing() {
     let (env, client, _admin, player) = setup();
+    seed_validators(&env, &client, 10);
     client.set_jury_config(&100u32, &3u32, &604_800u64);
 
     let v = reg_validator(&env, &client, CREDENTIALS);
@@ -393,6 +409,7 @@ fn test_tally_early_close_against_majority() {
 fn test_tally_tie_break_resolves_not_upheld() {
     let (env, client, _admin, player) = setup();
     // quorum=2 so we can test a tie with minimal voters
+    seed_validators(&env, &client, 2);
     client.set_jury_config(&100u32, &2u32, &604_800u64);
     let v = reg_validator(&env, &client, CREDENTIALS);
     client.approve_milestone(
@@ -541,6 +558,7 @@ fn test_resolve_dispute_works_for_non_jury_dispute() {
 fn test_adversarial_tied_at_quorum_refuses_early_close_then_resolves_false() {
     let (env, client, _admin, player) = setup();
     // quorum=4 so we can get a 2–2 tie exactly at quorum
+    seed_validators(&env, &client, 4);
     client.set_jury_config(&100u32, &4u32, &604_800u64);
 
     let v = reg_validator(&env, &client, CREDENTIALS);

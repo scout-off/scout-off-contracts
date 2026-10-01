@@ -142,6 +142,13 @@ The tool reconstructs state from these events:
 | `milestone_flag_cleared` | verification | Flag clearance | Flag must be set; reviewer must be an active validator |
 | `revocation_cascade_complete` | verification | End of cascade sweep | Emitted after all milestones for a for-cause revocation are flagged |
 | `revocation_cascade_continued` | verification | Partial cascade sweep | Cursor stored; `continue_revocation_cascade` required to finish |
+| `jury_config_updated` | verification | Jury parameter change | Snapshot fields for config history; does not alter in-flight disputes |
+| `milestone_threshold_updated` | verification | k-of-n threshold change | Operators / indexers track threshold history |
+| `milestone_threshold_unreachable` | verification | Active set dropped below threshold | Health signal after revocation (or similar) |
+
+### Attestation key registration
+
+The verification contract emits `attestation_key_registered` after an active validator registers or rotates a key. Its topics are `(event_name, wallet)` and its data is `(public_key, rotated_from)`. `rotated_from` is `None` for a new key and contains the previous key when a validator rotates keys. The event-history audit tool does not currently replay the attestation-key registry.
 
 ---
 

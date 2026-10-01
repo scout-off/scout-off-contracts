@@ -124,13 +124,14 @@ pub struct FeeConfig {
     pub elite_sub_stroops: i128,
     /// Subscription duration in seconds (default: 30 days)
     pub sub_duration_secs: u64,
-    /// Trial offer escrow hold amount in stroops.
-    /// Must be > 0 when trial offers are enabled; 0 disables trial offers.
+    /// Escrow amount for trial offers (stroops).
+    /// Set to 0 to disable trial offers entirely; any positive value
+    /// is the amount escrowed per trial offer.
     pub trial_offer_escrow_stroops: i128,
     /// Trial offer expiry window in seconds.
     /// Must be > 0; defines how long an escrowed trial offer remains valid.
     pub trial_offer_expiry_secs: u64,
-    /// Maximum contacts per month for Pro tier (default: 10)
+    /// Maximum contacts per subscription period for Pro tier (default: 10). Resets on renewal.
     /// Elite-tier scouts are exempt from this cap (no limit applies).
     /// See `docs/CONTRACT_REFERENCE.md` — `FeeConfig` and `ProContactLimitReached`
     /// (error 20) for the full per-tier access semantics, and `docs/GLOSSARY.md`
@@ -157,10 +158,10 @@ pub struct FeeConfigHistoryEntry {
 /// call (see `docs/EVIDENCE_PRIVACY.md`). This is an append-only fact about
 /// the past ("this scout was once entitled to see this evidence"), not a
 /// live entitlement check — it is never mutated except by
-/// `admin_revoke_evidence_access` flipping `revoked`. Subscription downgrade
-/// or expiry does not touch it. Revocation only ever gates *future*
-/// off-chain key-wrap requests; it cannot claw back a key that was already
-/// delivered before the revoke.
+/// `admin_revoke_evidence_access` or `revoke_evidence_access` flipping
+/// `revoked`. Subscription downgrade or expiry does not touch it.
+/// Revocation only ever gates *future* off-chain key-wrap requests; it
+/// cannot claw back a key that was already delivered before the revoke.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct EvidenceAccessGrant {
@@ -170,12 +171,19 @@ pub struct EvidenceAccessGrant {
     pub scout: Address,
     /// Ledger timestamp (Unix seconds) when the grant was issued.
     pub granted_at: u64,
+    /// Ledger timestamp (Unix seconds) at which the grant expires and is
+    /// no longer considered active. `has_evidence_access` returns `false`
+    /// once the current ledger time exceeds this value. The grant record
+    /// itself is retained (append-only audit trail); only the *live*
+    /// entitlement check changes.
+    pub expires_at: u64,
     /// The scout's subscription tier at the moment the grant was issued.
     /// Recorded for audit purposes; it is not re-checked afterward.
     pub tier_at_grant: SubscriptionTier,
-    /// True once an admin has revoked this grant via
-    /// `admin_revoke_evidence_access`. The record is kept (never deleted) so
-    /// the audit trail of who was ever granted access stays intact.
+    /// True once a grant has been revoked via `admin_revoke_evidence_access`
+    /// (admin-initiated) or `revoke_evidence_access` (player-initiated).
+    /// The record is kept (never deleted) so the audit trail of who was
+    /// ever granted access stays intact.
     pub revoked: bool,
     /// Ledger timestamp (Unix seconds) of revocation, if any.
     pub revoked_at: Option<u64>,
@@ -232,6 +240,21 @@ pub enum DataKey {
     /// (push on creation) and `confirm_trial_offer` (remove on cleanup) so
     /// `expire_trial_offers` can sweep stale escrows without an off-chain index.
     OutstandingTrialEscrows,
+    /// Idempotency marker written after a trial offer is successfully confirmed:
+    /// (player_id, index) → bool.
+    ///
+    /// `confirm_trial_offer` checks this key before executing the escrow
+    /// release and returns `Ok(())` immediately on a retry, without
+    /// re-running the escrow release or the progress-contract call. The key
+    /// is scoped to `(player_id, index)` so a confirmation for one offer
+    /// cannot no-op a confirmation for a different offer.
+    TrialOfferConfirmed(u64, u32),
+    /// day-bucket index (Unix timestamp / 86400) → Vec<Address> of scouts
+    /// whose subscription expires within that day. Updated by
+    /// `write_subscription` on every subscription write so that
+    /// `get_expiring_subscriptions` and keeper bots can find scouts
+    /// cheaply without scanning all Subscription records.
+    ExpiryBucket(u64),
     /// Bounded on-chain history of the last N FeeConfig values, oldest-first.
     /// Updated by `update_fee_config`. Exposed via `get_fee_config_history`.
     FeeConfigHistory,
@@ -255,6 +278,13 @@ pub enum DataKey {
     /// which `get_subscriptions_expiring_before` already does.
     ExpiryBucket(u64),
 
+    /// Earliest day bucket (expires_at / 86_400) that may contain live
+    /// subscriptions. Updated on `add_to_expiry_bucket` and lazily advanced
+    /// when buckets are found empty during scans. Stored in instance storage
+    /// to avoid a persistent read per query. Defaults to u64::MAX when no
+    /// subscriptions exist.
+    ExpiryMinDay,
+
     /// Boolean flag (`true`) written by `open_migration_window`; absent or
     /// `false` means the migration window is closed. All `admin_seed_*`
     /// functions on this contract check this flag before writing any state.
@@ -271,7 +301,8 @@ pub enum DataKey {
     /// (player_id, scout) → EvidenceAccessGrant. Canonical grant record;
     /// see `docs/EVIDENCE_PRIVACY.md`. Written once by `pay_to_contact` /
     /// `batch_contact_players` and only ever mutated by
-    /// `admin_revoke_evidence_access` (flips `revoked`/`revoked_at`).
+    /// `admin_revoke_evidence_access` or `revoke_evidence_access` (player-initiated)
+    /// flipping `revoked`/`revoked_at`.
     EvidenceAccessGrant(u64, Address),
     /// Monotonic count of grants ever issued for `player_id`, used to place
     /// the next grant into `EvidenceAccessGrantPage(player_id, count / PAGE_SIZE)`.

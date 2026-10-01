@@ -396,3 +396,45 @@ fn cascade_sweep_cpu_cost_bounded_at_500_milestones() {
         );
     }
 }
+
+// ── Test 10: ForCause revocation flags milestones where revoked
+// validator is a co-attestor (not the primary validator) ──────
+//
+// Regression test for issue #1365: co-attestors must also be
+// caught by the cascade sweep, not just the primary validator.
+
+#[test]
+fn for_cause_revocation_flags_milestones_where_revoked_validator_is_co_attestor() {
+    let (env, client) = setup();
+    client.set_milestone_threshold(&3u32);
+
+    let v1 = register_validator(&env, &client);
+    let v2 = register_validator(&env, &client);
+    let v3 = register_validator(&env, &client);
+    let player_id = 6000u64;
+    let description = String::from_str(&env, "co-attestor cascade test");
+    let evidence = cid(&env, 6000);
+
+    // v1, v2, v3 all attest using approve_milestone-style calls
+    // (attest_milestone requires threshold mode, but for the
+    // cascade test we just need the milestone committed with
+    // all three as attestors).
+    env.mock_all_auths();
+    client.attest_milestone(&v1, &player_id, &description, &evidence);
+    client.attest_milestone(&v2, &player_id, &description, &evidence);
+    let r3 = client.attest_milestone(&v3, &player_id, &description, &evidence);
+    assert!(matches!(r3, AttestationStatus::Committed(1)));
+
+    // Revoke v1 (a co-attestor, not the primary validator).
+    client.revoke_validator(
+        &v1,
+        &RevocationSeverity::ForCause,
+        &Some(String::from_str(&env, "Compromised key")),
+    );
+
+    // The milestone must be flagged because v1 is a co-attestor.
+    assert!(
+        client.is_milestone_flagged(&player_id, &1u32),
+        "milestone must be flagged after co-attestor v1 is revoked for cause"
+    );
+}

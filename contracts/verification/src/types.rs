@@ -31,6 +31,25 @@ pub struct ValidatorActivityReport {
     pub distinct_players: Vec<u64>,
 }
 
+// ---------------------------------------------------------------------------
+// Cross-contract view types (issue #1455)
+// Rather than duplicating PlayerVitals/PlayerProfile as local mirror types
+// (which silently drift when registration fields change), we re-export the
+// single authoritative definitions from scoutchain-shared-types.
+// Previously these were local mirror types named RegPlayerVitals /
+// RegPlayerProfile (referenced in issue #1014). They are now type aliases
+// pointing to the shared source of truth so a field rename in shared-types
+// produces a compile error here too.
+// ---------------------------------------------------------------------------
+
+/// Cross-contract view of player vitals, re-exported from scoutchain-shared-types.
+/// Use this when decoding registration.get_player results in verification logic.
+pub use scoutchain_shared_types::PlayerVitals as RegPlayerVitals;
+
+/// Cross-contract view of a full player profile, re-exported from scoutchain-shared-types.
+/// Use this when decoding registration.get_player results in verification logic.
+pub use scoutchain_shared_types::PlayerProfile as RegPlayerProfile;
+
 /// Richer validator status — distinguishes unregistered from revoked.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -137,6 +156,12 @@ pub struct ValidatorPlayersPage {
 }
 
 /// A player-initiated dispute for a milestone.
+///
+/// Disputes are keyed by `(player_id, milestone_index, round)` (see
+/// `DataKey::MilestoneDispute`). Round 0 is the first filing; after
+/// resolution a new round may be opened once the reopen cooldown elapses,
+/// up to `MAX_DISPUTE_ROUNDS`. Getters that omit an explicit round return
+/// the latest round recorded in `DataKey::DisputeRound`.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct MilestoneDispute {
@@ -144,6 +169,8 @@ pub struct MilestoneDispute {
     pub player_id: u64,
     /// Per-player milestone index being disputed.
     pub milestone_index: u32,
+    /// Dispute round for this milestone (0 = first filing).
+    pub round: u32,
     /// Player-provided dispute reason.
     pub reason: String,
     /// Ledger timestamp when the dispute was opened, in Unix seconds.
@@ -152,6 +179,9 @@ pub struct MilestoneDispute {
     pub resolved: bool,
     /// Whether the dispute was upheld when resolved.
     pub upheld: bool,
+    /// Unix timestamp when the dispute was resolved (`0` while open).
+    /// Used to enforce the re-dispute cooldown.
+    pub resolved_at: u64,
     /// Impact score supplied when the dispute was filed.
     pub impact_score: u32,
     /// Whether this dispute requires a jury vote (impact_score >= jury threshold at filing time).
@@ -164,6 +194,15 @@ pub struct MilestoneDispute {
     pub votes_for: u32,
     /// Number of votes cast against upholding the dispute.
     pub votes_against: u32,
+    /// Unix timestamp snapshotted at filing time (#1375).
+    /// Only validators whose `registered_at < jury_eligibility_cutoff` may vote,
+    /// preventing a compromised admin from registering new validators mid-vote
+    /// to control the outcome.
+    pub jury_eligibility_cutoff: u64,
+    /// Affiliation of the validator who originally approved the disputed milestone,
+    /// snapshotted at filing time (#1375). Validators with the same affiliation are
+    /// excluded from voting to prevent colleagues from protecting each other.
+    pub approver_affiliation: String,
 }
 
 /// Admin-configurable jury parameters for high-impact milestone disputes.
@@ -202,19 +241,23 @@ pub struct MilestoneRef {
     pub milestone_index: u32,
 }
 
-/// Off-chain signed milestone attestation (issue #703).
+/// Off-chain signed milestone attestation (issue #703, enhanced in #1381).
 ///
 /// Canonical signed message (domain-separated):
 /// `ATTESTATION_DOMAIN || contract_id || network_id || validator_wallet
-///  || player_id_be || description_bytes || evidence_hash_bytes || nonce_be`
+///  || player_id_be || description_bytes || evidence_hash_bytes || nonce_be
+///  || expires_at_be`
 ///
 /// Field rationale:
 /// - `validator_wallet`: binds the claim to a registry identity; after signature
 ///   verification against that wallet's registered pubkey, this is the sole
 ///   source of attribution (never a separate caller-supplied Address).
 /// - `player_id` / `description` / `evidence_hash`: exact claim being attested.
-/// - `nonce`: strictly-increasing per-validator counter for replay protection
-///   (raw ed25519 signatures have no Soroban sequence number).
+/// - `nonce`: replay-protection within a bounded 256-nonce sliding window
+///   (see `DataKey::AttestationNonceBase` / `AttestationNonceBitmap`).
+/// - `expires_at`: Unix timestamp (seconds) after which the attestation is
+///   rejected. Bounds the replay window for an off-chain signature that may be
+///   intercepted before it reaches a relayer.
 /// - `contract_id` + `network_id`: prevent cross-deployment / cross-network replay.
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -227,8 +270,16 @@ pub struct MilestoneAttestation {
     pub description: String,
     /// IPFS/Arweave CID of supporting evidence.
     pub evidence_hash: String,
-    /// Strictly increasing per-validator nonce (must be > last accepted).
+    /// Monotonic per-validator nonce within a bounded window (see below).
+    /// Replaces the previous strictly-increasing check; the contract now
+    /// maintains a 256-bit bitmap (`AttestationNonceBitmap`) starting at
+    /// `AttestationNonceBase`, allowing nonces within a sliding window while
+    /// still rejecting replays.
     pub nonce: u64,
+    /// Unix timestamp (seconds, ledger time) after which this attestation is
+    /// no longer accepted. Must be > `env.ledger().timestamp()` at submission
+    /// and <= `timestamp + MAX_ATTESTATION_FUTURE_TOLERANCE_SECS`.
+    pub expires_at: u64,
     /// Must equal `env.current_contract_address()` at verification time.
     pub contract_id: Address,
     /// Must equal `env.ledger().network_id()` at verification time.
@@ -237,23 +288,27 @@ pub struct MilestoneAttestation {
 
 /// Bounded, fixed-size accumulator for a k-of-n milestone attestation claim
 /// (issue: threshold milestone approval). Keyed by canonical claim identity
-/// (player_id, evidence_hash) — see `attest_milestone` for why description
-/// text is intentionally excluded from the identity.
+/// (player_id, evidence_hash) — description text is intentionally excluded
+/// from the *identity* key, but every vote in a round must still commit to
+/// the same `description_hash` (issue #1397). The first voter of each round
+/// sets both `description` and `description_hash`; later mismatches are
+/// rejected with `DescriptionMismatch`.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PendingMilestoneClaim {
     pub player_id: u64,
     pub evidence_hash: String,
     /// Description locked in by the first attestation of this (player_id,
-    /// evidence_hash, round). Later voters' description text does not
-    /// overwrite it, so the threshold-reaching validator cannot rewrite the
-    /// claim's narrative at the last moment.
+    /// evidence_hash, round). Later voters must supply a description whose
+    /// sha256 equals `description_hash`; the stored text is not overwritten.
     pub description: String,
+    /// `sha256(description)` locked by the first voter of the current round.
+    pub description_hash: BytesN<32>,
     /// Distinct, currently-valid active-validator votes accumulated so far
     /// in this round.
     pub vote_count: u32,
-    /// Bumped on every voting-window expiry; invalidates all prior votes
-    /// without touching their storage — see `DataKey::PendingMilestoneVote`.
+    /// Bumped on every voting-window expiry. Prior-round vote keys are
+    /// deleted via `voters` (issue #1398) rather than left to TTL alone.
     pub round: u32,
     /// Ledger timestamp (Unix seconds) this round started.
     pub created_at: u64,
@@ -261,6 +316,9 @@ pub struct PendingMilestoneClaim {
     /// the global threshold mid-vote cannot retroactively fast-track or
     /// invalidate an in-flight claim.
     pub threshold: u32,
+    /// Wallets that voted in the current round (bounded by `threshold` ≤
+    /// `MAX_VALIDATORS`). Enables O(threshold) cleanup on expiry / prune.
+    pub voters: Vec<Address>,
 }
 
 /// Reference to one of a validator's currently-open pending-claim votes.
@@ -309,7 +367,7 @@ pub enum RevocationSeverity {
 /// Retains the severity, human-readable reason, ledger timestamp, and the
 /// admin address that performed the revocation for audit purposes.
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RevocationRecord {
     /// Severity of this revocation.
     pub severity: RevocationSeverity,
@@ -319,6 +377,19 @@ pub struct RevocationRecord {
     pub revoked_at: u64,
     /// Admin address that performed the revocation.
     pub admin: Address,
+}
+
+/// Operator-facing snapshot of whether the configured k-of-n milestone
+/// threshold is reachable given the current active validator set.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct MilestoneThresholdStatus {
+    /// Current global milestone approval threshold.
+    pub threshold: u32,
+    /// Current `ActiveValidatorCount`.
+    pub active_validator_count: u32,
+    /// `true` iff `active_validator_count >= threshold`.
+    pub reachable: bool,
 }
 
 #[contracttype]
@@ -371,7 +442,15 @@ pub enum DataKey {
     /// for which that validator has approved at least one milestone.
     /// Updated on every `approve_milestone` call (duplicates are skipped).
     ValidatorPlayers(Address),
-    MilestoneDispute(u64, u32),
+    /// Latest dispute round for `(player_id, milestone_index)`. Absent when
+    /// the milestone has never been disputed. Getters that omit an explicit
+    /// round read this key and then load `MilestoneDispute(player, idx, round)`.
+    DisputeRound(u64, u32),
+    /// Dispute record keyed by `(player_id, milestone_index, round)`.
+    MilestoneDispute(u64, u32, u32),
+    /// Count of currently-unresolved disputes filed by this player
+    /// (anti-spam cap — see `MAX_OPEN_DISPUTES_PER_PLAYER`).
+    PlayerOpenDisputeCount(u64),
     ActiveValidatorCount,
     TotalValidatorCount,
     /// Evidence hash → (player_id, milestone_index) for global uniqueness and usage lookup.
@@ -383,8 +462,9 @@ pub enum DataKey {
     /// player_id → Vec<u32> of milestone_index values.
     /// Updated on `dispute_milestone`.
     PlayerDisputes(u64),
-    /// Persistent global index of currently-unresolved (player_id, milestone_index) pairs.
-    /// Populated on `dispute_milestone`, pruned on `resolve_dispute`.
+    /// Persistent global index of currently-unresolved
+    /// `(player_id, milestone_index, round)` triples.
+    /// Populated on `dispute_milestone`, pruned on `resolve_dispute` / `tally_dispute`.
     /// Exposed via `list_disputes_page(offset, limit)`.
     OpenDisputeIndex,
 
@@ -407,6 +487,12 @@ pub enum DataKey {
     /// Per-validator monotonic nonce for relayed attestation replay protection.
     /// Stores the last successfully consumed nonce (starts absent → treat as 0).
     AttestationNonce(Address),
+    /// Bounded nonce-window base for attestation replay protection (issue #1381).
+    /// Stores the lowest nonce still trackable in the sliding window.
+    AttestationNonceBase(Address),
+    /// 256-bit replay-protection bitmap for attestation nonces (issue #1381).
+    /// Bit `i` set ⇒ nonce `base + i` has been consumed.  32 bytes = 256 bits.
+    AttestationNonceBitmap(Address),
 
     // ── k-of-n threshold milestone attestation ──
     /// Pending (sub-threshold) milestone attestation accumulator, keyed by
@@ -432,6 +518,11 @@ pub enum DataKey {
     /// Voting window (seconds) within which `threshold` distinct votes must
     /// accumulate before a claim expires. See `get_voting_window_secs`.
     AttestationVotingWindowSecs,
+    /// Complete set of validator wallets that co-attested a committed
+    /// threshold milestone, keyed by (player_id, milestone_index).
+    /// Populated at commit time; used by cascade sweep, per-validator
+    /// caps, dispute conflict-of-interest, and activity reports.
+    MilestoneAttestors(u64, u32),
 
     // ── Registration cross-contract (issue #1014) ──
     /// Address of the registration contract used to verify wallet↔player_id binding.
@@ -460,11 +551,11 @@ pub enum DataKey {
     /// Defaults: impact_threshold=100, quorum=3, voting_window_secs=604800.
     JuryConfig,
     /// Individual validator vote on a jury-required dispute.
-    /// Keyed by (player_id, milestone_index, validator_wallet).
-    DisputeVote(u64, u32, Address),
-    /// Running vote count for a dispute, keyed by (player_id, milestone_index).
+    /// Keyed by (player_id, milestone_index, round, validator_wallet).
+    DisputeVote(u64, u32, u32, Address),
+    /// Running vote count for a dispute, keyed by (player_id, milestone_index, round).
     /// Provides an O(1) count without scanning individual DisputeVote entries.
-    DisputeVoteCount(u64, u32),
+    DisputeVoteCount(u64, u32, u32),
 
     // ── Validator revocation cascade re-review (issue #1039) ──
     /// Persisted `RevocationRecord` for a revoked validator wallet.
@@ -485,6 +576,11 @@ pub enum DataKey {
     /// from which the next `continue_revocation_cascade` call should resume.
     /// Absent when no cascade is in progress or when the sweep is complete.
     RevocationCascadeCursor(Address),
+    /// Prior `RevocationRecord` entries preserved when a Routine revocation
+    /// is escalated to ForCause (issue #1393). The current record remains
+    /// under `RevocationRecord(wallet)`; this list holds superseded ones so
+    /// the original reason/timestamp are never silently lost.
+    RevocationHistory(Address),
 }
 
 /// Snapshot of both cross-contract peer address pointers held by the

@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contracttype, Address, Env, IntoVal, String};
+use soroban_sdk::{contracttype, Address, Env, IntoVal, String, Vec};
 
 /// Four-tier progress level for a player profile
 #[contracttype]
@@ -41,7 +41,15 @@ impl ProgressLevel {
         }
     }
 
-    /// Returns the next valid level, or None if already at the top.
+    /// Returns `Some(next_tier)` for `Unverified`, `VerifiedIdentity`, and
+    /// `PerformanceMilestones`, and `None` for `EliteTier`.
+    ///
+    /// `progress::advance_level` uses this to compute the next tier and maps
+    /// the `None` case to `ProgressError::AlreadyAtMaxLevel`, signalling that
+    /// a player is already at the top tier.
+    ///
+    /// This is the canonical implementation of the four-tier progression model
+    /// described in `docs/GLOSSARY.md`.
     pub fn next(&self) -> Option<ProgressLevel> {
         match self {
             ProgressLevel::Unverified => Some(ProgressLevel::VerifiedIdentity),
@@ -50,6 +58,80 @@ impl ProgressLevel {
             ProgressLevel::EliteTier => None,
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Cross-contract shared player types (issue #1455)
+// Single authoritative definitions used by registration and its consumers
+// (verification, scout_access) to avoid silent drift from mirror types.
+// ---------------------------------------------------------------------------
+
+/// Basic player vitals stored on-chain
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlayerVitals {
+    /// Player age in years at the time the profile was last written.
+    pub age: u32,
+    /// Player position label used for discovery filtering.
+    pub position: String,
+    /// Player region used for scout discovery filtering.
+    pub region: String,
+    /// Player nationality label displayed in profile results.
+    pub nationality: String,
+}
+
+/// Internal on-chain player profile (no level — progress contract is the source of truth)
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct StoredPlayerProfile {
+    /// Unique player identifier assigned by the registration contract.
+    pub player_id: u64,
+    /// Player wallet that owns and can update this profile.
+    pub wallet: Address,
+    /// Player vitals stored with the profile.
+    pub vitals: PlayerVitals,
+    /// IPFS/Arweave CIDs for highlight reels and photos
+    pub ipfs_hashes: Vec<String>,
+    /// Ledger timestamp when the player was first registered, in Unix seconds.
+    pub registered_at: u64,
+    /// Ledger timestamp when the profile was last updated, in Unix seconds.
+    pub updated_at: u64,
+}
+
+/// Full on-chain player profile returned to callers.
+/// `level` is derived from the progress contract at read time — it is NOT
+/// persisted here.  `progress::get_level` is the single source of truth.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PlayerProfile {
+    /// Unique player identifier assigned by the registration contract.
+    pub player_id: u64,
+    /// Player wallet that owns and can update this profile.
+    pub wallet: Address,
+    /// Player vitals stored with the profile.
+    pub vitals: PlayerVitals,
+    /// IPFS/Arweave CIDs for highlight reels and photos
+    pub ipfs_hashes: Vec<String>,
+    /// Current player level loaded from the progress contract at read time.
+    pub level: ProgressLevel,
+    /// Ledger timestamp when the player was first registered, in Unix seconds.
+    pub registered_at: u64,
+    /// Ledger timestamp when the profile was last updated, in Unix seconds.
+    pub updated_at: u64,
+}
+
+/// Lightweight player view for scout discovery (no IPFS hashes or wallet).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PlayerSummary {
+    /// Unique player identifier for fetching the full profile.
+    pub player_id: u64,
+    /// Player vitals exposed for scout discovery.
+    pub vitals: PlayerVitals,
+    /// Current player level loaded from the progress contract at read time.
+    pub level: ProgressLevel,
+    /// Ledger timestamp when the profile was last updated, in Unix seconds.
+    pub updated_at: u64,
 }
 
 /// Adapter trait for contract-specific error enums used by the shared
@@ -186,6 +268,13 @@ where
 /// This does not perform admin authorization itself — callers must call
 /// [`require_admin`] (or otherwise authorize the caller) before invoking
 /// this.
+///
+/// # Overflow policy
+///
+/// The epoch is a `u32` incremented with [`u32::saturating_add`]. With
+/// `overflow-checks = true` in the release profile, a plain `epoch + 1` would
+/// **trap** on the 4,294,967,296th re-wiring. `saturating_add` saturates at
+/// `u32::MAX` rather than trapping.
 pub fn write_wiring_link<K>(env: &Env, addr_key: &K, epoch_key: &K, addr: &Address) -> u32
 where
     K: IntoVal<Env, soroban_sdk::Val>,
@@ -195,7 +284,7 @@ where
         .instance()
         .get::<K, u32>(epoch_key)
         .unwrap_or(0)
-        + 1;
+        .saturating_add(1);
     env.storage().instance().set(addr_key, addr);
     env.storage().instance().set(epoch_key, &next_epoch);
     next_epoch
@@ -535,21 +624,43 @@ pub struct U64Page {
     pub total: u32,
 }
 
+/// Lightweight syntactic validation for IPFS CIDs used as evidence and media references.
 ///
-/// Rules:
-/// - CIDv0: starts with "Qm", exactly 46 characters, base58btc charset
-///   (no 0, O, I, l characters).
-/// - CIDv1 (base32): starts with "bafy", 59–128 characters.
+/// Accepted forms:
+/// - **CIDv0**: starts with `"Qm"`, exactly 46 characters, base58btc charset
+///   (digits 1–9, upper A–Z except I/O, lower a–z except l).
+/// - **CIDv1 base32**: starts with `"baf"` (multibase prefix `b` followed by
+///   base32-encoded version=1 varint and codec varint). This covers all common
+///   codecs: `bafy` (dag-pb, 0x70), `bafk` (raw, 0x55), `bafyr` (dag-cbor,
+///   0x71), `bagu` (dag-json, 0x0129), etc. Length must be 59–128 characters
+///   and only RFC 4648 lowercase base32 characters (a–z, 2–7) are accepted.
+///
+/// This is a lightweight format sanity check, not a full CID decoder — it does
+/// not parse the multibase prefix, multicodec, or multihash the way a real CID
+/// library would. Any CID that passes this check but is still malformed will
+/// simply fail to resolve against the downstream IPFS/Arweave gateway, which
+/// acts as the real source of truth for CID validity. This function only needs
+/// to catch obviously wrong input (wrong prefix, wrong length, or bytes outside
+/// the expected alphabet — e.g. whitespace or control characters), not
+/// guarantee byte-for-byte correctness.
+///
+/// # Errors
+///
+/// Returns `Err(&'static str)` with a human-readable message describing the
+/// validation failure. These messages are intended for tests and debugging;
+/// callers should map them to the appropriate contract error variant (e.g.
+/// `InvalidInput`) rather than surfacing the raw string to end users.
 pub fn validate_cid(hash: &String) -> Result<(), &'static str> {
     let hash_len = hash.len();
     let bytes = hash.to_bytes();
 
     let starts_with_qm = bytes.get(0) == Some(b'Q') && bytes.get(1) == Some(b'm');
-    let starts_with_bafy = hash_len >= 4
+    // Accept any CIDv1 base32 starting with "baf" — covers bafy (dag-pb),
+    // bafk (raw), bafyr (dag-cbor), bagu (dag-json) and future codecs.
+    let starts_with_baf = hash_len >= 3
         && bytes.get(0) == Some(b'b')
         && bytes.get(1) == Some(b'a')
-        && bytes.get(2) == Some(b'f')
-        && bytes.get(3) == Some(b'y');
+        && bytes.get(2) == Some(b'f');
 
     if starts_with_qm {
         // CIDv0: exactly 46 chars
@@ -568,17 +679,9 @@ pub fn validate_cid(hash: &String) -> Result<(), &'static str> {
             }
         }
         Ok(())
-    } else if starts_with_bafy {
+    } else if starts_with_baf {
         // CIDv1 (base32): 59–128 chars, RFC4648 lowercase base32 charset
-        // (a–z, 2–7). This is a lightweight format sanity check, not a full
-        // CID decoder — it does not parse the multibase prefix, multicodec,
-        // or multihash the way a real CID library would. Any CID that
-        // passes this check but is still malformed will simply fail to
-        // resolve against the downstream IPFS/Arweave gateway, which acts
-        // as the real source of truth for CID validity. This function only
-        // needs to catch obviously wrong input (wrong prefix, wrong length,
-        // or bytes outside the expected alphabet — e.g. whitespace or
-        // control characters), not guarantee byte-for-byte correctness.
+        // (a–z, 2–7).
         if !(59..=128).contains(&hash_len) {
             return Err("invalid cid: CIDv1 must be 59–128 characters");
         }
@@ -592,7 +695,7 @@ pub fn validate_cid(hash: &String) -> Result<(), &'static str> {
         }
         Ok(())
     } else {
-        Err("invalid cid: must start with 'Qm' (CIDv0) or 'bafy' (CIDv1)")
+        Err("invalid cid: must start with 'Qm' (CIDv0) or 'baf' (CIDv1 base32)")
     }
 }
 
@@ -618,6 +721,60 @@ mod tests {
 
     fn s(env: &Env, v: &str) -> String {
         String::from_str(env, v)
+    }
+
+    // ── write_wiring_link tests (#1466) ───────────────────────────────────────
+
+    /// First wiring: epoch starts at 0, advances to 1.
+    #[test]
+    fn test_write_wiring_link_first_call_sets_epoch_to_one() {
+        let env = Env::default();
+        let addr = Address::generate(&env);
+
+        write_wiring_link(&env, &1u32, &2u32, &addr);
+
+        let stored_addr: Address = env.storage().instance().get(&1u32).unwrap();
+        let stored_epoch: u32 = env.storage().instance().get(&2u32).unwrap();
+
+        assert_eq!(stored_addr, addr);
+        assert_eq!(stored_epoch, 1u32);
+    }
+
+    /// Re-wiring increments the epoch and updates the address.
+    #[test]
+    fn test_write_wiring_link_increments_epoch_on_rewiring() {
+        let env = Env::default();
+        let addr1 = Address::generate(&env);
+        let addr2 = Address::generate(&env);
+
+        write_wiring_link(&env, &1u32, &2u32, &addr1);
+        write_wiring_link(&env, &1u32, &2u32, &addr2);
+
+        let stored_addr: Address = env.storage().instance().get(&1u32).unwrap();
+        let stored_epoch: u32 = env.storage().instance().get(&2u32).unwrap();
+
+        assert_eq!(stored_addr, addr2);
+        assert_eq!(stored_epoch, 2u32);
+    }
+
+    /// Boundary: epoch at u32::MAX must saturate, not trap (issue #1466).
+    #[test]
+    fn test_write_wiring_link_saturates_at_u32_max_epoch() {
+        let env = Env::default();
+
+        // Seed the epoch key at u32::MAX.
+        env.storage().instance().set(&2u32, &u32::MAX);
+
+        let addr = Address::generate(&env);
+        // saturating_add(1) keeps epoch at u32::MAX — must not trap.
+        write_wiring_link(&env, &1u32, &2u32, &addr);
+
+        let stored_epoch: u32 = env.storage().instance().get(&2u32).unwrap();
+        assert_eq!(stored_epoch, u32::MAX,
+            "epoch must saturate at u32::MAX, not overflow or trap");
+        let stored_addr: Address = env.storage().instance().get(&1u32).unwrap();
+        assert_eq!(stored_addr, addr,
+            "address must still be updated at boundary epoch");
     }
 
     #[test]
@@ -712,6 +869,36 @@ mod tests {
     fn test_validate_cid_rejects_bad_prefix() {
         let env = Env::default();
         let cid = s(&env, "XmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB");
+        assert!(validate_cid(&cid).is_err());
+    }
+
+    #[test]
+    fn test_validate_cid_v1_bafk_raw_codec_accepted() {
+        let env = Env::default();
+        // Real bafkrei CID (raw codec, 0x55) — 59 chars, valid base32
+        let cid = s(
+            &env,
+            "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku",
+        );
+        assert!(validate_cid(&cid).is_ok());
+    }
+
+    #[test]
+    fn test_validate_cid_v1_bafy_still_accepted() {
+        let env = Env::default();
+        // dag-pb CID (bafy prefix) still works after broadening to baf
+        let cid = s(
+            &env,
+            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        );
+        assert!(validate_cid(&cid).is_ok());
+    }
+
+    #[test]
+    fn test_validate_cid_v1_rejects_unknown_base_prefix() {
+        let env = Env::default();
+        // 'z' multibase (base58btc) — not a CIDv0 (no Qm) and not base32 (baf)
+        let cid = s(&env, "zdj7WgYnAMFGPMT7eaZMcFr3BzURoW1KYJdH6EBtEaHJQ");
         assert!(validate_cid(&cid).is_err());
     }
 }
