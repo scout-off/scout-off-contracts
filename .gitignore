@@ -6,11 +6,9 @@ target/
 # produces a reproducible WASM binary hash for release verification.
 
 # Environment secrets -- never commit these
-.env
 .env.contracts
 .env.contracts.json
 -.env.contracts.snapshot
-.env.local
 
 # Migration state exports (may contain player PII) -- never commit these
 -migration-export/
@@ -24,7 +22,6 @@ target/
 Thumbs.db
 
 # Editor
-.vscode/
 .idea/
 *.swp
 *.swo
@@ -89,3 +86,4 @@ pnpm-lock.yaml
 # Calibration artifacts (local only)
 calibration-report.jsom
 budget-drift.json
+config.bat
