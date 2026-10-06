@@ -5,6 +5,8 @@
 //! transaction (no partial state committed) and that the new idempotency
 //! nonce mechanism makes retries safe.
 
+mod common;
+
 use scoutchain_progress::{ProgressContract, ProgressContractClient};
 use scoutchain_scout_access::{
     FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
@@ -57,6 +59,7 @@ fn setup() -> (
     let sa_id = env.register(ScoutAccessContract, ());
     let scout_access = ScoutAccessContractClient::new(&env, &sa_id);
     scout_access.initialize(&admin, &xlm, &fees());
+    common::wire_registration(&env, Some(&scout_access), None);
 
     let progress_id = env.register(ProgressContract, ());
     let progress = ProgressContractClient::new(&env, &progress_id);
@@ -127,6 +130,7 @@ fn test_confirm_trial_offer_idempotency_nonce_prevents_replay() {
     verification.initialize(&admin);
 
     progress.initialize(&admin);
+    common::wire_registration(&env, None, Some(&progress));
     progress.set_verification_contract(&ver_id);
     scout_access.set_progress_contract(&progress.address);
     progress.set_scout_access_contract(&scout_access.address);

@@ -68,7 +68,7 @@ fn batch_revoke_decrements_active_validator_count() {
 }
 
 #[test]
-fn batch_revoke_skips_decrement_for_already_inactive_validator() {
+fn batch_revoke_with_already_inactive_validator_is_rejected_atomically() {
     let (env, id, wallets) = setup(3);
     let client = VerificationContractClient::new(&env, &id);
 
@@ -81,19 +81,21 @@ fn batch_revoke_skips_decrement_for_already_inactive_validator() {
     );
     assert_eq!(client.get_active_validator_count(), 2);
 
-    // Batch contains the already-inactive wallet plus one active wallet.
-    client.batch_revoke_validators(
-        &vec![&env, wallets.get(0).unwrap(), wallets.get(1).unwrap()],
-        &RevocationSeverity::Routine,
-        &None,
+    // Batch contains the already-inactive wallet plus one active wallet. Since
+    // #1393 re-revoking at the same severity is rejected, and the batch is
+    // atomic, so nothing is applied and the counter is not decremented again.
+    assert_eq!(
+        client.try_batch_revoke_validators(
+            &vec![&env, wallets.get(0).unwrap(), wallets.get(1).unwrap()],
+            &RevocationSeverity::Routine,
+            &None,
+        ),
+        Err(Ok(VerificationError::ValidatorAlreadyRevoked))
     );
-
-    // Only the genuinely active wallet may decrement the counter. Decrementing
-    // twice would underflow the count relative to the real active set.
     assert_eq!(
         client.get_active_validator_count(),
-        1,
-        "re-revoking an already-inactive validator must not decrement the count again"
+        2,
+        "a rejected batch must not decrement the count"
     );
 
     // The counter must still agree with the actual number of active validators.
@@ -113,7 +115,7 @@ fn batch_revoke_skips_decrement_for_already_inactive_validator() {
         }
         n
     });
-    assert_eq!(active_on_chain, 1);
+    assert_eq!(active_on_chain, 2);
     assert_eq!(client.get_active_validator_count(), active_on_chain);
 }
 

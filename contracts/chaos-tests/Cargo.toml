@@ -15,11 +15,14 @@ path = "tests/chaos_schedules.rs"
 
 [dependencies]
 soroban-sdk = { workspace = true }
+
+# The contracts are only used by the integration tests. Keeping them out of
+# [dependencies] also keeps `cargo doc` from compiling them as ordinary
+# dependencies, which `scripts/check-cargo-doc.sh` relies on.
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
 scoutchain-registration = { path = "../registration" }
 scoutchain-verification = { path = "../verification" }
 scoutchain-progress = { path = "../progress" }
 scoutchain-scout-access = { path = "../scout_access" }
 scoutchain-shared-types = { path = "../shared-types" }
-
-[dev-dependencies]
-soroban-sdk = { workspace = true, features = ["testutils"] }

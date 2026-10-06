@@ -27,7 +27,7 @@ use soroban_sdk::{
 fn valid_vitals(env: &Env) -> PlayerVitals {
     PlayerVitals {
         age: 20,
-        position: String::from_str(env, "Forward"),
+        position: String::from_str(env, "ST"),
         region: String::from_str(env, "EU"),
         nationality: String::from_str(env, "FR"),
     }
@@ -90,15 +90,18 @@ fn setup() -> Harness {
 fn seed(h: &Harness) -> (u64, u64, u64) {
     let p1 = {
         let wallet = Address::generate(&h.env);
-        h.registration.register_player(&wallet, &valid_vitals(&h.env), &one_hash(&h.env)).unwrap()
+        h.registration
+            .register_player(&wallet, &valid_vitals(&h.env), &one_hash(&h.env))
     };
     let p2 = {
         let wallet = Address::generate(&h.env);
-        h.registration.register_player(&wallet, &valid_vitals(&h.env), &one_hash(&h.env)).unwrap()
+        h.registration
+            .register_player(&wallet, &valid_vitals(&h.env), &one_hash(&h.env))
     };
     let p3 = {
         let wallet = Address::generate(&h.env);
-        h.registration.register_player(&wallet, &valid_vitals(&h.env), &one_hash(&h.env)).unwrap()
+        h.registration
+            .register_player(&wallet, &valid_vitals(&h.env), &one_hash(&h.env))
     };
     // Player 1 -> VerifiedIdentity (1 advance).
     h.progress.advance_level(&h.verifier, &p1, &1u32);
@@ -186,6 +189,7 @@ fn test_progress_upgrade_preserves_state() {
 /// `ContractPaused`, catching the skipped re-verification step instead of
 /// silently passing.
 #[test]
+#[should_panic(expected = "Error(Contract, #3)")]
 fn test_progress_upgrade_panic_on_missed_paused_flag() {
     let h = setup();
     let (p1, _p2, _p3) = seed(&h);
@@ -199,15 +203,14 @@ fn test_progress_upgrade_panic_on_missed_paused_flag() {
     h.progress.set_verification_contract(&h.verifier);
 
     // Post-upgrade functional check — must not silently succeed while paused.
-    h.progress.advance_level(&h.verifier, &1u64, &2u32);
+    h.progress.advance_level(&h.verifier, &p1, &2u32);
 }
 
 /// Assert that `upgrade()` emits a `contract_upgraded` event before swapping
 /// the WASM, so the event is attributed to the old code version.
 #[test]
 fn test_progress_upgrade_emits_contract_upgraded_event() {
-    use soroban_sdk::testutils::Events as _;
-    use soroban_sdk::{symbol_short, IntoVal};
+    use scoutchain_shared_types::testutils::has_event;
 
     let h = setup();
     seed(&h);
@@ -215,13 +218,7 @@ fn test_progress_upgrade_emits_contract_upgraded_event() {
     let new_wasm_hash = h.env.deployer().upload_contract_wasm(Bytes::new(&h.env));
     h.progress.upgrade(&new_wasm_hash);
 
-    let events = h.env.events().all();
-    let found = events.iter().any(|(_, topics, _)| {
-        topics.get(0).map_or(false, |first| {
-            let expected: soroban_sdk::Val = symbol_short!("contract_upgraded").into_val(&h.env);
-            first == expected
-        })
-    });
+    let found = has_event(&h.env, "contract_upgraded");
 
     assert!(
         found,

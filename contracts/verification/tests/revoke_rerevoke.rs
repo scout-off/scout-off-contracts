@@ -102,7 +102,10 @@ fn routine_then_for_cause_escalation_preserves_original_timestamp() {
 
     let history = client.get_revocation_history(&v);
     assert_eq!(history.len(), 1);
-    assert_eq!(history.get(0).unwrap().severity, RevocationSeverity::Routine);
+    assert_eq!(
+        history.get(0).unwrap().severity,
+        RevocationSeverity::Routine
+    );
     assert_eq!(
         history.get(0).unwrap().reason,
         String::from_str(&env, "scheduled offboarding")
@@ -116,7 +119,6 @@ fn batch_revoke_rejects_already_revoked_same_severity() {
     client.revoke_validator(&v, &RevocationSeverity::Routine, &None);
 
     let wallets = soroban_sdk::vec![&env, v.clone()];
-    let result =
-        client.try_batch_revoke_validators(&wallets, &RevocationSeverity::Routine, &None);
+    let result = client.try_batch_revoke_validators(&wallets, &RevocationSeverity::Routine, &None);
     assert_eq!(result, Err(Ok(VerificationError::ValidatorAlreadyRevoked)));
 }

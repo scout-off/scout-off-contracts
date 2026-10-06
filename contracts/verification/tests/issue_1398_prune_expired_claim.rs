@@ -33,8 +33,11 @@ fn register(env: &Env, client: &VerificationContractClient) -> Address {
 #[test]
 fn prune_expired_claim_removes_vote_keys() {
     let (env, client) = setup();
-    client.set_milestone_threshold(&3u32);
     let v1 = register(&env, &client);
+    // A threshold of 3 needs 3 active validators (#1395).
+    register(&env, &client);
+    register(&env, &client);
+    client.set_milestone_threshold(&3u32);
     let player = 9u64;
     let desc = String::from_str(&env, "pending claim");
     let evidence = String::from_str(&env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB");

@@ -1,4 +1,4 @@
--- Migration 008: Dispute rounds (issue #1396)
+-- Migration 012: Dispute rounds (issue #1396)
 --
 -- Disputes are now keyed by (player_id, milestone_index, round). A resolved
 -- dispute may be re-opened after DISPUTE_REOPEN_COOLDOWN_SECS up to
@@ -12,6 +12,9 @@ ALTER TABLE milestone_disputes
 ALTER TABLE milestone_disputes
     DROP CONSTRAINT IF EXISTS milestone_disputes_player_id_milestone_index_key;
 
+-- Dropped first so the migration can be re-run safely.
+ALTER TABLE milestone_disputes
+    DROP CONSTRAINT IF EXISTS milestone_disputes_player_milestone_round_key;
 ALTER TABLE milestone_disputes
     ADD CONSTRAINT milestone_disputes_player_milestone_round_key
     UNIQUE (player_id, milestone_index, round);
@@ -26,6 +29,9 @@ ALTER TABLE dispute_votes
 ALTER TABLE dispute_votes
     DROP CONSTRAINT IF EXISTS dispute_votes_player_id_milestone_index_validator_key;
 
+-- Dropped first so the migration can be re-run safely.
+ALTER TABLE dispute_votes
+    DROP CONSTRAINT IF EXISTS dispute_votes_player_milestone_round_validator_key;
 ALTER TABLE dispute_votes
     ADD CONSTRAINT dispute_votes_player_milestone_round_validator_key
     UNIQUE (player_id, milestone_index, round, validator);

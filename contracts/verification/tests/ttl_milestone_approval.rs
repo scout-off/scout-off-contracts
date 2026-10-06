@@ -7,10 +7,11 @@
 //! Without these extensions the keys receive the network's default minimal TTL
 //! and risk archival while the milestones they index are still active.
 
-use scoutchain_verification::{
-    DataKey, VerificationContract, VerificationContractClient,
+use scoutchain_verification::{DataKey, VerificationContract, VerificationContractClient};
+use soroban_sdk::{
+    testutils::{storage::Persistent as _, Address as _},
+    Address, Env, String, Vec,
 };
-use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
 
 const CREDENTIALS: &str = "UEFA-B-License-2026";
 const VALID_CID: &str = "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB";
@@ -99,11 +100,7 @@ fn test_commit_approved_milestone_extends_all_related_keys() {
         PERSISTENT_TTL_MAX - EPSILON,
     );
 
-    let pa = get_ttl(
-        &env,
-        &contract_id,
-        &DataKey::PlayerAffiliations(player_id),
-    );
+    let pa = get_ttl(&env, &contract_id, &DataKey::PlayerAffiliations(player_id));
     assert!(
         pa >= PERSISTENT_TTL_MAX - EPSILON,
         "PlayerAffiliations TTL {} is too low (expected >= {})",
@@ -122,11 +119,7 @@ fn test_commit_approved_milestone_extends_all_related_keys() {
     );
 
     // PlayerAffiliations should now have both affiliations.
-    let pa_after = get_ttl(
-        &env,
-        &contract_id,
-        &DataKey::PlayerAffiliations(player_id),
-    );
+    let pa_after = get_ttl(&env, &contract_id, &DataKey::PlayerAffiliations(player_id));
     assert!(
         pa_after >= PERSISTENT_TTL_MAX - EPSILON,
         "PlayerAffiliations TTL {} is too low after second approval (expected >= {})",

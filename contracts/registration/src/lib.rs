@@ -9,10 +9,8 @@ mod events;
 mod types;
 
 use types::{
-    ContractHealth, DataKey, FilterResult, PlayerProfile, PlayerSummary, PlayerVitals,
-    ProgressLevel, ScoutProfile, StoredPlayerProfile,
     ContractHealth, DataKey, FilterResult, PlayerProfile, PlayerStatus, PlayerSummary,
-    ProgressLevel, RegistrationWiringState, ScoutProfile, ScoutStatus, ScoutVerificationRecord,
+    ProgressLevel, RegistrationWiringState, ScoutProfile, ScoutVerificationRecord,
     StoredPlayerProfile,
 };
 
@@ -51,9 +49,6 @@ const MAX_STRING_LEN: u32 = 64;
 const MAX_IPFS_HASHES: u32 = 10;
 const MAX_BATCH_SIZE: u32 = 20;
 
-// Bump applied to the admin key on every privileged call, so the admin address
-// cannot lapse out of persistent storage between privileged calls.
-const ADMIN_BUMP_LEDGERS: u32 = 100_000;
 /// Maximum plausible age for a registered player. Ages above this value are
 /// rejected as implausible to prevent corrupt entries in discovery filters.
 const MAX_PLAYER_AGE: u32 = 100;
@@ -93,17 +88,39 @@ const MAX_REG_COOLDOWN_SECS: u64 = 7 * 24 * 60 * 60;
 
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Copy `input` into `buf`, trim ASCII whitespace from both ends and uppercase
+/// ASCII letters in place. Returns the `(start, end)` bounds of the trimmed
+/// slice inside `buf`. Inputs longer than `buf` are rejected rather than
+/// truncated.
+fn trim_upper_into(input: &String, buf: &mut [u8]) -> Result<(usize, usize), ScoutChainError> {
+    let len = input.len() as usize;
+    if len > buf.len() {
+        return Err(ScoutChainError::InvalidInput);
+    }
+    input.copy_into_slice(&mut buf[..len]);
+    let mut start = 0;
+    let mut end = len;
+    while start < end && buf[start].is_ascii_whitespace() {
+        start += 1;
+    }
+    while end > start && buf[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    buf[start..end].make_ascii_uppercase();
+    Ok((start, end))
+}
+
 /// Canonicalize a region string to ISO 3166-1 alpha-2 + optional ISO 3166-2 subdivision.
 /// Format: `[A-Z]{2}(-[A-Z0-9]{1,3})?` (e.g., "NG", "NG-LA", "US-CA").
 /// - Trims whitespace
 /// - Uppercases the string
 /// - Validates against the canonical format
 fn canonicalize_region(env: &Env, region: &String) -> Result<String, ScoutChainError> {
-    let trimmed = region.trim();
-    let upper = trimmed.to_uppercase();
+    let mut buf = [0u8; MAX_STRING_LEN as usize];
+    let (start, end) = trim_upper_into(region, &mut buf)?;
+    let bytes = &buf[start..end];
 
     // Validate format: ISO 3166-1 alpha-2 (2 letters) + optional ISO 3166-2 subdivision (1-3 alphanumeric)
-    let bytes = upper.as_bytes();
     if bytes.len() < 2 || bytes.len() > 6 {
         // Min: "AA" (2), Max: "AA-AAA" (6)
         return Err(ScoutChainError::InvalidInput);
@@ -119,7 +136,7 @@ fn canonicalize_region(env: &Env, region: &String) -> Result<String, ScoutChainE
         if bytes[2] != b'-' {
             return Err(ScoutChainError::InvalidInput);
         }
-        if bytes.len() < 4 || bytes.len() > 6 {
+        if bytes.len() < 4 {
             return Err(ScoutChainError::InvalidInput);
         }
         for &b in &bytes[3..] {
@@ -129,7 +146,7 @@ fn canonicalize_region(env: &Env, region: &String) -> Result<String, ScoutChainE
         }
     }
 
-    Ok(String::from_str(env, core::str::from_utf8(bytes).unwrap()))
+    Ok(String::from_bytes(env, bytes))
 }
 
 /// Canonicalize a position string to a standard format.
@@ -137,34 +154,25 @@ fn canonicalize_region(env: &Env, region: &String) -> Result<String, ScoutChainE
 /// - Uppercases the string
 /// - Validates against known position codes (GK, CB, FB, DM, CM, AM, W, ST, etc.)
 fn canonicalize_position(env: &Env, position: &String) -> Result<String, ScoutChainError> {
-    let trimmed = position.trim();
-    let upper = trimmed.to_uppercase();
-
-    let bytes = upper.as_bytes();
-    if bytes.is_empty() || bytes.len() > MAX_STRING_LEN as usize {
+    let mut buf = [0u8; MAX_STRING_LEN as usize];
+    let (start, end) = trim_upper_into(position, &mut buf)?;
+    let bytes = &buf[start..end];
+    if bytes.is_empty() {
         return Err(ScoutChainError::InvalidInput);
     }
 
     // Validate against known position codes (case-insensitive match)
     // Common football positions: GK, CB, LB, RB, FB, DM, CM, AM, LM, RM, LW, RW, W, ST, CF
-    let valid_positions = [
-        b"GK", b"CB", b"LB", b"RB", b"FB", b"DM", b"CM", b"AM", b"LM", b"RM",
-        b"LW", b"RW", b"W", b"ST", b"CF", b"SS", b"WB", b"SW",
+    const VALID_POSITIONS: [&[u8]; 18] = [
+        b"GK", b"CB", b"LB", b"RB", b"FB", b"DM", b"CM", b"AM", b"LM", b"RM", b"LW", b"RW", b"W",
+        b"ST", b"CF", b"SS", b"WB", b"SW",
     ];
 
-    let mut valid = false;
-    for pos in valid_positions {
-        if bytes == pos {
-            valid = true;
-            break;
-        }
-    }
-
-    if !valid {
+    if !VALID_POSITIONS.contains(&bytes) {
         return Err(ScoutChainError::InvalidInput);
     }
 
-    Ok(String::from_str(env, core::str::from_utf8(bytes).unwrap()))
+    Ok(String::from_bytes(env, bytes))
 }
 
 /// Canonicalize a nationality string to ISO 3166-1 alpha-2.
@@ -172,10 +180,9 @@ fn canonicalize_position(env: &Env, position: &String) -> Result<String, ScoutCh
 /// - Uppercases the string
 /// - Validates exactly 2 uppercase letters
 fn canonicalize_nationality(env: &Env, nationality: &String) -> Result<String, ScoutChainError> {
-    let trimmed = nationality.trim();
-    let upper = trimmed.to_uppercase();
-
-    let bytes = upper.as_bytes();
+    let mut buf = [0u8; MAX_STRING_LEN as usize];
+    let (start, end) = trim_upper_into(nationality, &mut buf)?;
+    let bytes = &buf[start..end];
     if bytes.len() != 2 {
         return Err(ScoutChainError::InvalidInput);
     }
@@ -184,7 +191,7 @@ fn canonicalize_nationality(env: &Env, nationality: &String) -> Result<String, S
         return Err(ScoutChainError::InvalidInput);
     }
 
-    Ok(String::from_str(env, core::str::from_utf8(bytes).unwrap()))
+    Ok(String::from_bytes(env, bytes))
 }
 
 /// Normalize a filter input (region or position) for query matching.
@@ -228,8 +235,12 @@ impl RegistrationContract {
         env.storage().instance().set(&DataKey::Paused, &false);
         env.storage().instance().set(&DataKey::PlayerCounter, &0u64);
         env.storage().instance().set(&DataKey::ScoutCounter, &0u64);
-        env.storage().instance().set(&DataKey::LivePlayerCount, &0u64);
-        env.storage().instance().set(&DataKey::LiveScoutCount, &0u64);
+        env.storage()
+            .instance()
+            .set(&DataKey::LivePlayerCount, &0u64);
+        env.storage()
+            .instance()
+            .set(&DataKey::LiveScoutCount, &0u64);
         Ok(())
     }
 
@@ -634,11 +645,6 @@ impl RegistrationContract {
                 .set(&DataKey::PlayerIndex, &player_ids);
         }
 
-        // Remove from composite index. The index is keyed by level, and level is
-        // not stored here — it comes from the progress contract, so it has to be
-        // resolved before the profile is removed.
-        let level = Self::resolve_level(&env, player_id);
-        Self::composite_index_remove(&env, &level, &profile.vitals.region, player_id);
         // Remove from composite index
         Self::composite_index_remove(&env, &level, &profile.vitals.region, player_id);
         Self::level_index_remove(&env, &level, player_id);
@@ -971,16 +977,6 @@ impl RegistrationContract {
             registered_at,
         };
 
-            for player_id in ids.iter() {
-                if profiles.len() >= limit {
-                    break;
-                }
-                if cursor != 0 && player_id < cursor {
-                    continue;
-                }
-                if let Ok(profile) = Self::load_player(&env, player_id) {
-                    if profile.vitals.position == position {
-                        profiles.push_back(profile);
         env.storage()
             .persistent()
             .set(&DataKey::Scout(scout_id), &profile);
@@ -1713,8 +1709,6 @@ impl RegistrationContract {
                 .get(&DataKey::PlayerIndex)
                 .unwrap_or_else(|| Vec::new(&env));
 
-            if profiles.len() >= limit {
-                break;
             for player_id in all_ids.iter() {
                 // Skip deactivated players entirely (don't count toward offset).
                 if env
@@ -1743,10 +1737,6 @@ impl RegistrationContract {
                     results.push_back(profile);
                 }
             }
-        }
-
-        if let Some(last) = profiles.last() {
-            next_cursor = last.player_id;
         }
 
         Ok(FilterResult {
@@ -1919,7 +1909,9 @@ impl RegistrationContract {
             .get(&DataKey::LivePlayerCount)
             .unwrap_or(0u64);
         let next = count.checked_add(1).ok_or(ScoutChainError::Overflow)?;
-        env.storage().instance().set(&DataKey::LivePlayerCount, &next);
+        env.storage()
+            .instance()
+            .set(&DataKey::LivePlayerCount, &next);
         Ok(())
     }
 
@@ -1931,7 +1923,9 @@ impl RegistrationContract {
             .get(&DataKey::LiveScoutCount)
             .unwrap_or(0u64);
         let next = count.checked_add(1).ok_or(ScoutChainError::Overflow)?;
-        env.storage().instance().set(&DataKey::LiveScoutCount, &next);
+        env.storage()
+            .instance()
+            .set(&DataKey::LiveScoutCount, &next);
         Ok(())
     }
 
@@ -1996,6 +1990,7 @@ impl RegistrationContract {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use scoutchain_shared_types::testutils::count_events;
     use soroban_sdk::{
         testutils::{Address as _, Events, MockAuth, MockAuthInvoke},
         vec, Env, IntoVal, String, Symbol,
@@ -2012,9 +2007,9 @@ mod tests {
     fn dummy_vitals(env: &Env) -> PlayerVitals {
         PlayerVitals {
             age: 18,
-            position: String::from_str(env, "Forward"),
-            region: String::from_str(env, "West Africa"),
-            nationality: String::from_str(env, "Ghana"),
+            position: String::from_str(env, "ST"),
+            region: String::from_str(env, "NG"),
+            nationality: String::from_str(env, "GH"),
         }
     }
 
@@ -2288,16 +2283,19 @@ mod tests {
         client.register_player(&wallet, &vitals, &hashes);
     }
 
+    /// Scout regions are canonicalized like player regions (#1541).
     #[test]
-    fn test_register_scout_region_100_bytes_succeeds() {
+    fn test_register_scout_region_is_canonicalized() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
         let wallet = Address::generate(&env);
-        let region = String::from_str(&env, &"A".repeat(100));
-        let scout_id = client.register_scout(&wallet, &region);
-        assert_eq!(scout_id, 1);
+        let scout_id = client.register_scout(&wallet, &String::from_str(&env, " ng-la "));
+        assert_eq!(
+            client.get_scout(&scout_id).region,
+            String::from_str(&env, "NG-LA")
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -2316,8 +2314,8 @@ mod tests {
         let vitals = PlayerVitals {
             age: 20,
             position: long,
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Ghana"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "GH"),
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
         client.register_player(&wallet, &vitals, &hashes);
@@ -2338,8 +2336,8 @@ mod tests {
         let vitals = PlayerVitals {
             age: 20,
             position: position_65,
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Ghana"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "GH"),
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
 
@@ -2351,23 +2349,26 @@ mod tests {
         );
     }
 
+    /// Positions must be one of the canonical codes (#1541); free text of any
+    /// length is rejected.
     #[test]
-    fn test_register_player_position_max_len_ok() {
+    fn test_register_player_position_free_text_rejected() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
         let wallet = Address::generate(&env);
-        let exactly_64 = String::from_str(&env, &"A".repeat(64));
         let vitals = PlayerVitals {
             age: 20,
-            position: exactly_64,
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Ghana"),
+            position: String::from_str(&env, &"A".repeat(64)),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "GH"),
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
-        let id = client.register_player(&wallet, &vitals, &hashes);
-        assert_eq!(id, 1);
+        assert_eq!(
+            client.try_register_player(&wallet, &vitals, &hashes),
+            Err(Ok(ScoutChainError::InvalidInput))
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -2384,9 +2385,9 @@ mod tests {
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
             age: 0,
-            position: String::from_str(&env, "Forward"),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Ghana"),
+            position: String::from_str(&env, "ST"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "GH"),
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
         let result = client.try_register_player(&wallet, &vitals, &hashes);
@@ -2403,9 +2404,9 @@ mod tests {
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
             age: MIN_PLAYER_AGE - 1,
-            position: String::from_str(&env, "Forward"),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Ghana"),
+            position: String::from_str(&env, "ST"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "GH"),
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
         let result = client.try_register_player(&wallet, &vitals, &hashes);
@@ -2422,9 +2423,9 @@ mod tests {
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
             age: MIN_PLAYER_AGE,
-            position: String::from_str(&env, "Forward"),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Ghana"),
+            position: String::from_str(&env, "ST"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "GH"),
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
         let result = client.try_register_player(&wallet, &vitals, &hashes);
@@ -2438,35 +2439,27 @@ mod tests {
     // Issue #416: explicit boundary tests for position MAX_STRING_LEN (64 bytes)
     // -------------------------------------------------------------------------
 
-    /// A position string of exactly 64 bytes (MAX_STRING_LEN) must be accepted.
-    /// Nationality and region are well within their valid ranges.
+    /// Vitals are trimmed and uppercased before validation and storage (#1541).
     #[test]
-    fn test_register_player_position_exactly_64_bytes_succeeds() {
+    fn test_register_player_vitals_are_canonicalized() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
         let wallet = Address::generate(&env);
-        let position_64 = String::from_str(&env, &"Y".repeat(64));
         let vitals = PlayerVitals {
             age: 22,
-            position: position_64.clone(),
-            region: String::from_str(&env, "East Africa"),
-            nationality: String::from_str(&env, "Kenya"),
+            position: String::from_str(&env, " st "),
+            region: String::from_str(&env, "ke-30"),
+            nationality: String::from_str(&env, " ke"),
         };
         let hashes = vec![&env, String::from_str(&env, "QmBoundaryTest2")];
-
-        let result = client.try_register_player(&wallet, &vitals, &hashes);
-        assert!(
-            result.is_ok(),
-            "64-byte position should register successfully"
-        );
-        let player_id = result.unwrap().unwrap();
+        let player_id = client.register_player(&wallet, &vitals, &hashes);
 
         let profile = client.get_player(&player_id);
-        assert_eq!(profile.vitals.position, position_64);
-        assert_eq!(profile.vitals.nationality, String::from_str(&env, "Kenya"));
-        assert_eq!(profile.vitals.region, String::from_str(&env, "East Africa"));
+        assert_eq!(profile.vitals.position, String::from_str(&env, "ST"));
+        assert_eq!(profile.vitals.region, String::from_str(&env, "KE-30"));
+        assert_eq!(profile.vitals.nationality, String::from_str(&env, "KE"));
     }
 
     #[test]
@@ -2481,9 +2474,9 @@ mod tests {
         let long = String::from_str(&env, &"A".repeat(129));
         let vitals = PlayerVitals {
             age: 20,
-            position: String::from_str(&env, "Forward"),
+            position: String::from_str(&env, "ST"),
             region: long,
-            nationality: String::from_str(&env, "Ghana"),
+            nationality: String::from_str(&env, "GH"),
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
         client.register_player(&wallet, &vitals, &hashes);
@@ -2504,9 +2497,9 @@ mod tests {
         let region_101 = String::from_str(&env, &"A".repeat(101));
         let vitals = PlayerVitals {
             age: 20,
-            position: String::from_str(&env, "Forward"),
+            position: String::from_str(&env, "ST"),
             region: region_101,
-            nationality: String::from_str(&env, "Ghana"),
+            nationality: String::from_str(&env, "GH"),
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
 
@@ -2514,27 +2507,25 @@ mod tests {
         assert_eq!(result, Err(Ok(ScoutChainError::InvalidInput)));
     }
 
-    /// An exactly 100-byte region string is at the boundary and must succeed.
+    /// Regions must be ISO 3166 codes (#1541); long free text is rejected.
     #[test]
-    fn test_register_player_region_100_bytes_succeeds() {
+    fn test_register_player_region_free_text_rejected() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
         let wallet = Address::generate(&env);
-        let region_100 = String::from_str(&env, &"A".repeat(100));
         let vitals = PlayerVitals {
             age: 20,
-            position: String::from_str(&env, "Forward"),
-            region: region_100,
-            nationality: String::from_str(&env, "Ghana"),
+            position: String::from_str(&env, "ST"),
+            region: String::from_str(&env, &"A".repeat(100)),
+            nationality: String::from_str(&env, "GH"),
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
-
-        let player_id = client.register_player(&wallet, &vitals, &hashes);
-        assert_eq!(player_id, 1);
-        let profile = client.get_player(&player_id);
-        assert_eq!(profile.wallet, wallet);
+        assert_eq!(
+            client.try_register_player(&wallet, &vitals, &hashes),
+            Err(Ok(ScoutChainError::InvalidInput))
+        );
     }
 
     #[test]
@@ -2548,8 +2539,8 @@ mod tests {
         let long = String::from_str(&env, &"A".repeat(65));
         let vitals = PlayerVitals {
             age: 20,
-            position: String::from_str(&env, "Forward"),
-            region: String::from_str(&env, "West Africa"),
+            position: String::from_str(&env, "ST"),
+            region: String::from_str(&env, "NG"),
             nationality: long,
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
@@ -2772,20 +2763,21 @@ mod tests {
     }
 
     #[test]
-    fn test_register_scout_region_max_len_ok() {
+    fn test_register_scout_region_free_text_rejected() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
         let wallet = Address::generate(&env);
-        let exactly_100 = String::from_str(&env, &"A".repeat(100));
-        let scout_id = client.register_scout(&wallet, &exactly_100);
-        assert_eq!(scout_id, 1);
+        let region = String::from_str(&env, &"A".repeat(100));
+        assert_eq!(
+            client.try_register_scout(&wallet, &region),
+            Err(Ok(ScoutChainError::InvalidInput))
+        );
     }
 
     #[test]
     fn test_upgrade_preserves_admin() {
-    let env = Env::default();
         let env = Env::default();
         env.mock_all_auths();
 
@@ -2811,12 +2803,6 @@ mod tests {
         // Admin persisted
         client.pause_contract();
 
-    // Existing data persisted
-    assert_eq!(
-        client.get_player(&player_id).player_id,
-        player_id
-    );
-}
         // Existing data persisted
         assert_eq!(client.get_player(&player_id).player_id, player_id);
     }
@@ -2826,7 +2812,7 @@ mod tests {
     fn test_register_scout_uninitialized_returns_not_initialized() {
         let (env, client) = setup();
         let wallet = Address::generate(&env);
-        let region = String::from_str(&env, "Europe");
+        let region = String::from_str(&env, "FR");
         client.register_scout(&wallet, &region);
     }
 
@@ -2840,25 +2826,12 @@ mod tests {
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
-        // Register a player so we confirm persistent data also survives
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
         let player_id = client.register_player(&wallet, &vitals, &hashes);
 
-        // Simulate upgrade: in testutils mode the host accepts empty bytes as a valid wasm blob
-        let new_wasm_hash = env
-            .deployer()
-            .upload_contract_wasm(soroban_sdk::Bytes::new(&env));
-        client.upgrade(&new_wasm_hash);
-
-        // Admin persisted — admin-gated call still works
-        client.pause_contract();
-        assert_eq!(client.get_player(&player_id).player_id, player_id);
-
-        // Same wallet can hold both roles after the upgrade
-        let region = String::from_str(&env, "Europe");
-        let scout_id = client.register_scout(&wallet, &region);
+        let scout_id = client.register_scout(&wallet, &String::from_str(&env, "FR"));
         assert_eq!(scout_id, 1);
         assert_eq!(client.get_player(&player_id).wallet, wallet);
         assert_eq!(client.get_scout(&scout_id).wallet, wallet);
@@ -2903,7 +2876,7 @@ mod tests {
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
-        let region = String::from_str(&env, "Europe");
+        let region = String::from_str(&env, "FR");
 
         for _ in 0..3 {
             let wallet = Address::generate(&env);
@@ -2929,9 +2902,9 @@ mod tests {
         let wallet1 = Address::generate(&env);
         let vitals1 = PlayerVitals {
             age: 18,
-            position: String::from_str(&env, "Forward"),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Ghana"),
+            position: String::from_str(&env, "ST"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "GH"),
         };
         client.register_player(&wallet1, &vitals1, &hashes);
 
@@ -2939,9 +2912,9 @@ mod tests {
         let wallet2 = Address::generate(&env);
         let vitals2 = PlayerVitals {
             age: 20,
-            position: String::from_str(&env, "Midfielder"),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Nigeria"),
+            position: String::from_str(&env, "CM"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "NG"),
         };
         client.register_player(&wallet2, &vitals2, &hashes);
 
@@ -2949,16 +2922,16 @@ mod tests {
         let wallet3 = Address::generate(&env);
         let vitals3 = PlayerVitals {
             age: 19,
-            position: String::from_str(&env, "Forward"),
-            region: String::from_str(&env, "Europe"),
-            nationality: String::from_str(&env, "France"),
+            position: String::from_str(&env, "ST"),
+            region: String::from_str(&env, "FR"),
+            nationality: String::from_str(&env, "FR"),
         };
         client.register_player(&wallet3, &vitals3, &hashes);
 
         // Filter: Forward in West Africa — offset=0
         let result = client.filter_players(
-            &String::from_str(&env, "West Africa"),
-            &String::from_str(&env, "Forward"),
+            &String::from_str(&env, "NG"),
+            &String::from_str(&env, "ST"),
             &ProgressLevel::Unverified,
             &0u32,
             &20u32,
@@ -2982,9 +2955,9 @@ mod tests {
             let wallet = Address::generate(&env);
             let vitals = PlayerVitals {
                 age: 18,
-                position: String::from_str(&env, "Forward"),
-                region: String::from_str(&env, "West Africa"),
-                nationality: String::from_str(&env, "Ghana"),
+                position: String::from_str(&env, "ST"),
+                region: String::from_str(&env, "NG"),
+                nationality: String::from_str(&env, "GH"),
             };
             client.register_player(&wallet, &vitals, &hashes);
         }
@@ -2992,9 +2965,9 @@ mod tests {
         let wallet_mid = Address::generate(&env);
         let vitals_mid = PlayerVitals {
             age: 22,
-            position: String::from_str(&env, "Midfielder"),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Ghana"),
+            position: String::from_str(&env, "CM"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "GH"),
         };
         client.register_player(&wallet_mid, &vitals_mid, &hashes);
         // Register 3 more Forwards
@@ -3002,17 +2975,17 @@ mod tests {
             let wallet = Address::generate(&env);
             let vitals = PlayerVitals {
                 age: 19,
-                position: String::from_str(&env, "Forward"),
-                region: String::from_str(&env, "West Africa"),
-                nationality: String::from_str(&env, "Ghana"),
+                position: String::from_str(&env, "ST"),
+                region: String::from_str(&env, "NG"),
+                nationality: String::from_str(&env, "GH"),
             };
             client.register_player(&wallet, &vitals, &hashes);
         }
 
         // Page 1: offset=0, limit=4 → should return 4 Forwards
         let page1 = client.filter_players(
-            &String::from_str(&env, "West Africa"),
-            &String::from_str(&env, "Forward"),
+            &String::from_str(&env, "NG"),
+            &String::from_str(&env, "ST"),
             &ProgressLevel::Unverified,
             &0u32,
             &4u32,
@@ -3022,8 +2995,8 @@ mod tests {
 
         // Page 2: pass next_cursor from page1 as offset → remaining Forwards
         let page2 = client.filter_players(
-            &String::from_str(&env, "West Africa"),
-            &String::from_str(&env, "Forward"),
+            &String::from_str(&env, "NG"),
+            &String::from_str(&env, "ST"),
             &ProgressLevel::Unverified,
             &(page1.next_cursor as u32),
             &4u32,
@@ -3052,18 +3025,18 @@ mod tests {
         let wallet1 = Address::generate(&env);
         let vitals1 = PlayerVitals {
             age: 18,
-            position: String::from_str(&env, "Forward"),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Ghana"),
+            position: String::from_str(&env, "ST"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "GH"),
         };
         let id_wa1 = client.register_player(&wallet1, &vitals1, &hashes);
 
         let wallet2 = Address::generate(&env);
         let vitals2 = PlayerVitals {
             age: 20,
-            position: String::from_str(&env, "Midfielder"),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Nigeria"),
+            position: String::from_str(&env, "CM"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "NG"),
         };
         let id_wa2 = client.register_player(&wallet2, &vitals2, &hashes);
 
@@ -3071,16 +3044,16 @@ mod tests {
         let wallet3 = Address::generate(&env);
         let vitals3 = PlayerVitals {
             age: 22,
-            position: String::from_str(&env, "Defender"),
-            region: String::from_str(&env, "Europe"),
-            nationality: String::from_str(&env, "Germany"),
+            position: String::from_str(&env, "CB"),
+            region: String::from_str(&env, "FR"),
+            nationality: String::from_str(&env, "DE"),
         };
         client.register_player(&wallet3, &vitals3, &hashes);
 
         // Filter: region = West Africa, no position constraint (empty string)
         let result = client.filter_players(
-            &String::from_str(&env, "West Africa"), // region filter only
-            &String::from_str(&env, ""),            // no position filter
+            &String::from_str(&env, "NG"), // region filter only
+            &String::from_str(&env, ""),   // no position filter
             &ProgressLevel::Unverified,
             &0u32,
             &20u32,
@@ -3113,26 +3086,22 @@ mod tests {
         let wallet1 = Address::generate(&env);
         let vitals1 = PlayerVitals {
             age: 19,
-            position: String::from_str(&env, "Forward"),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Senegal"),
+            position: String::from_str(&env, "ST"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "SN"),
         };
         client.register_player(&wallet1, &vitals1, &hashes);
 
         // Filter by a region that has no players
         let result = client.filter_players(
-            &String::from_str(&env, "East Asia"), // region with no players
-            &String::from_str(&env, ""),          // no position filter
+            &String::from_str(&env, "JP"), // region with no players
+            &String::from_str(&env, ""),   // no position filter
             &ProgressLevel::Unverified,
             &0u32,
             &20u32,
         );
 
-        assert_eq!(
-            result.profiles.len(),
-            0,
-            "no players in East Asia — must be empty"
-        );
+        assert_eq!(result.profiles.len(), 0, "no players in JP — must be empty");
         assert_eq!(result.next_cursor, 0);
     }
 
@@ -3153,25 +3122,25 @@ mod tests {
         let wallet1 = Address::generate(&env);
         let vitals1 = PlayerVitals {
             age: 20,
-            position: String::from_str(&env, "Forward"),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Ghana"),
+            position: String::from_str(&env, "ST"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "GH"),
         };
         let player1 = client.register_player(&wallet1, &vitals1, &hashes);
 
         let wallet2 = Address::generate(&env);
         let vitals2 = PlayerVitals {
             age: 22,
-            position: String::from_str(&env, "Forward"),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Nigeria"),
+            position: String::from_str(&env, "ST"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "NG"),
         };
         let player2 = client.register_player(&wallet2, &vitals2, &hashes);
 
         // Before deactivation, both appear
         let result_before = client.filter_players(
-            &String::from_str(&env, "West Africa"),
-            &String::from_str(&env, "Forward"),
+            &String::from_str(&env, "NG"),
+            &String::from_str(&env, "ST"),
             &ProgressLevel::Unverified,
             &0u32,
             &20u32,
@@ -3183,8 +3152,8 @@ mod tests {
 
         // After deactivation, only player2 appears
         let result_after = client.filter_players(
-            &String::from_str(&env, "West Africa"),
-            &String::from_str(&env, "Forward"),
+            &String::from_str(&env, "NG"),
+            &String::from_str(&env, "ST"),
             &ProgressLevel::Unverified,
             &0u32,
             &20u32,
@@ -3224,9 +3193,9 @@ mod tests {
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
             age: 20,
-            position: String::from_str(&env, "Forward"),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Ghana"),
+            position: String::from_str(&env, "ST"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "GH"),
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
         let player_id = client.register_player(&wallet, &vitals, &hashes);
@@ -3235,8 +3204,8 @@ mod tests {
         client.deactivate_player(&player_id);
 
         let result_deactivated = client.filter_players(
-            &String::from_str(&env, "West Africa"),
-            &String::from_str(&env, "Forward"),
+            &String::from_str(&env, "NG"),
+            &String::from_str(&env, "ST"),
             &ProgressLevel::Unverified,
             &0u32,
             &20u32,
@@ -3246,8 +3215,8 @@ mod tests {
         client.reactivate_player(&player_id);
 
         let result_reactivated = client.filter_players(
-            &String::from_str(&env, "West Africa"),
-            &String::from_str(&env, "Forward"),
+            &String::from_str(&env, "NG"),
+            &String::from_str(&env, "ST"),
             &ProgressLevel::Unverified,
             &0u32,
             &20u32,
@@ -3285,9 +3254,9 @@ mod tests {
             let wallet = Address::generate(&env);
             let vitals = PlayerVitals {
                 age: 18,
-                position: String::from_str(&env, "Forward"),
-                region: String::from_str(&env, "West Africa"),
-                nationality: String::from_str(&env, "Ghana"),
+                position: String::from_str(&env, "ST"),
+                region: String::from_str(&env, "NG"),
+                nationality: String::from_str(&env, "GH"),
             };
             client.register_player(&wallet, &vitals, &hashes);
         }
@@ -3295,9 +3264,9 @@ mod tests {
         let wallet_mid = Address::generate(&env);
         let vitals_mid = PlayerVitals {
             age: 22,
-            position: String::from_str(&env, "Midfielder"),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Ghana"),
+            position: String::from_str(&env, "CM"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "GH"),
         };
         client.register_player(&wallet_mid, &vitals_mid, &hashes);
         // Register 3 more Forwards
@@ -3305,9 +3274,9 @@ mod tests {
             let wallet = Address::generate(&env);
             let vitals = PlayerVitals {
                 age: 19,
-                position: String::from_str(&env, "Forward"),
-                region: String::from_str(&env, "West Africa"),
-                nationality: String::from_str(&env, "Ghana"),
+                position: String::from_str(&env, "ST"),
+                region: String::from_str(&env, "NG"),
+                nationality: String::from_str(&env, "GH"),
             };
             client.register_player(&wallet, &vitals, &hashes);
         }
@@ -3317,8 +3286,8 @@ mod tests {
         let mut offset: u32 = 0;
         loop {
             let page = client.filter_players(
-                &String::from_str(&env, "West Africa"),
-                &String::from_str(&env, "Forward"),
+                &String::from_str(&env, "NG"),
+                &String::from_str(&env, "ST"),
                 &ProgressLevel::Unverified,
                 &offset,
                 &4u32,
@@ -3378,9 +3347,9 @@ mod tests {
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
             age: 20,
-            position: String::from_str(&env, "Forward"),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Ghana"),
+            position: String::from_str(&env, "ST"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "GH"),
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
         let player_id = client.admin_seed_player(
@@ -3409,7 +3378,7 @@ mod tests {
         let wallet = Address::generate(&env);
         let scout_id = client.admin_seed_scout(
             &wallet,
-            &String::from_str(&env, "Europe"),
+            &String::from_str(&env, "FR"),
             &11u64,
             &123u64,
             &true,
@@ -3507,7 +3476,10 @@ mod tests {
 
         // Register a player
         let wallet = Address::generate(&env);
-        let hashes = vec![&env, String::from_str(&env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB")];
+        let hashes = vec![
+            &env,
+            String::from_str(&env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB"),
+        ];
         let player_id = client.register_player(&wallet, &dummy_vitals(&env), &hashes);
 
         // Wire a progress contract
@@ -3550,7 +3522,7 @@ mod tests {
         client.initialize(&admin);
 
         let wallet = Address::generate(&env);
-        let region = String::from_str(&env, "Europe");
+        let region = String::from_str(&env, "FR");
         let scout_id = client.register_scout(&wallet, &region);
 
         let scout = client.get_scout(&scout_id);
@@ -3564,7 +3536,7 @@ mod tests {
         client.initialize(&admin);
 
         let wallet = Address::generate(&env);
-        let region = String::from_str(&env, "Europe");
+        let region = String::from_str(&env, "FR");
         let scout_id = client.register_scout(&wallet, &region);
 
         client.verify_scout(&scout_id);
@@ -3585,7 +3557,7 @@ mod tests {
         client.initialize(&admin);
 
         let wallet = Address::generate(&env);
-        let region = String::from_str(&env, "Europe");
+        let region = String::from_str(&env, "FR");
         let scout_id = client.register_scout(&wallet, &region);
 
         client.verify_scout(&scout_id);
@@ -3616,7 +3588,7 @@ mod tests {
         client.initialize(&admin);
 
         let wallet = Address::generate(&env);
-        let region = String::from_str(&env, "Europe");
+        let region = String::from_str(&env, "FR");
         let scout_id = client.register_scout(&wallet, &region);
 
         // Clear all auths so admin check fails
@@ -3769,7 +3741,7 @@ mod tests {
         client.pause_contract();
 
         let wallet = Address::generate(&env);
-        let region = String::from_str(&env, "Europe");
+        let region = String::from_str(&env, "FR");
 
         let result = client.try_register_scout(&wallet, &region);
         assert_eq!(result, Err(Ok(ScoutChainError::ContractPaused)));
@@ -3807,7 +3779,7 @@ mod tests {
         let player_id = client.register_player(&player_wallet, &vitals, &hashes);
 
         let scout_wallet = Address::generate(&env);
-        let region = String::from_str(&env, "Europe");
+        let region = String::from_str(&env, "FR");
         let scout_id = client.register_scout(&scout_wallet, &region);
 
         client.pause_contract();
@@ -3829,9 +3801,9 @@ mod tests {
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
             age: 20,
-            position: String::from_str(&env, "Forward"),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Ghana"),
+            position: String::from_str(&env, "ST"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "GH"),
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
 
@@ -3849,13 +3821,13 @@ mod tests {
                 l0.contains(player_id),
                 "player must be in PlayersByLevel(Unverified) before deregister"
             );
-            // PlayersByLevelRegion(Unverified, "West Africa")
+            // PlayersByLevelRegion(Unverified, "NG")
             let comp: soroban_sdk::Vec<u64> = env
                 .storage()
                 .persistent()
                 .get(&DataKey::PlayersByLevelRegion(
                     ProgressLevel::Unverified,
-                    String::from_str(&env, "West Africa"),
+                    String::from_str(&env, "NG"),
                 ))
                 .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
             assert!(
@@ -3864,7 +3836,9 @@ mod tests {
             );
             // PlayerDeactivated must not be set yet
             assert!(
-                !env.storage().persistent().has(&DataKey::PlayerDeactivated(player_id)),
+                !env.storage()
+                    .persistent()
+                    .has(&DataKey::PlayerDeactivated(player_id)),
                 "deactivation flag must be absent before deregister"
             );
         });
@@ -3876,8 +3850,14 @@ mod tests {
         env.as_contract(&client.address, || {
             // Primary records
             assert!(!env.storage().persistent().has(&DataKey::Player(player_id)));
-            assert!(!env.storage().persistent().has(&DataKey::PlayerByWallet(wallet.clone())));
-            assert!(!env.storage().persistent().has(&DataKey::PlayerLevel(player_id)));
+            assert!(!env
+                .storage()
+                .persistent()
+                .has(&DataKey::PlayerByWallet(wallet.clone())));
+            assert!(!env
+                .storage()
+                .persistent()
+                .has(&DataKey::PlayerLevel(player_id)));
 
             // PlayerIndex must not contain the id
             let all_ids: soroban_sdk::Vec<u64> = env
@@ -3885,7 +3865,10 @@ mod tests {
                 .persistent()
                 .get(&DataKey::PlayerIndex)
                 .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
-            assert!(!all_ids.contains(player_id), "PlayerIndex must not contain deregistered id");
+            assert!(
+                !all_ids.contains(player_id),
+                "PlayerIndex must not contain deregistered id"
+            );
 
             // PlayersByLevel — check all four level buckets
             for lvl in [
@@ -3918,7 +3901,7 @@ mod tests {
                     .persistent()
                     .get(&DataKey::PlayersByLevelRegion(
                         lvl.clone(),
-                        String::from_str(&env, "West Africa"),
+                        String::from_str(&env, "NG"),
                     ))
                     .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
                 assert!(
@@ -3930,13 +3913,17 @@ mod tests {
 
             // PlayerDeactivated flag must be removed
             assert!(
-                !env.storage().persistent().has(&DataKey::PlayerDeactivated(player_id)),
+                !env.storage()
+                    .persistent()
+                    .has(&DataKey::PlayerDeactivated(player_id)),
                 "PlayerDeactivated flag must be removed after deregister"
             );
 
             // PlayerRegLastSent is preserved for cooldown enforcement
             assert!(
-                env.storage().persistent().has(&DataKey::PlayerRegLastSent(wallet.clone())),
+                env.storage()
+                    .persistent()
+                    .has(&DataKey::PlayerRegLastSent(wallet.clone())),
                 "PlayerRegLastSent must survive deregistration for cooldown"
             );
         });
@@ -3952,9 +3939,9 @@ mod tests {
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
             age: 22,
-            position: String::from_str(&env, "Midfielder"),
-            region: String::from_str(&env, "Europe"),
-            nationality: String::from_str(&env, "France"),
+            position: String::from_str(&env, "CM"),
+            region: String::from_str(&env, "FR"),
+            nationality: String::from_str(&env, "FR"),
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
         let player_id = client.register_player(&wallet, &vitals, &hashes);
@@ -3963,7 +3950,9 @@ mod tests {
         client.deactivate_player(&player_id);
         env.as_contract(&client.address, || {
             assert!(
-                env.storage().persistent().has(&DataKey::PlayerDeactivated(player_id)),
+                env.storage()
+                    .persistent()
+                    .has(&DataKey::PlayerDeactivated(player_id)),
                 "deactivation flag must be set after deactivate_player"
             );
         });
@@ -3974,7 +3963,9 @@ mod tests {
         // Deactivation flag must be gone
         env.as_contract(&client.address, || {
             assert!(
-                !env.storage().persistent().has(&DataKey::PlayerDeactivated(player_id)),
+                !env.storage()
+                    .persistent()
+                    .has(&DataKey::PlayerDeactivated(player_id)),
                 "deactivation flag must be cleared after deregister"
             );
         });
@@ -4226,7 +4217,7 @@ mod tests {
 
         let result = client.try_admin_seed_scout(
             &wallet,
-            &String::from_str(&env, "Europe"),
+            &String::from_str(&env, "FR"),
             &1u64,
             &1_600_000_000u64,
             &false,
@@ -4302,9 +4293,9 @@ mod tests {
         // shared-types this will fail to compile.
         let vitals = PlayerVitals {
             age: 22,
-            position: String::from_str(&env, "Forward"),
-            region: String::from_str(&env, "Africa"),
-            nationality: String::from_str(&env, "Nigerian"),
+            position: String::from_str(&env, "ST"),
+            region: String::from_str(&env, "ZA"),
+            nationality: String::from_str(&env, "NG"),
         };
 
         // Build a StoredPlayerProfile (internal type) — checks that the
@@ -4337,9 +4328,9 @@ mod tests {
         assert_eq!(profile.player_id, 1u64);
         assert_eq!(profile.wallet, wallet);
         assert_eq!(profile.vitals.age, 22u32);
-        assert_eq!(profile.vitals.position, String::from_str(&env, "Forward"));
-        assert_eq!(profile.vitals.region, String::from_str(&env, "Africa"));
-        assert_eq!(profile.vitals.nationality, String::from_str(&env, "Nigerian"));
+        assert_eq!(profile.vitals.position, String::from_str(&env, "ST"));
+        assert_eq!(profile.vitals.region, String::from_str(&env, "ZA"));
+        assert_eq!(profile.vitals.nationality, String::from_str(&env, "NG"));
         assert_eq!(profile.level, ProgressLevel::Unverified);
     }
 
@@ -4354,7 +4345,7 @@ mod tests {
         let scout = ScoutProfile {
             scout_id: 42u64,
             wallet: wallet.clone(),
-            region: String::from_str(&env, "Europe"),
+            region: String::from_str(&env, "FR"),
             verified: false,
             verification: ScoutVerificationRecord {
                 verified: false,
@@ -4368,7 +4359,7 @@ mod tests {
 
         assert_eq!(scout.scout_id, 42u64);
         assert_eq!(scout.wallet, wallet);
-        assert_eq!(scout.region, String::from_str(&env, "Europe"));
+        assert_eq!(scout.region, String::from_str(&env, "FR"));
         assert!(!scout.verified);
     }
 
@@ -4386,7 +4377,7 @@ mod tests {
         });
 
         let wallet = Address::generate(&env);
-        let region = String::from_str(&env, "Europe");
+        let region = String::from_str(&env, "FR");
         let scout_id = client.register_scout(&wallet, &region);
 
         env.ledger().with_mut(|ledger| {
@@ -4413,7 +4404,6 @@ mod tests {
     // Issue #444: register_player age field must reject implausible upper values
     // -------------------------------------------------------------------------
 
-
     /// An age of MAX_PLAYER_AGE (100) must be accepted.
     #[test]
     fn test_register_player_age_at_max_succeeds() {
@@ -4424,9 +4414,9 @@ mod tests {
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
             age: 100, // exactly MAX_PLAYER_AGE
-            position: String::from_str(&env, "Forward"),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Ghana"),
+            position: String::from_str(&env, "ST"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "GH"),
         };
         let hashes = vec![&env, String::from_str(&env, "QmAgeTest")];
 
@@ -4444,9 +4434,9 @@ mod tests {
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
             age: 101, // one above MAX_PLAYER_AGE
-            position: String::from_str(&env, "Forward"),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Ghana"),
+            position: String::from_str(&env, "ST"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "GH"),
         };
         let hashes = vec![&env, String::from_str(&env, "QmAgeTest")];
 
@@ -4464,9 +4454,9 @@ mod tests {
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
             age: 999,
-            position: String::from_str(&env, "Forward"),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Ghana"),
+            position: String::from_str(&env, "ST"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "GH"),
         };
         let hashes = vec![&env, String::from_str(&env, "QmAgeTest")];
 
@@ -4492,8 +4482,8 @@ mod tests {
         let vitals_bad_pos = PlayerVitals {
             age: 20,
             position: String::from_str(&env, &"P".repeat(65)),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Ghana"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "GH"),
         };
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
         assert_eq!(
@@ -4505,9 +4495,9 @@ mod tests {
         let wallet2 = Address::generate(&env);
         let vitals_bad_reg = PlayerVitals {
             age: 20,
-            position: String::from_str(&env, "Forward"),
+            position: String::from_str(&env, "ST"),
             region: String::from_str(&env, &"R".repeat(101)),
-            nationality: String::from_str(&env, "Ghana"),
+            nationality: String::from_str(&env, "GH"),
         };
         assert_eq!(
             client.try_register_player(&wallet2, &vitals_bad_reg, &hashes),
@@ -4518,8 +4508,8 @@ mod tests {
         let wallet3 = Address::generate(&env);
         let vitals_bad_nat = PlayerVitals {
             age: 20,
-            position: String::from_str(&env, "Forward"),
-            region: String::from_str(&env, "West Africa"),
+            position: String::from_str(&env, "ST"),
+            region: String::from_str(&env, "NG"),
             nationality: String::from_str(&env, &"N".repeat(65)),
         };
         assert_eq!(
@@ -4527,13 +4517,13 @@ mod tests {
             Err(Ok(ScoutChainError::InvalidInput))
         );
 
-        // 4. Confirm register_player succeeds with exact upper boundary lengths
+        // 4. Confirm register_player accepts canonical vitals (#1541)
         let wallet_valid = Address::generate(&env);
         let vitals_max = PlayerVitals {
             age: 25,
-            position: String::from_str(&env, &"P".repeat(64)),
-            region: String::from_str(&env, &"R".repeat(100)),
-            nationality: String::from_str(&env, &"N".repeat(64)),
+            position: String::from_str(&env, "CM"),
+            region: String::from_str(&env, "NG-LAG"),
+            nationality: String::from_str(&env, "NG"),
         };
         let player_id = client.register_player(&wallet_valid, &vitals_max, &hashes);
         let profile_init = client.get_player(&player_id);
@@ -4564,7 +4554,7 @@ mod tests {
         client.initialize(&admin);
 
         let wallet = Address::generate(&env);
-        let region = String::from_str(&env, "Europe");
+        let region = String::from_str(&env, "FR");
         let scout_id = client.register_scout(&wallet, &region);
 
         let before = client.get_scout(&scout_id);
@@ -4591,7 +4581,7 @@ mod tests {
         client.initialize(&admin);
 
         let wallet = Address::generate(&env);
-        let region = String::from_str(&env, "Europe");
+        let region = String::from_str(&env, "FR");
         let scout_id = client.register_scout(&wallet, &region);
 
         let record = client.get_scout_verification(&scout_id);
@@ -4674,13 +4664,9 @@ mod tests {
                 let expected = level.rank() >= min_level.rank();
                 let actual = RegistrationContract::level_gte(level, min_level);
                 assert_eq!(
-                    actual,
-                    expected,
+                    actual, expected,
                     "level_gte({:?}, {:?}) expected {} but got {}",
-                    level,
-                    min_level,
-                    expected,
-                    actual,
+                    level, min_level, expected, actual,
                 );
             }
         }
@@ -4702,9 +4688,20 @@ mod tests {
         let player_id = client.register_player(&wallet, &vitals, &hashes);
 
         // Remove the stored PlayerLevel to simulate a pre-tracking player.
-        env.storage()
-            .persistent()
-            .remove(&DataKey::PlayerLevel(player_id));
+        env.as_contract(&client.address, || {
+            env.storage()
+                .persistent()
+                .remove(&DataKey::PlayerLevel(player_id));
+        });
+        // Storage reads must also run in the contract's context.
+        let read_ids = |key: DataKey| -> Vec<u64> {
+            env.as_contract(&client.address, || {
+                env.storage()
+                    .persistent()
+                    .get(&key)
+                    .unwrap_or_else(|| Vec::new(&env))
+            })
+        };
 
         let progress_contract = Address::generate(&env);
         client.set_progress_contract(&progress_contract);
@@ -4717,47 +4714,33 @@ mod tests {
 
         let composite_key = DataKey::PlayersByLevelRegion(
             ProgressLevel::VerifiedIdentity,
-            String::from_str(&env, "West Africa"),
+            String::from_str(&env, "NG"),
         );
-        let composite_ids: Vec<u64> = env
-            .storage()
-            .persistent()
-            .get(&composite_key)
-            .unwrap_or_else(|| Vec::new(&env));
+        let composite_ids: Vec<u64> = read_ids(composite_key);
         assert!(
             composite_ids.iter().any(|id| id == player_id),
-            "player must be in VerifiedIdentity/West Africa composite bucket"
+            "player must be in VerifiedIdentity/NG composite bucket"
         );
 
-        let level_ids: Vec<u64> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::PlayersByLevel(ProgressLevel::VerifiedIdentity))
-            .unwrap_or_else(|| Vec::new(&env));
+        let level_ids: Vec<u64> =
+            read_ids(DataKey::PlayersByLevel(ProgressLevel::VerifiedIdentity));
         assert!(
             level_ids.iter().any(|id| id == player_id),
             "player must be in VerifiedIdentity level index bucket"
         );
 
         // Player must NOT remain in any Unverified bucket after the sweep.
-        let unverified_composite: Vec<u64> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::PlayersByLevelRegion(
-                ProgressLevel::Unverified,
-                String::from_str(&env, "West Africa"),
-            ))
-            .unwrap_or_else(|| Vec::new(&env));
+        let unverified_composite: Vec<u64> = read_ids(DataKey::PlayersByLevelRegion(
+            ProgressLevel::Unverified,
+            String::from_str(&env, "NG"),
+        ));
         assert!(
             !unverified_composite.iter().any(|id| id == player_id),
             "player must be removed from Unverified composite bucket"
         );
 
-        let unverified_level: Vec<u64> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::PlayersByLevel(ProgressLevel::Unverified))
-            .unwrap_or_else(|| Vec::new(&env));
+        let unverified_level: Vec<u64> =
+            read_ids(DataKey::PlayersByLevel(ProgressLevel::Unverified));
         assert!(
             !unverified_level.iter().any(|id| id == player_id),
             "player must be removed from Unverified level index bucket"
@@ -4781,17 +4764,16 @@ mod tests {
         let hashes = vec![&env, String::from_str(&env, "QmHash1")];
         let player_id = client.register_player(&wallet, &vitals, &hashes);
 
+        // `events().all()` only holds the most recent invocation's events.
         // First deactivation — should succeed and record an event.
         client.deactivate_player(&player_id);
-        let events_after_first = env.events().all();
-        let count_after_first = events_after_first.len();
+        assert_eq!(count_events(&env, "player_deactivated", None), 1);
 
         // Second deactivation — must be a no-op (no new event).
         client.deactivate_player(&player_id);
-        let events_after_second = env.events().all();
         assert_eq!(
-            events_after_second.len(),
-            count_after_first,
+            count_events(&env, "player_deactivated", None),
+            0,
             "second deactivate_player must not emit a duplicate event"
         );
     }
@@ -4812,15 +4794,13 @@ mod tests {
         // Deactivate first, then reactivate.
         client.deactivate_player(&player_id);
         client.reactivate_player(&player_id);
-        let events_after_reactivate = env.events().all();
-        let count_after_reactivate = events_after_reactivate.len();
+        assert_eq!(count_events(&env, "player_reactivated", None), 1);
 
         // Second reactivation on an already-active player must be a no-op.
         client.reactivate_player(&player_id);
-        let events_after_second = env.events().all();
         assert_eq!(
-            events_after_second.len(),
-            count_after_reactivate,
+            count_events(&env, "player_reactivated", None),
+            0,
             "second reactivate_player must not emit a duplicate event"
         );
     }
@@ -4851,7 +4831,7 @@ mod tests {
         });
 
         let wallet = Address::generate(&env);
-        let region = String::from_str(&env, "West Africa");
+        let region = String::from_str(&env, "NG");
         let scout_id = client.register_scout(&wallet, &region);
 
         // Advance past the PERSISTENT_TTL_MAX to confirm the key was extended.
@@ -4886,7 +4866,7 @@ mod tests {
         let wallet = Address::generate(&env);
         let scout_id = client.admin_seed_scout(
             &wallet,
-            &String::from_str(&env, "Europe"),
+            &String::from_str(&env, "FR"),
             &42u64,
             &999u64,
             &false,

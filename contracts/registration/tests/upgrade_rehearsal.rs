@@ -95,8 +95,8 @@ fn vitals(env: &Env, position: &str) -> PlayerVitals {
     PlayerVitals {
         age: 18,
         position: String::from_str(env, position),
-        region: String::from_str(env, "West Africa"),
-        nationality: String::from_str(env, "Ghana"),
+        region: String::from_str(env, "NG"),
+        nationality: String::from_str(env, "GH"),
     }
 }
 
@@ -144,15 +144,15 @@ fn seed(h: &Harness) -> Seeded {
     let p1_wallet = Address::generate(&h.env);
     let p1 = h
         .registration
-        .register_player(&p1_wallet, &vitals(&h.env, "Forward"), &hashes);
+        .register_player(&p1_wallet, &vitals(&h.env, "ST"), &hashes);
 
     let w2 = Address::generate(&h.env);
     let p2 = h
         .registration
-        .register_player(&w2, &vitals(&h.env, "Midfielder"), &hashes);
+        .register_player(&w2, &vitals(&h.env, "CM"), &hashes);
 
     let scout_wallet = Address::generate(&h.env);
-    let scout_region = String::from_str(&h.env, "Europe");
+    let scout_region = String::from_str(&h.env, "FR");
     let scout_id = h.registration.register_scout(&scout_wallet, &scout_region);
     h.registration.verify_scout(&scout_id);
 
@@ -275,7 +275,7 @@ fn test_registration_broken_upgrade_left_paused_is_caught() {
     let hashes = vec![&h.env, String::from_str(&h.env, "QmBrokenUpgradeCheck01")];
     let _ = h
         .registration
-        .register_player(&wallet, &vitals(&h.env, "Goalkeeper"), &hashes);
+        .register_player(&wallet, &vitals(&h.env, "GK"), &hashes);
 }
 
 /// Assert that `upgrade()` emits a `contract_upgraded` event *before* swapping
@@ -286,8 +286,7 @@ fn test_registration_broken_upgrade_left_paused_is_caught() {
 ///   data   : new_wasm_hash (BytesN<32>)
 #[test]
 fn test_registration_upgrade_emits_contract_upgraded_event() {
-    use soroban_sdk::testutils::Events as _;
-    use soroban_sdk::{symbol_short, IntoVal};
+    use scoutchain_shared_types::testutils::has_event;
 
     let h = setup();
     let _ = seed(&h);
@@ -295,22 +294,7 @@ fn test_registration_upgrade_emits_contract_upgraded_event() {
     let new_wasm_hash = h.env.deployer().upload_contract_wasm(Bytes::new(&h.env));
     h.registration.upgrade(&new_wasm_hash);
 
-    // Collect all events published during the `upgrade()` call.
-    let events = h.env.events().all();
-
-    // Find the contract_upgraded event.
-    let found = events.iter().any(|(contract_id, topics, data)| {
-        let _ = contract_id;
-        let _ = data;
-        // topics is a Vec<Val>; the first topic is the event name symbol.
-        if let Some(first) = topics.get(0) {
-            let expected: soroban_sdk::Val =
-                symbol_short!("contract_upgraded").into_val(&h.env);
-            first == expected
-        } else {
-            false
-        }
-    });
+    let found = has_event(&h.env, "contract_upgraded");
 
     assert!(
         found,

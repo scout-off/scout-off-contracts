@@ -4,6 +4,8 @@
 //! the same error code (`ProContactLimitReached` = 20) when the Pro-tier
 //! monthly contact limit is exceeded.
 
+mod common;
+
 use scoutchain_scout_access::{FeeConfig, ScoutAccessContractClient, SubscriptionTier};
 use scoutchain_verification::VerificationContractClient;
 use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env};
@@ -53,6 +55,8 @@ fn setup() -> (
     let fee_config = default_fees();
 
     scout_access_client.initialize(&admin, &xlm_token, &fee_config);
+    common::wire_registration(&env, Some(&scout_access_client), None);
+    common::wire_progress_level_stub(&env, &scout_access_client);
     verification_client.initialize(&admin);
 
     (env, scout_access_client, verification_client, scout, player)

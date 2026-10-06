@@ -15,15 +15,20 @@
 //! 5. `approve_milestone`'s single-signature fast path is closed once threshold > 1
 //! 6. CPU-instruction cost of the threshold-reaching call does not scale with vote count
 
+use scoutchain_shared_types::ProgressLevel;
 use scoutchain_verification::{
-    AttestationStatus, RevocationSeverity, VerificationContract, VerificationContractClient,
-    VerificationError,
+    AttestationStatus, DataKey, RegPlayerProfile, RegPlayerVitals, RevocationSeverity,
+    VerificationContract, VerificationContractClient, VerificationError,
 };
 use soroban_sdk::{
+    contract, contractimpl, contracttype,
     testutils::{Address as _, Ledger},
     testutils::{MockAuth, MockAuthInvoke},
     Address, Env, IntoVal, String,
 };
+
+/// Mirrors the contract's private `MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR`.
+const MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR: u32 = 5;
 
 const CREDENTIALS: &str = "UEFA-B-License-2026";
 const DEFAULT_VOTING_WINDOW_SECS: u64 = 1_209_600; // 14 days — must match lib.rs default
@@ -444,11 +449,11 @@ fn cost_attest_milestone_threshold_reach_does_not_scale_with_vote_count() {
 #[test]
 fn committed_milestone_stores_full_attestor_set() {
     let (env, client, _admin) = setup();
-    client.set_milestone_threshold(&3u32);
 
     let v1 = register_validator(&env, &client);
     let v2 = register_validator(&env, &client);
     let v3 = register_validator(&env, &client);
+    client.set_milestone_threshold(&3u32);
     let player_id = 100u64;
     let description = String::from_str(&env, "attestor set test");
     let evidence = cid(&env, 100);
@@ -470,11 +475,11 @@ fn committed_milestone_stores_full_attestor_set() {
 #[test]
 fn cascade_sweep_flags_milestone_for_co_attestor() {
     let (env, client, _admin) = setup();
-    client.set_milestone_threshold(&3u32);
 
     let v1 = register_validator(&env, &client);
     let v2 = register_validator(&env, &client);
     let v3 = register_validator(&env, &client);
+    client.set_milestone_threshold(&3u32);
     let player_id = 200u64;
     let description = String::from_str(&env, "cascade co-attestor test");
     let evidence = cid(&env, 200);
@@ -500,116 +505,142 @@ fn cascade_sweep_flags_milestone_for_co_attestor() {
 }
 
 /// Per-player-per-validator limits apply to every attestor, not just the
-/// primary validator.
+/// primary validator: a co-attestor already at the cap blocks the commit, and
+/// a successful commit counts toward every attestor's cap.
 #[test]
 fn per_validator_cap_applies_to_all_attestors() {
     let (env, client, _admin) = setup();
-    client.set_milestone_threshold(&2u32);
-
     let v1 = register_validator(&env, &client);
     let v2 = register_validator(&env, &client);
+    client.set_milestone_threshold(&2u32);
     let player_id = 300u64;
     let description = String::from_str(&env, "per-validator cap test");
-    let evidence = cid(&env, 300);
 
-    // First milestone: both v1 and v2 attest.
+    // A committed milestone increments both attestors' per-player counts.
+    let evidence = cid(&env, 300);
     attest_as(&env, &client, &v1, player_id, &description, &evidence);
     let r2 = attest_as(&env, &client, &v2, player_id, &description, &evidence);
     assert!(matches!(r2, AttestationStatus::Committed(1)));
+    let count_for = |v: &Address| -> u32 {
+        env.as_contract(&client.address, || {
+            env.storage()
+                .persistent()
+                .get(&DataKey::ValidatorPlayerMilestoneCount(
+                    v.clone(),
+                    player_id,
+                ))
+                .unwrap_or(0u32)
+        })
+    };
+    assert_eq!(count_for(&v1), 1);
+    assert_eq!(count_for(&v2), 1);
 
-    // Second milestone for the same player: v1 is already at the cap
-    // (MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR = 1 by default), so
-    // even as a co-attestor v1 must be rejected.
+    // Push v1 (the co-attestor, not the primary) to the cap.
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(
+            &DataKey::ValidatorPlayerMilestoneCount(v1.clone(), player_id),
+            &MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR,
+        );
+    });
+
+    // v1 votes first, v2's vote reaches the threshold; the commit is rejected
+    // because co-attestor v1 is at the cap, and nothing is committed.
     let evidence2 = cid(&env, 301);
-    attest_as(&env, &client, &v2, player_id, &description, &evidence2);
     let r3 = attest_as(&env, &client, &v1, player_id, &description, &evidence2);
-    assert_eq!(
-        r3,
-        AttestationStatus::Pending(2),
-        "v1 must still be able to vote (it hasn't reached the cap yet for this milestone)"
-    );
+    assert_eq!(r3, AttestationStatus::Pending(1));
+    scope_auth_to(&env, &client, &v2, player_id, &description, &evidence2);
+    let r4 = client.try_attest_milestone(&v2, &player_id, &description, &evidence2);
+    assert_eq!(r4, Err(Ok(VerificationError::MilestoneLimitExceeded)));
+    assert_eq!(client.get_milestone_count(&player_id), 1);
+    assert_eq!(count_for(&v2), 1);
+}
 
-    // Actually, let's test the cap properly: after the first milestone,
-    // both v1 and v2 have count 1 for player_id. The cap is 1, so
-    // neither can approve a second milestone for the same player.
-    let evidence3 = cid(&env, 302);
-    let r4 = attest_as(&env, &client, &v2, player_id, &description, &evidence3);
-    assert_eq!(
-        r4,
-        AttestationStatus::Pending(2),
-        "v2 votes first on the second milestone"
-    );
-    let r5 = attest_as(&env, &client, &v1, player_id, &description, &evidence3);
-    // v1 is at the cap (1 milestone for player_id), so the commit should fail
-    // when v1 is the threshold-reaching vote. But v2 already voted, so
-    // this is a 2-of-2 threshold with v1 as the second voter.
-    // Actually wait - the cap check happens at commit time for ALL attestors.
-    // So when v1 votes and threshold is reached, the commit will check
-    // v1's count and find it at the cap (1), rejecting the commit.
-    // But v2's count is also at 1...
-    // Hmm, let me reconsider. The cap is MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR.
-    // After the first milestone, both v1 and v2 have count 1 for player_id.
-    // The cap is 1 (default). So neither can be an attestor for a second
-    // milestone for the same player. The second vote by v2 should be rejected
-    // at commit time because v2 is also at the cap.
-    // But wait - v2 already voted on the first milestone, so v2's count is 1.
-    // When v2 votes on the second milestone, v2's count would become 2,
-    // which exceeds the cap of 1. So the commit should fail.
-    // Actually, let me re-read the cap check logic:
-    // "Check per-validator limit for every attestor before any storage is mutated."
-    // So when v2 votes on the second milestone, v2's count is already 1 (from
-    // the first milestone), and the cap is 1, so v2's count (1) >= cap (1),
-    // which means the commit should fail with MilestoneLimitExceeded.
-    // But wait, the cap check is vp_count >= MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR.
-    // If vp_count is 1 and the cap is 1, then 1 >= 1 is true, so it rejects.
-    // This means the second milestone for the same player cannot be attested
-    // by any validator that already attested the first milestone.
-    // This is the expected behavior - the cap is per-validator per-player.
+#[contracttype]
+enum RegStubKey {
+    Owner,
+}
+
+/// Registration stand-in for `dispute_milestone`'s wallet↔player check: every
+/// `player_id` belongs to the wallet stored at init time.
+#[contract]
+struct RegStub;
+
+#[contractimpl]
+impl RegStub {
+    pub fn initialize(env: Env, owner: Address) {
+        env.storage().persistent().set(&RegStubKey::Owner, &owner);
+    }
+
+    pub fn get_player(env: Env, player_id: u64) -> RegPlayerProfile {
+        let wallet: Address = env.storage().persistent().get(&RegStubKey::Owner).unwrap();
+        RegPlayerProfile {
+            player_id,
+            wallet,
+            vitals: RegPlayerVitals {
+                age: 20,
+                position: String::from_str(&env, "ST"),
+                region: String::from_str(&env, "FR"),
+                nationality: String::from_str(&env, "ES"),
+            },
+            ipfs_hashes: soroban_sdk::Vec::new(&env),
+            level: ProgressLevel::Unverified,
+            registered_at: 0,
+            updated_at: 0,
+        }
+    }
 }
 
 /// `cast_dispute_vote` rejects any attestor of the disputed milestone with
-/// `ConflictOfInterest`.
+/// `ConflictOfInterest` — including a co-attestor from a different academy
+/// than the primary approver, so the rejection is not just the affiliation
+/// rule.
 #[test]
 fn dispute_rejects_co_attestor_with_conflict_of_interest() {
     let (env, client, _admin) = setup();
+    let player_wallet = Address::generate(&env);
+    let reg_id = env.register(RegStub, ());
+    RegStubClient::new(&env, &reg_id).initialize(&player_wallet);
+    client.set_registration_contract(&reg_id);
+
+    let register = |affiliation: &str| -> Address {
+        let wallet = Address::generate(&env);
+        client.register_validator(
+            &wallet,
+            &String::from_str(&env, CREDENTIALS),
+            &String::from_str(&env, affiliation),
+            &soroban_sdk::Vec::new(&env),
+        );
+        wallet
+    };
+    let v1 = register("Academy One");
+    let v2 = register("Academy Two");
     client.set_milestone_threshold(&2u32);
 
-    let v1 = register_validator(&env, &client);
-    let v2 = register_validator(&env, &client);
     let player_id = 400u64;
     let description = String::from_str(&env, "dispute co-attestor test");
     let evidence = cid(&env, 400);
-
-    // v1 and v2 both attest, threshold reached.
     attest_as(&env, &client, &v1, player_id, &description, &evidence);
     let r2 = attest_as(&env, &client, &v2, player_id, &description, &evidence);
     assert!(matches!(r2, AttestationStatus::Committed(1)));
 
-    // File a dispute on the committed milestone.
+    // File a jury dispute on the committed milestone, one second later so
+    // v1 and v2 pass the registered-before-filing rule (#1375) and the
+    // rejection comes from the co-attestor check.
+    env.ledger().with_mut(|l| l.timestamp += 1);
     env.mock_all_auths();
     client.dispute_milestone(
-        &1u64, // admin
+        &player_wallet,
         &player_id,
         &1u32,
         &String::from_str(&env, "dispute reason"),
         &100u32, // impact_score >= jury threshold
     );
 
-    // v1 (a co-attestor) must be rejected with ConflictOfInterest.
-    scope_auth_to(&env, &client, &v1, player_id, &description, &evidence);
-    let vote_result = client.try_cast_dispute_vote(&v1, &player_id, &1u32, true);
-    assert_eq!(
-        vote_result,
-        Err(Ok(VerificationError::ConflictOfInterest)),
-        "co-attestor v1 must be rejected with ConflictOfInterest"
-    );
-
-    // v2 (also a co-attestor) must also be rejected.
-    scope_auth_to(&env, &client, &v2, player_id, &description, &evidence);
-    let vote_result2 = client.try_cast_dispute_vote(&v2, &player_id, &1u32, true);
-    assert_eq!(
-        vote_result2,
-        Err(Ok(VerificationError::ConflictOfInterest)),
-        "co-attestor v2 must be rejected with ConflictOfInterest"
-    );
+    for attestor in [&v1, &v2] {
+        assert_eq!(
+            client.try_cast_dispute_vote(attestor, &player_id, &1u32, &true),
+            Err(Ok(VerificationError::ConflictOfInterest)),
+            "attestor {attestor:?} must be rejected with ConflictOfInterest"
+        );
+    }
 }

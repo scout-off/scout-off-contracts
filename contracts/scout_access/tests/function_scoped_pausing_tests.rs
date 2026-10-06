@@ -9,6 +9,8 @@
 //! - Interaction between whole-contract pause and function-scoped pause
 //! - health() reflecting the function-scoped pause state
 
+mod common;
+
 use scoutchain_scout_access::{
     FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
 };
@@ -64,6 +66,8 @@ fn setup() -> Harness {
     let id = env.register(ScoutAccessContract, ());
     let contract = ScoutAccessContractClient::new(&env, &id);
     contract.initialize(&admin, &xlm, &default_fees());
+    common::wire_registration(&env, Some(&contract), None);
+    common::wire_progress_level_stub(&env, &contract);
 
     Harness {
         env,
@@ -73,10 +77,11 @@ fn setup() -> Harness {
     }
 }
 
-/// Mint XLM and subscribe `scout` to Basic tier.
+/// Mint XLM and subscribe `scout` to Elite tier (Basic has no contact
+/// entitlement since #1357).
 fn subscribe(h: &Harness, scout: &Address) {
-    StellarAssetClient::new(&h.env, &h.xlm).mint(scout, &(BASIC_FEE * 2));
-    h.contract.subscribe(scout, &SubscriptionTier::Basic);
+    StellarAssetClient::new(&h.env, &h.xlm).mint(scout, &(ELITE_FEE * 2));
+    h.contract.subscribe(scout, &SubscriptionTier::Elite);
 }
 
 /// Give an address enough XLM for many operations.
@@ -220,7 +225,7 @@ fn test_subscribe_works_when_pay_to_contact_paused() {
         .expect("subscribed scout should have a subscription");
     assert_eq!(
         sub.tier,
-        SubscriptionTier::Basic,
+        SubscriptionTier::Elite,
         "scout should still be subscribable while pay_to_contact is paused"
     );
 }
@@ -242,7 +247,7 @@ fn test_reads_work_when_pay_to_contact_paused() {
         .expect("subscribed scout should have a subscription");
     assert_eq!(
         sub.tier,
-        SubscriptionTier::Basic,
+        SubscriptionTier::Elite,
         "subscription status should still be readable"
     );
 }

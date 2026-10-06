@@ -11,6 +11,8 @@
 //! matching row in `ci/cpu-cost-budget.md` with a one-line justification in
 //! the PR description explaining why the growth is expected and acceptable.
 
+mod common;
+
 use scoutchain_scout_access::{
     FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
 };
@@ -20,16 +22,18 @@ use soroban_sdk::{
     vec, Address, Env, String,
 };
 
-const SUBSCRIBE_CPU_BUDGET: u64 = 597_410;
+// Re-calibrated after the mandatory registration (#1417) and progress
+// (#1357) cross-contract checks: measured cost plus 20% headroom.
+const SUBSCRIBE_CPU_BUDGET: u64 = 820_000;
 // #619: pay_to_contact budget includes evidence_access_granted event emission
 // (atomically written with every successful pay_to_contact call per
 // docs/EVIDENCE_PRIVACY.md). Budget raised from 777,109 → 810,000 to cover
 // the ~27k instruction increase from the event write.
-const PAY_TO_CONTACT_CPU_BUDGET: u64 = 810_000;
+const PAY_TO_CONTACT_CPU_BUDGET: u64 = 1_150_000;
 // #619: batch_contact_players budget raised from 1,545,146 → 2,350,000 to
 // cover the 5× evidence_access_granted event emissions (one per player)
 // that are now written atomically alongside each contact record.
-const BATCH_CONTACT_PLAYERS_CPU_BUDGET: u64 = 2_350_000;
+const BATCH_CONTACT_PLAYERS_CPU_BUDGET: u64 = 3_215_000;
 // #795: expire_trial_offers is capped at 20 escrows/call — see
 // EXPIRE_TRIAL_OFFERS_MAX_LIMIT in contracts/scout_access/src/lib.rs.
 const EXPIRE_TRIAL_OFFERS_CPU_BUDGET: u64 = 8_614_029;
@@ -61,6 +65,8 @@ fn setup() -> (Env, ScoutAccessContractClient<'static>, Address) {
     let contract_id = env.register(ScoutAccessContract, ());
     let client = ScoutAccessContractClient::new(&env, &contract_id);
     client.initialize(&admin, &xlm, &default_fees());
+    common::wire_registration(&env, Some(&client), None);
+    common::wire_progress_level_stub(&env, &client);
     (env, client, xlm)
 }
 

@@ -11,7 +11,11 @@ use ed25519_dalek::{Signer, SigningKey};
 use scoutchain_verification::{
     MilestoneAttestation, VerificationContract, VerificationContractClient, VerificationError,
 };
-use soroban_sdk::{testutils::Address as _, xdr::ToXdr, Address, Bytes, BytesN, Env, String};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger as _},
+    xdr::ToXdr,
+    Address, Bytes, BytesN, Env, String,
+};
 
 const CREDENTIALS: &str = "UEFA-B-License-2026";
 const ATTESTATION_DOMAIN: &str = "ScoutChain-MilestoneAttestation-v2";
@@ -348,10 +352,12 @@ fn attestation_expired_is_rejected() {
     let sk = signing_key(9);
     register_validator_with_key(&env, &client, &validator, &sk);
 
+    // Start the clock away from 0 so "one second ago" is representable.
+    env.ledger().with_mut(|l| l.timestamp = 1_000_000);
+
     // Craft an attestation whose expires_at is already in the past.
-    let mut attestation = make_attestation(
-        &env, &contract_id, &validator, 1, "expired claim", CID_A, 1,
-    );
+    let mut attestation =
+        make_attestation(&env, &contract_id, &validator, 1, "expired claim", CID_A, 1);
     attestation.expires_at = env.ledger().timestamp() - 1;
     let signature = sign_attestation(&env, &sk, &attestation);
 
@@ -377,7 +383,13 @@ fn attestation_expires_too_far_in_future_is_rejected() {
     register_validator_with_key(&env, &client, &validator, &sk);
 
     let mut attestation = make_attestation(
-        &env, &contract_id, &validator, 1, "far-future claim", CID_B, 1,
+        &env,
+        &contract_id,
+        &validator,
+        1,
+        "far-future claim",
+        CID_B,
+        1,
     );
     // MAX_ATTESTATION_FUTURE_TOLERANCE_SECS is 3_600 (1 hour).
     attestation.expires_at = env.ledger().timestamp() + 4_000;
@@ -399,9 +411,8 @@ fn attestation_within_expiry_tolerance_is_accepted() {
     let sk = signing_key(11);
     register_validator_with_key(&env, &client, &validator, &sk);
 
-    let mut attestation = make_attestation(
-        &env, &contract_id, &validator, 1, "valid expiry", CID_C, 1,
-    );
+    let mut attestation =
+        make_attestation(&env, &contract_id, &validator, 1, "valid expiry", CID_C, 1);
     // Exactly at the tolerance boundary (3_600 seconds) — should be accepted.
     attestation.expires_at = env.ledger().timestamp() + 3_500;
     let signature = sign_attestation(&env, &sk, &attestation);
@@ -420,23 +431,20 @@ fn attestation_nonce_bitmap_allows_out_of_order_within_window() {
     register_validator_with_key(&env, &client, &validator, &sk);
 
     // Submit nonce 2 first (skipping 0 and 1) — within the 256-bit window.
-    let attestation_2 = make_attestation(
-        &env, &contract_id, &validator, 1, "nonce 2 first", CID_A, 2,
-    );
+    let attestation_2 =
+        make_attestation(&env, &contract_id, &validator, 1, "nonce 2 first", CID_A, 2);
     let sig_2 = sign_attestation(&env, &sk, &attestation_2);
     client.submit_attested_milestone(&relayer, &attestation_2, &sig_2);
 
     // Now submit nonce 0 — out of order but within the window.
-    let attestation_0 = make_attestation(
-        &env, &contract_id, &validator, 2, "nonce 0 later", CID_B, 0,
-    );
+    let attestation_0 =
+        make_attestation(&env, &contract_id, &validator, 2, "nonce 0 later", CID_B, 0);
     let sig_0 = sign_attestation(&env, &sk, &attestation_0);
     client.submit_attested_milestone(&relayer, &attestation_0, &sig_0);
 
     // Submit nonce 1 — also out of order, within the window.
-    let attestation_1 = make_attestation(
-        &env, &contract_id, &validator, 3, "nonce 1 later", CID_C, 1,
-    );
+    let attestation_1 =
+        make_attestation(&env, &contract_id, &validator, 3, "nonce 1 later", CID_C, 1);
     let sig_1 = sign_attestation(&env, &sk, &attestation_1);
     client.submit_attested_milestone(&relayer, &attestation_1, &sig_1);
 
@@ -456,17 +464,14 @@ fn attestation_nonce_window_advances_when_far_ahead() {
     register_validator_with_key(&env, &client, &validator, &sk);
 
     // Submit nonce 0.
-    let attestation_0 = make_attestation(
-        &env, &contract_id, &validator, 1, "nonce 0", CID_A, 0,
-    );
+    let attestation_0 = make_attestation(&env, &contract_id, &validator, 1, "nonce 0", CID_A, 0);
     let sig_0 = sign_attestation(&env, &sk, &attestation_0);
     client.submit_attested_milestone(&relayer, &attestation_0, &sig_0);
 
     // Submit nonce 300 — well beyond the 256-bit window. The base should
     // advance to 300, resetting the bitmap.
-    let attestation_300 = make_attestation(
-        &env, &contract_id, &validator, 2, "nonce 300", CID_B, 300,
-    );
+    let attestation_300 =
+        make_attestation(&env, &contract_id, &validator, 2, "nonce 300", CID_B, 300);
     let sig_300 = sign_attestation(&env, &sk, &attestation_300);
     client.submit_attested_milestone(&relayer, &attestation_300, &sig_300);
 
@@ -475,5 +480,4 @@ fn attestation_nonce_window_advances_when_far_ahead() {
     assert_eq!(result, Err(Ok(VerificationError::InvalidNonce)));
 
     assert_eq!(client.get_attestation_nonce(&validator), 300);
-}
 }

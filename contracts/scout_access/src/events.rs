@@ -409,3 +409,19 @@ pub fn contract_upgraded(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>)
         new_wasm_hash.clone(),
     );
 }
+
+/// topics: (event_name, admin)  data: ()
+pub fn migration_window_opened(env: &Env, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, MIGRATION_WINDOW_OPENED), admin.clone()),
+        (),
+    );
+}
+
+/// topics: (event_name, admin)  data: ()
+pub fn migration_window_closed(env: &Env, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, MIGRATION_WINDOW_CLOSED), admin.clone()),
+        (),
+    );
+}

@@ -3,6 +3,7 @@
 //! Covers `admin_seed_milestone` and `admin_seed_dispute` in the verification
 //! contract, plus migration-window management.
 
+use scoutchain_shared_types::testutils::count_events;
 use scoutchain_verification::{
     Milestone, MilestoneDispute, VerificationContract, VerificationContractClient,
     VerificationError,
@@ -73,6 +74,8 @@ fn test_seed_dispute_rejected_when_window_closed() {
         voting_deadline: 0,
         votes_for: 0,
         votes_against: 0,
+        jury_eligibility_cutoff: 0,
+        approver_affiliation: String::from_str(&env, ""),
     };
     let result = client.try_admin_seed_dispute(&1u64, &1u32, &dispute);
     assert_eq!(result, Err(Ok(VerificationError::MigrationNotActive)));
@@ -265,6 +268,8 @@ fn test_seed_dispute_happy_path() {
         voting_deadline: 0,
         votes_for: 0,
         votes_against: 0,
+        jury_eligibility_cutoff: 0,
+        approver_affiliation: String::from_str(&env, ""),
     };
 
     client.admin_seed_dispute(&1u64, &1u32, &dispute);
@@ -297,6 +302,8 @@ fn test_seed_resolved_dispute_does_not_increment_active_count() {
         voting_deadline: 0,
         votes_for: 0,
         votes_against: 0,
+        jury_eligibility_cutoff: 0,
+        approver_affiliation: String::from_str(&env, ""),
     };
 
     client.admin_seed_dispute(&1u64, &1u32, &dispute);
@@ -325,6 +332,8 @@ fn test_identical_dispute_replay_is_noop() {
         voting_deadline: 0,
         votes_for: 0,
         votes_against: 0,
+        jury_eligibility_cutoff: 0,
+        approver_affiliation: String::from_str(&env, ""),
     };
 
     client.admin_seed_dispute(&1u64, &1u32, &dispute);
@@ -355,6 +364,8 @@ fn test_conflicting_dispute_rejected() {
         voting_deadline: 0,
         votes_for: 0,
         votes_against: 0,
+        jury_eligibility_cutoff: 0,
+        approver_affiliation: String::from_str(&env, ""),
     };
     client.admin_seed_dispute(&1u64, &1u32, &dispute);
 
@@ -386,6 +397,8 @@ fn test_seed_dispute_populates_player_disputes_index() {
         voting_deadline: 0,
         votes_for: 0,
         votes_against: 0,
+        jury_eligibility_cutoff: 0,
+        approver_affiliation: String::from_str(&env, ""),
     };
     let d1 = MilestoneDispute {
         player_id: 1,
@@ -402,6 +415,8 @@ fn test_seed_dispute_populates_player_disputes_index() {
         voting_deadline: 0,
         votes_for: 0,
         votes_against: 0,
+        jury_eligibility_cutoff: 0,
+        approver_affiliation: String::from_str(&env, ""),
     };
 
     client.admin_seed_dispute(&1u64, &1u32, &d0);
@@ -446,22 +461,18 @@ fn test_reopening_after_close_fails() {
 #[test]
 fn test_migration_window_events_emitted() {
     let (env, client, _admin) = setup();
-    
-    // Open migration window - should emit event
+
     client.open_migration_window();
-    let events = env.events().all();
-    let open_events = events.filter_by_contract(&client.address).filter(|e| {
-        let topic = e.topic;
-        topic.get_unchecked::<Symbol>(0).to_string() == "migration_window_opened"
-    });
-    assert_eq!(open_events.count(), 1, "migration_window_opened event must be emitted");
-    
-    // Close migration window - should emit event
+    assert_eq!(
+        count_events(&env, "migration_window_opened", Some(&client.address)),
+        1,
+        "migration_window_opened event must be emitted"
+    );
+
     client.close_migration_window();
-    let events = env.events().all();
-    let close_events = events.filter_by_contract(&client.address).filter(|e| {
-        let topic = e.topic;
-        topic.get_unchecked::<Symbol>(0).to_string() == "migration_window_closed"
-    });
-    assert_eq!(close_events.count(), 1, "migration_window_closed event must be emitted");
+    assert_eq!(
+        count_events(&env, "migration_window_closed", Some(&client.address)),
+        1,
+        "migration_window_closed event must be emitted"
+    );
 }

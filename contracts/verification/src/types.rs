@@ -420,12 +420,16 @@ pub enum DataKey {
     ValidatorPlayerMilestoneCount(Address, u64),
     ValidatorVector,
     TotalMilestoneCount,
+    /// Exact platform-wide milestone count as `u64` (#1454). Absent on
+    /// contracts upgraded from earlier versions until the next approval.
+    TotalMilestoneCountU64,
     /// Reserved legacy key for the pre-ring global milestone index. New reads
     /// and writes use `GlobalMilestoneWriteHead` + `GlobalMilestoneSlot(slot)`.
     GlobalMilestoneIndex,
-    /// Monotonic write counter for the ring-buffer global milestone index.
-    /// Stored in instance storage. Value is the total number of entries ever
-    /// written (including evicted ones). O(1) to read and update.
+    /// Write position of the ring-buffer global milestone index, in instance
+    /// storage. Counts up from 0 until the buffer first fills, then stays in
+    /// `[MAX_GLOBAL_MILESTONE_INDEX, 2 * MAX_GLOBAL_MILESTONE_INDEX)` so it can
+    /// never overflow (#1454). `head % MAX` is always the next slot to write.
     GlobalMilestoneWriteHead,
     /// One slot of the ring-buffer global milestone index, stored in
     /// **persistent** storage (not instance) so individual slots have

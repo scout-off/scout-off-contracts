@@ -33,7 +33,7 @@ use soroban_sdk::{
 use scoutchain_shared_types::{
     read_wiring_link, require_admin,
     safe_math::{safe_add_u32, safe_add_u64, safe_sub_u32},
-    validate_cid, write_wiring_link, ProgressLevel,
+    validate_cid, write_wiring_link,
 };
 
 const MAX_CREDENTIALS_LEN: u32 = 256;
@@ -51,9 +51,6 @@ const MAX_VALIDATORS: u32 = 100;
 /// Maximum milestones a single validator may approve for one player.
 const MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR: u32 = 5;
 
-// Bump applied to the admin key on every privileged call, so the admin address
-// cannot lapse out of persistent storage between privileged calls.
-const ADMIN_BUMP_LEDGERS: u32 = 100_000;
 /// Maximum number of milestones flagged per call in a for-cause revocation
 /// cascade sweep.  Keeps per-call CPU cost proportional to this limit rather
 /// than to the validator's total historical approval count.  A validator with
@@ -173,9 +170,6 @@ const ATTESTATION_VOTE_TTL_MARGIN_LEDGERS: u32 = 17_280;
 // The progress contract must be deployed and its address registered via
 // `set_progress_contract` before `approve_milestone` can advance levels.
 mod progress_contract {
-    soroban_sdk::contractimport!(
-        file = "fixtures/scoutchain_progress.wasm"
-    );
     soroban_sdk::contractimport!(file = "fixtures/scoutchain_progress.wasm");
 }
 
@@ -284,7 +278,7 @@ impl VerificationContract {
             .persistent()
             .get::<DataKey, Vec<String>>(&DataKey::PlayerAffiliations(player_id))
             .unwrap_or_else(|| Vec::new(&env))
-            .len() as u32
+            .len()
     }
 
     pub fn set_diversity_config(
@@ -292,7 +286,8 @@ impl VerificationContract {
         required_distinct_affiliations: u32,
         starting_milestone_index: u32,
     ) -> Result<(), VerificationError> {
-        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        let old = Self::get_diversity_config(env.clone());
         let config = DiversityConfig {
             required_distinct_affiliations,
             starting_milestone_index,
@@ -300,6 +295,7 @@ impl VerificationContract {
         env.storage()
             .persistent()
             .set(&DataKey::DiversityConfig, &config);
+        events::diversity_config_updated(&env, &admin, &old, &config);
         Ok(())
     }
 
@@ -431,10 +427,12 @@ impl VerificationContract {
     /// The check applies only to Level-2 and Level-3 advances; Level-0 → 1
     /// (identity verification) is not gated by region diversity.
     pub fn set_min_region_quorum(env: Env, min_regions: u32) -> Result<(), VerificationError> {
-        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        let old = Self::get_min_region_quorum(env.clone());
         env.storage()
             .instance()
             .set(&DataKey::MinRegionQuorum, &min_regions);
+        events::min_region_quorum_updated(&env, &admin, old, min_regions);
         Ok(())
     }
 
@@ -514,13 +512,15 @@ impl VerificationContract {
     /// claim that does not reach threshold within this window expires — see
     /// `attest_milestone`.
     pub fn set_voting_window_secs(env: Env, window_secs: u64) -> Result<(), VerificationError> {
-        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         if !(MIN_VOTING_WINDOW_SECS..=MAX_VOTING_WINDOW_SECS).contains(&window_secs) {
             return Err(VerificationError::InvalidInput);
         }
+        let old = Self::get_voting_window_secs(env.clone());
         env.storage()
             .instance()
             .set(&DataKey::AttestationVotingWindowSecs, &window_secs);
+        events::voting_window_secs_updated(&env, &admin, old, window_secs);
         Ok(())
     }
 
@@ -575,8 +575,9 @@ impl VerificationContract {
             return Err(VerificationError::ValidatorAlreadyRegistered);
         }
 
-        let validator = Validator {
-            wallet: wallet.clone(),
+        Self::write_validator(
+            &env,
+            wallet,
             credentials,
             affiliation,
             specializations,
@@ -597,6 +598,11 @@ impl VerificationContract {
             .instance()
             .get(&DataKey::ActiveValidatorCount)
             .unwrap_or(0u32);
+        let total_count: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalValidatorCount)
+            .unwrap_or(0u32);
         env.storage().instance().set(
             &DataKey::ActiveValidatorCount,
             &safe_add_u32(active_count, 1).map_err(|_| VerificationError::Overflow)?,
@@ -612,10 +618,12 @@ impl VerificationContract {
     /// Set the per-wallet validator registration cooldown in seconds (admin only).
     /// Pass `0` to disable the cooldown entirely.
     pub fn set_reg_cooldown(env: Env, cooldown_secs: u64) -> Result<(), VerificationError> {
-        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        let old = Self::get_reg_cooldown(env.clone());
         env.storage()
             .instance()
             .set(&DataKey::RegCooldownSecs(0), &cooldown_secs);
+        events::reg_cooldown_updated(&env, &admin, old, cooldown_secs);
         Ok(())
     }
 
@@ -707,22 +715,32 @@ impl VerificationContract {
             .persistent()
             .get(&DataKey::Validator(wallet.clone()))
             .ok_or(VerificationError::ValidatorNotFound)?;
-        let was_active = validator.active;
+        // #1393: re-revoking an inactive validator is only allowed as a
+        // Routine -> ForCause escalation.
+        if !validator.active {
+            return Self::handle_inactive_re_revoke(
+                env,
+                admin,
+                wallet,
+                severity.clone(),
+                reason.clone(),
+            );
+        }
         validator.active = false;
         env.storage()
             .persistent()
             .set(&DataKey::Validator(wallet.clone()), &validator);
 
-        if was_active {
+        let new_active_count = {
             let count: u32 = env
                 .storage()
                 .instance()
                 .get(&DataKey::ActiveValidatorCount)
                 .unwrap_or(0u32);
-            env.storage().instance().set(
-                &DataKey::ActiveValidatorCount,
-                &safe_sub_u32(count, 1).map_err(|_| VerificationError::Overflow)?,
-            );
+            let new_count = safe_sub_u32(count, 1).map_err(|_| VerificationError::Overflow)?;
+            env.storage()
+                .instance()
+                .set(&DataKey::ActiveValidatorCount, &new_count);
             // #1391: decrement TotalValidatorCount (mirrors ValidatorVector.len())
             // so the cap check in register_validator stays consistent. The counter
             // was only ever incremented on registration, so revoking must undo it.
@@ -735,7 +753,8 @@ impl VerificationContract {
                 &DataKey::TotalValidatorCount,
                 &safe_sub_u32(total, 1).map_err(|_| VerificationError::Overflow)?,
             );
-        }
+            new_count
+        };
 
         // Retroactively invalidate this validator's contribution to every
         // still-open (sub-threshold) pending attestation claim.
@@ -777,6 +796,13 @@ impl VerificationContract {
                 // Start (or complete) the bounded cascade sweep.
                 Self::run_cascade_sweep(env, wallet, 0)?;
             }
+        }
+
+        // #1395: warn operators when the active set can no longer reach the
+        // k-of-n threshold.
+        let threshold = Self::get_milestone_threshold(env.clone());
+        if new_active_count < threshold {
+            events::milestone_threshold_unreachable(env, admin, threshold, new_active_count);
         }
 
         Ok(())
@@ -1085,13 +1111,6 @@ impl VerificationContract {
         if safe_add_u32(current_count, batch_len).map_err(|_| VerificationError::Overflow)?
             > MAX_VALIDATORS
         {
-            let progress_client = progress_contract::Client::new(&env, &progress_addr);
-            // AlreadyAtMaxLevel (6) is acceptable — milestone still recorded.
-            // Any other error propagates as ProgressCallFailed.
-            match progress_client.try_advance_level(&validator_wallet, &player_id, &next_index) {
-                Ok(_) => {}
-                Err(Ok(progress_contract::ProgressError::AlreadyAtMaxLevel)) => {}
-                Err(_) => return Err(VerificationError::ProgressCallFailed),
             return Err(VerificationError::ValidatorCapReached);
         }
 
@@ -1139,29 +1158,16 @@ impl VerificationContract {
 
         for i in 0..entries.len() {
             let (wallet, credentials, affiliation, specializations) = entries.get(i).unwrap();
-            // NOTE: the redundant affiliation length check that was previously
-            // duplicated here has been removed; the validation pass above
-            // already enforces this constraint before any state is mutated.
-            let validator = Validator {
-                wallet: wallet.clone(),
-                credentials: credentials.clone(),
-                affiliation: affiliation.clone(),
-                registered_at: env.ledger().timestamp(),
-                active: true,
-                specializations: specializations.clone(),
-            };
-            env.storage()
-                .persistent()
-                .set(&DataKey::Validator(wallet.clone()), &validator);
-            // Keep-alive: extend TTL for validator records.
-            env.storage().persistent().extend_ttl(
-                &DataKey::Validator(wallet.clone()),
-                PERSISTENT_TTL_MIN,
-                PERSISTENT_TTL_MAX,
-            );
-            validator_vector.push_back(wallet.clone());
-
-            events::validator_registered(&env, &wallet, &validator.credentials);
+            // Shared with `register_validator`, so the batch path also records
+            // the per-wallet registration cooldown (#1392).
+            Self::write_validator(
+                &env,
+                wallet,
+                credentials,
+                affiliation,
+                specializations,
+                &mut validator_vector,
+            )?;
         }
 
         // Write both counters once for the entire batch.
@@ -1608,10 +1614,9 @@ impl VerificationContract {
             player_id,
             description,
             evidence_hash,
-            vec![validator_wallet],
+            Vec::from_array(&env, [validator_wallet.clone()]),
         )
     }
-
 
     /// Cast one independent, asynchronous vote toward a k-of-n threshold
     /// milestone claim.
@@ -1794,7 +1799,7 @@ impl VerificationContract {
                 player_id,
                 claim.description.clone(),
                 evidence_hash.clone(),
-                claim.attestors.clone(),
+                claim.voters.clone(),
             )?;
             Ok(AttestationStatus::Committed(index))
         } else {
@@ -1888,7 +1893,6 @@ impl VerificationContract {
             _ => false,
         }
     }
-
 
     /// Permissionless cleanup for an abandoned / expired pending claim
     /// (issue #1398). Deletes the claim and every `PendingMilestoneVote`
@@ -1993,9 +1997,9 @@ impl VerificationContract {
         );
         env.storage()
             .persistent()
-            .set(&DataKey::AttestationKeyOwner(public_key), &wallet);
+            .set(&DataKey::AttestationKeyOwner(public_key.clone()), &wallet);
         env.storage().persistent().extend_ttl(
-            &DataKey::AttestationKeyOwner(public_key),
+            &DataKey::AttestationKeyOwner(public_key.clone()),
             PERSISTENT_TTL_MIN,
             PERSISTENT_TTL_MAX,
         );
@@ -2110,11 +2114,7 @@ impl VerificationContract {
         let base_key = DataKey::AttestationNonceBase(validator_wallet.clone());
         let bitmap_key = DataKey::AttestationNonceBitmap(validator_wallet.clone());
 
-        let mut base: u64 = env
-            .storage()
-            .persistent()
-            .get(&base_key)
-            .unwrap_or(0u64);
+        let mut base: u64 = env.storage().persistent().get(&base_key).unwrap_or(0u64);
 
         let mut bitmap: Bytes = env
             .storage()
@@ -2138,10 +2138,7 @@ impl VerificationContract {
         let byte_index = bit_index / 8;
         let bit_in_byte = bit_index % 8;
 
-        let byte = match bitmap.get(byte_index) {
-            Some(b) => b,
-            None => 0u8,
-        };
+        let byte = bitmap.get(byte_index).unwrap_or_default();
         let mask = 1u8 << bit_in_byte;
 
         if byte & mask != 0 {
@@ -2159,22 +2156,18 @@ impl VerificationContract {
             attestation.player_id,
             attestation.description.clone(),
             attestation.evidence_hash.clone(),
-            vec![validator_wallet],
+            Vec::from_array(&env, [validator_wallet.clone()]),
         )?;
 
         // Persist the bitmap nonce state after successful commit.
         env.storage().persistent().set(&base_key, &base);
-        env.storage().persistent().extend_ttl(
-            &base_key,
-            PERSISTENT_TTL_MIN,
-            PERSISTENT_TTL_MAX,
-        );
+        env.storage()
+            .persistent()
+            .extend_ttl(&base_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
         env.storage().persistent().set(&bitmap_key, &bitmap);
-        env.storage().persistent().extend_ttl(
-            &bitmap_key,
-            PERSISTENT_TTL_MIN,
-            PERSISTENT_TTL_MAX,
-        );
+        env.storage()
+            .persistent()
+            .extend_ttl(&bitmap_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
 
         Ok(index)
     }
@@ -2268,15 +2261,11 @@ impl VerificationContract {
     /// empty vec. For single-validator `approve_milestone` calls the
     /// vec contains exactly one entry (the primary validator). For
     /// threshold-mode `attest_milestone` the vec contains all k attestors.
-    pub fn get_milestone_attestors(
-        env: Env,
-        player_id: u64,
-        milestone_index: u32,
-    ) -> Vec<Address> {
+    pub fn get_milestone_attestors(env: Env, player_id: u64, milestone_index: u32) -> Vec<Address> {
         env.storage()
             .persistent()
             .get(&DataKey::MilestoneAttestors(player_id, milestone_index))
-            .unwrap_or_else(|| Vec::new(env))
+            .unwrap_or_else(|| Vec::new(&env))
     }
 
     /// Return all milestones for a player with `approved_at >= since_timestamp`.
@@ -2350,11 +2339,21 @@ impl VerificationContract {
             .unwrap_or(0u32)
     }
 
+    /// Platform-wide milestone count as a `u32`. Saturates at `u32::MAX`;
+    /// use [`get_total_milestone_count_u64`](Self::get_total_milestone_count_u64)
+    /// for the exact value.
     pub fn get_total_milestone_count(env: Env) -> u32 {
         env.storage()
             .instance()
             .get(&DataKey::TotalMilestoneCount)
             .unwrap_or(0u32)
+    }
+
+    /// Exact platform-wide milestone count (#1454). Contracts upgraded from a
+    /// version without the u64 counter report the legacy u32 count until the
+    /// next approval seeds the u64 key from it.
+    pub fn get_total_milestone_count_u64(env: Env) -> u64 {
+        Self::read_total_milestone_count_u64(&env)
     }
 
     pub fn get_active_disputes_count(env: Env) -> u32 {
@@ -2387,7 +2386,7 @@ impl VerificationContract {
 
         let total = open_index.len();
         let cap = if limit == 0 { 1 } else { limit.min(50) };
-        let mut page: Vec<(u64, u32)> = Vec::new(&env);
+        let mut page: Vec<(u64, u32, u32)> = Vec::new(&env);
         let mut i = offset;
         while i < total && page.len() < cap {
             page.push_back(open_index.get(i).unwrap());
@@ -2418,9 +2417,10 @@ impl VerificationContract {
         // ── Ring-buffer read ──────────────────────────────────────────────────
         //
         // State layout:
-        //   GlobalMilestoneWriteHead  (instance, u32) — monotonic count of all
-        //     writes ever; may exceed MAX_GLOBAL_MILESTONE_INDEX once the buffer
-        //     has cycled.
+        //   GlobalMilestoneWriteHead  (instance, u32) — counts writes until the
+        //     buffer first fills, then stays in [CAP, 2*CAP) (see
+        //     `push_global_milestone`); only `head % CAP` and `head >= CAP`
+        //     are meaningful.
         //   GlobalMilestoneSlot(slot) (persistent, GlobalMilestoneEntry) — one
         //     live entry at slot = write_index % MAX_GLOBAL_MILESTONE_INDEX.
         //
@@ -2807,7 +2807,12 @@ impl VerificationContract {
     pub fn open_migration_window(env: Env) -> Result<(), VerificationError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         Self::require_initialized(&env)?;
-        if env.storage().instance().get::<DataKey, bool>(&DataKey::MigrationWindowSealed).unwrap_or(false) {
+        if env
+            .storage()
+            .instance()
+            .get::<DataKey, bool>(&DataKey::MigrationWindowSealed)
+            .unwrap_or(false)
+        {
             return Err(VerificationError::MigrationWindowSealed);
         }
         env.storage()
@@ -2952,10 +2957,7 @@ impl VerificationContract {
             .extend_ttl(&counter_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
 
         // ── Increment TotalMilestoneCount (instance storage) ───────────────────
-        let total_key = DataKey::TotalMilestoneCount;
-        let total: u32 = env.storage().instance().get(&total_key).unwrap_or(0u32);
-        let new_total = safe_add_u32(total, 1).map_err(|_| VerificationError::Overflow)?;
-        env.storage().instance().set(&total_key, &new_total);
+        Self::bump_total_milestone_count(&env);
 
         // ── Increment ValidatorMilestoneCount(validator) ──────────────────────
         let vmc_key = DataKey::ValidatorMilestoneCount(validator.clone());
@@ -2980,25 +2982,7 @@ impl VerificationContract {
         // read write_head, compute slot, write slot entry, increment write_head.
         // Because admin_seed_milestone must be idempotent and seeds in index
         // order (validated above), each seed call is a fresh sequential write.
-        let wh_key = DataKey::GlobalMilestoneWriteHead;
-        let write_head: u32 = env.storage().instance().get(&wh_key).unwrap_or(0u32);
-        let slot = write_head % MAX_GLOBAL_MILESTONE_INDEX;
-        env.storage().persistent().set(
-            &DataKey::GlobalMilestoneSlot(slot),
-            &GlobalMilestoneEntry {
-                player_id,
-                milestone_index,
-            },
-        );
-        env.storage().persistent().extend_ttl(
-            &DataKey::GlobalMilestoneSlot(slot),
-            PERSISTENT_TTL_MIN,
-            PERSISTENT_TTL_MAX,
-        );
-        env.storage().instance().set(
-            &wh_key,
-            &(safe_add_u32(write_head, 1).map_err(|_| VerificationError::Overflow)?),
-        );
+        Self::push_global_milestone(&env, player_id, milestone_index);
 
         // ── Update ValidatorMilestones(validator) ─────────────────────────────
         let vm_key = DataKey::ValidatorMilestones(validator.clone());
@@ -3095,9 +3079,11 @@ impl VerificationContract {
         let prev_round: u32 = env.storage().persistent().get(&round_key).unwrap_or(0);
         if !env.storage().persistent().has(&round_key) || round >= prev_round {
             env.storage().persistent().set(&round_key, &round);
-            env.storage()
-                .persistent()
-                .extend_ttl(&round_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+            env.storage().persistent().extend_ttl(
+                &round_key,
+                PERSISTENT_TTL_MIN,
+                PERSISTENT_TTL_MAX,
+            );
         }
 
         let pd_key = DataKey::PlayerDisputes(player_id);
@@ -3121,9 +3107,9 @@ impl VerificationContract {
                 .persistent()
                 .get(&odi_key)
                 .unwrap_or_else(|| Vec::new(&env));
-            let already_open = odi.iter().any(|(pid, midx, r)| {
-                pid == player_id && midx == milestone_index && r == round
-            });
+            let already_open = odi
+                .iter()
+                .any(|(pid, midx, r)| pid == player_id && midx == milestone_index && r == round);
             if !already_open {
                 odi.push_back((player_id, milestone_index, round));
                 env.storage().persistent().set(&odi_key, &odi);
@@ -3228,41 +3214,43 @@ impl VerificationContract {
             return Err(VerificationError::Unauthorized);
         }
 
-        // Check if dispute already exists
-        let dispute_key = DataKey::MilestoneDispute(player_id, milestone_index);
-        if env.storage().persistent().has(&dispute_key) {
-            return Err(VerificationError::DisputeAlreadyExists);
-        }
-
         let round_key = DataKey::DisputeRound(player_id, milestone_index);
         let now = env.ledger().timestamp();
-        let new_round = if let Some(cur_round) = env
-            .storage()
-            .persistent()
-            .get::<DataKey, u32>(&round_key)
-        {
-            let existing: MilestoneDispute = env
-                .storage()
-                .persistent()
-                .get(&DataKey::MilestoneDispute(player_id, milestone_index, cur_round))
-                .ok_or(VerificationError::MilestoneNotFound)?;
-            if !existing.resolved {
-                return Err(VerificationError::DisputeAlreadyOpen);
-            }
-            let next = safe_add_u32(cur_round, 1).map_err(|_| VerificationError::Overflow)?;
-            if next >= MAX_DISPUTE_ROUNDS {
-                return Err(VerificationError::MaxDisputeRoundsReached);
-            }
-            if now < existing
-                .resolved_at
-                .saturating_add(DISPUTE_REOPEN_COOLDOWN_SECS)
-            {
-                return Err(VerificationError::DisputeCooldown);
-            }
-            next
-        } else {
-            0u32
-        };
+        let new_round =
+            if let Some(cur_round) = env.storage().persistent().get::<DataKey, u32>(&round_key) {
+                let existing: MilestoneDispute = env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::MilestoneDispute(
+                        player_id,
+                        milestone_index,
+                        cur_round,
+                    ))
+                    .ok_or(VerificationError::MilestoneNotFound)?;
+                if !existing.resolved {
+                    return Err(VerificationError::DisputeAlreadyOpen);
+                }
+                let next = safe_add_u32(cur_round, 1).map_err(|_| VerificationError::Overflow)?;
+                if next >= MAX_DISPUTE_ROUNDS {
+                    return Err(VerificationError::MaxDisputeRoundsReached);
+                }
+                if now
+                    < existing
+                        .resolved_at
+                        .saturating_add(DISPUTE_REOPEN_COOLDOWN_SECS)
+                {
+                    return Err(VerificationError::DisputeCooldown);
+                }
+                next
+            } else {
+                0u32
+            };
+
+        let poc_key = DataKey::PlayerOpenDisputeCount(player_id);
+        let open_count: u32 = env.storage().persistent().get(&poc_key).unwrap_or(0u32);
+        if open_count >= MAX_OPEN_DISPUTES_PER_PLAYER {
+            return Err(VerificationError::TooManyOpenDisputes);
+        }
 
         let jury_config = Self::get_jury_config_internal(&env);
         let jury_required = impact_score >= jury_config.impact_threshold;
@@ -3311,6 +3299,12 @@ impl VerificationContract {
         env.storage()
             .persistent()
             .extend_ttl(&dispute_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+
+        // Point the latest-round pointer at the round just filed (#1396).
+        env.storage().persistent().set(&round_key, &new_round);
+        env.storage()
+            .persistent()
+            .extend_ttl(&round_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
 
         let player_disputes_key = DataKey::PlayerDisputes(player_id);
         let mut player_disputes: Vec<u32> = env
@@ -3503,7 +3497,7 @@ impl VerificationContract {
         Self::require_initialized(&env)?;
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
 
-        if quorum < 1 || quorum > MAX_VALIDATORS {
+        if !(1..=MAX_VALIDATORS).contains(&quorum) {
             return Err(VerificationError::InvalidInput);
         }
         let active_count: u32 = env
@@ -3619,11 +3613,9 @@ impl VerificationContract {
             .persistent()
             .get(&DataKey::Milestone(player_id, milestone_index))
             .ok_or(VerificationError::MilestoneNotFound)?;
-        let attestors: Vec<Address> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::MilestoneAttestors(player_id, milestone_index))
-            .unwrap_or_else(|| Vec::new(env));
+        // Primary approver plus any co-attestors; milestones committed before
+        // `MilestoneAttestors` existed only have the primary.
+        let attestors = Self::milestone_flag_wallets(&env, player_id, milestone_index, &milestone);
         if attestors.contains(&validator) {
             return Err(VerificationError::ConflictOfInterest);
         }
@@ -3825,7 +3817,11 @@ impl VerificationContract {
             .ok_or(VerificationError::MilestoneNotFound)?;
         env.storage()
             .persistent()
-            .get(&DataKey::MilestoneDispute(player_id, milestone_index, round))
+            .get(&DataKey::MilestoneDispute(
+                player_id,
+                milestone_index,
+                round,
+            ))
             .ok_or(VerificationError::MilestoneNotFound)
     }
 
@@ -3871,46 +3867,33 @@ impl VerificationContract {
         // Check cascade pages for the primary validator AND all
         // co-attestors so that a ForCause revocation of any
         // co-attestor is detected.
-        let attestors: Vec<Address> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::MilestoneAttestors(player_id, milestone_index))
-            .unwrap_or_else(|| Vec::new(&env));
+        let wallets_to_check =
+            Self::milestone_flag_wallets(&env, player_id, milestone_index, &milestone);
 
-        // Build the set of wallets to check: the primary validator
-        // plus all co-attestors.
-        let mut wallets_to_check: Vec<Address> = Vec::new(&env);
-        wallets_to_check.push_back(milestone.validator.clone());
-        for i in 0..attestors.len() {
-            let a = attestors.get(i).unwrap();
-            if a != &milestone.validator && !wallets_to_check.contains(a) {
-                wallets_to_check.push_back(a.clone());
-            }
-        }
-
-        for i in 0..wallets_to_check.len() {
-            let wallet = wallets_to_check.get(i).unwrap();
+        for w in 0..wallets_to_check.len() {
+            let wallet = wallets_to_check.get(w).unwrap();
             let count: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::MilestonePendingReReviewCount(wallet.clone()))
-            .unwrap_or(0);
-        let page_count = count.div_ceil(MILESTONE_FLAG_PAGE_SIZE);
-        for page_index in 0..page_count {
-            if let Some(page) = env
                 .storage()
                 .persistent()
-                .get::<DataKey, Vec<MilestoneRef>>(&DataKey::MilestonePendingReReviewPage(
-                    wallet.clone(),
-                    page_index,
-                ))
-            {
-                for i in 0..page.len() {
-                    let reference = page.get(i).unwrap();
-                    if reference.player_id == player_id
-                        && reference.milestone_index == milestone_index
-                    {
-                        return true;
+                .get(&DataKey::MilestonePendingReReviewCount(wallet.clone()))
+                .unwrap_or(0);
+            let page_count = count.div_ceil(MILESTONE_FLAG_PAGE_SIZE);
+            for page_index in 0..page_count {
+                if let Some(page) = env
+                    .storage()
+                    .persistent()
+                    .get::<DataKey, Vec<MilestoneRef>>(&DataKey::MilestonePendingReReviewPage(
+                        wallet.clone(),
+                        page_index,
+                    ))
+                {
+                    for i in 0..page.len() {
+                        let reference = page.get(i).unwrap();
+                        if reference.player_id == player_id
+                            && reference.milestone_index == milestone_index
+                        {
+                            return true;
+                        }
                     }
                 }
             }
@@ -3970,16 +3953,14 @@ impl VerificationContract {
             .persistent()
             .get(&DataKey::Milestone(player_id, milestone_index))
             .ok_or(VerificationError::MilestoneNotFound)?;
-        let wallet = milestone.validator;
-        let count_key = DataKey::MilestonePendingReReviewCount(wallet.clone());
-        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
-        let page_count = count.div_ceil(MILESTONE_FLAG_PAGE_SIZE);
+        let wallets_to_check =
+            Self::milestone_flag_wallets(&env, player_id, milestone_index, &milestone);
         let mut cleared = false;
         for i in 0..wallets_to_check.len() {
             let wallet = wallets_to_check.get(i).unwrap();
             let count_key = DataKey::MilestonePendingReReviewCount(wallet.clone());
             let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
-            let page_count = count.div_ceil(50);
+            let page_count = count.div_ceil(MILESTONE_FLAG_PAGE_SIZE);
             for page_index in 0..page_count {
                 let page_key = DataKey::MilestonePendingReReviewPage(wallet.clone(), page_index);
                 let page: Vec<MilestoneRef> = env
@@ -4009,9 +3990,11 @@ impl VerificationContract {
                     env.storage()
                         .persistent()
                         .set(&count_key, &count.saturating_sub(1));
-                    env.storage()
-                        .persistent()
-                        .extend_ttl(&count_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+                    env.storage().persistent().extend_ttl(
+                        &count_key,
+                        PERSISTENT_TTL_MIN,
+                        PERSISTENT_TTL_MAX,
+                    );
                     break;
                 }
             }
@@ -4162,6 +4145,93 @@ impl VerificationContract {
     // -------------------------------------------------------------------------
 
     #[inline(always)]
+    /// Wallets whose re-review pages may hold a flag for this milestone: the
+    /// primary validator followed by any distinct co-attestors.
+    fn milestone_flag_wallets(
+        env: &Env,
+        player_id: u64,
+        milestone_index: u32,
+        milestone: &Milestone,
+    ) -> Vec<Address> {
+        let attestors: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MilestoneAttestors(player_id, milestone_index))
+            .unwrap_or_else(|| Vec::new(env));
+        let mut wallets: Vec<Address> = Vec::new(env);
+        wallets.push_back(milestone.validator.clone());
+        for a in attestors.iter() {
+            if !wallets.contains(&a) {
+                wallets.push_back(a);
+            }
+        }
+        wallets
+    }
+
+    fn read_total_milestone_count_u64(env: &Env) -> u64 {
+        env.storage()
+            .instance()
+            .get::<DataKey, u64>(&DataKey::TotalMilestoneCountU64)
+            .unwrap_or_else(|| {
+                env.storage()
+                    .instance()
+                    .get::<DataKey, u32>(&DataKey::TotalMilestoneCount)
+                    .unwrap_or(0u32) as u64
+            })
+    }
+
+    /// Increment both milestone totals. Neither can fail: the u64 count cannot
+    /// realistically overflow and the legacy u32 count saturates, so a full
+    /// counter can never brick approvals (#1454).
+    fn bump_total_milestone_count(env: &Env) {
+        let total = Self::read_total_milestone_count_u64(env).saturating_add(1);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalMilestoneCountU64, &total);
+        env.storage().instance().set(
+            &DataKey::TotalMilestoneCount,
+            &(total.min(u32::MAX as u64) as u32),
+        );
+    }
+
+    /// O(1) append to the global milestone ring buffer.
+    ///
+    /// Reads one instance key (write_head), writes one persistent slot, and
+    /// writes one instance key. `get_global_milestone_index` only needs
+    /// `head % CAP` and whether `head >= CAP`, so once the buffer has filled
+    /// the head is kept in `[CAP, 2 * CAP)` instead of counting up forever.
+    /// That preserves both properties and means the head can never overflow
+    /// `u32` (#1454).
+    fn push_global_milestone(env: &Env, player_id: u64, milestone_index: u32) {
+        let cap = MAX_GLOBAL_MILESTONE_INDEX;
+        let write_head: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::GlobalMilestoneWriteHead)
+            .unwrap_or(0u32);
+        let slot = write_head % cap;
+        env.storage().persistent().set(
+            &DataKey::GlobalMilestoneSlot(slot),
+            &GlobalMilestoneEntry {
+                player_id,
+                milestone_index,
+            },
+        );
+        env.storage().persistent().extend_ttl(
+            &DataKey::GlobalMilestoneSlot(slot),
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
+        let next_head = if write_head >= cap - 1 {
+            cap + (slot + 1) % cap
+        } else {
+            write_head + 1
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::GlobalMilestoneWriteHead, &next_head);
+    }
+
     fn bump_instance_ttl(env: &Env) {
         const INSTANCE_TTL_MIN: u32 = 100;
         const INSTANCE_TTL_MAX: u32 = 10000;
@@ -4312,97 +4382,6 @@ impl VerificationContract {
         Ok(())
     }
 
-    /// Shared revoke path for `revoke_validator` / `batch_revoke_validators`.
-    fn revoke_validator_internal(
-        env: &Env,
-        admin: &Address,
-        wallet: Address,
-        severity: RevocationSeverity,
-        reason_str: String,
-    ) -> Result<(), VerificationError> {
-        let mut validator: Validator = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Validator(wallet.clone()))
-            .ok_or(VerificationError::ValidatorNotFound)?;
-
-        if !validator.active {
-            return Self::handle_inactive_re_revoke(env, admin, &wallet, severity, reason_str);
-        }
-
-        validator.active = false;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Validator(wallet.clone()), &validator);
-
-        let count: u32 = env
-            .storage()
-            .instance()
-            .get(&DataKey::ActiveValidatorCount)
-            .unwrap_or(0u32);
-        let new_count = safe_sub_u32(count, 1).map_err(|_| VerificationError::Overflow)?;
-        env.storage()
-            .instance()
-            .set(&DataKey::ActiveValidatorCount, &new_count);
-
-        let validator_vector: Vec<Address> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::ValidatorVector)
-            .unwrap_or_else(|| Vec::new(env));
-        let mut new_vector: Vec<Address> = Vec::new(env);
-        for i in 0..validator_vector.len() {
-            let addr = validator_vector.get(i).unwrap();
-            if addr != wallet {
-                new_vector.push_back(addr);
-            }
-        }
-        env.storage()
-            .persistent()
-            .set(&DataKey::ValidatorVector, &new_vector);
-
-        let invalidated = Self::invalidate_pending_votes_for_validator(env, &wallet);
-        if invalidated > 0 {
-            events::validator_pending_votes_invalidated(env, admin, &wallet, invalidated);
-        }
-
-        let record = RevocationRecord {
-            severity: severity.clone(),
-            reason: reason_str.clone(),
-            revoked_at: env.ledger().timestamp(),
-            admin: admin.clone(),
-        };
-        env.storage()
-            .persistent()
-            .set(&DataKey::RevocationRecord(wallet.clone()), &record);
-        env.storage().persistent().extend_ttl(
-            &DataKey::RevocationRecord(wallet.clone()),
-            PERSISTENT_TTL_MIN,
-            PERSISTENT_TTL_MAX,
-        );
-
-        match severity {
-            RevocationSeverity::Routine => {
-                events::validator_revoked(env, admin, &wallet, &reason_str);
-            }
-            RevocationSeverity::ForCause => {
-                env.storage()
-                    .persistent()
-                    .set(&DataKey::ValidatorRevokedForCause(wallet.clone()), &true);
-                events::validator_revoked(env, admin, &wallet, &reason_str);
-                events::validator_revoked_for_cause(env, admin, &wallet, &reason_str);
-                Self::run_cascade_sweep(env, &wallet, 0)?;
-            }
-        }
-
-        let threshold = Self::get_milestone_threshold(env.clone());
-        if new_count < threshold {
-            events::milestone_threshold_unreachable(env, admin, threshold, new_count);
-        }
-
-        Ok(())
-    }
-
     /// Handle revoke of an already-inactive validator (issue #1393).
     fn handle_inactive_re_revoke(
         env: &Env,
@@ -4465,6 +4444,7 @@ impl VerificationContract {
                     .set(&DataKey::ValidatorRevokedForCause(wallet.clone()), &true);
                 events::validator_revoked(env, admin, wallet, &reason_str);
                 events::validator_revoked_for_cause(env, admin, wallet, &reason_str);
+                Self::remove_dispute_votes_for_validator(env, wallet);
 
                 // Never reset an in-progress cascade cursor to 0.
                 let start: u32 = env
@@ -4503,15 +4483,15 @@ impl VerificationContract {
     /// When found, the vote is removed and the running tally on the dispute
     /// record is decremented so `tally_dispute` sees accurate counts.
     fn remove_dispute_votes_for_validator(env: &Env, wallet: &Address) {
-        let open_index: Vec<(u64, u32)> = env
+        let open_index: Vec<(u64, u32, u32)> = env
             .storage()
             .persistent()
             .get(&DataKey::OpenDisputeIndex)
             .unwrap_or_else(|| Vec::new(env));
 
         for i in 0..open_index.len() {
-            let (player_id, milestone_index) = open_index.get(i).unwrap();
-            let vote_key = DataKey::DisputeVote(player_id, milestone_index, wallet.clone());
+            let (player_id, milestone_index, round) = open_index.get(i).unwrap();
+            let vote_key = DataKey::DisputeVote(player_id, milestone_index, round, wallet.clone());
             if let Some(vote) = env
                 .storage()
                 .persistent()
@@ -4519,7 +4499,7 @@ impl VerificationContract {
             {
                 env.storage().persistent().remove(&vote_key);
 
-                let dispute_key = DataKey::MilestoneDispute(player_id, milestone_index);
+                let dispute_key = DataKey::MilestoneDispute(player_id, milestone_index, round);
                 if let Some(mut dispute) = env
                     .storage()
                     .persistent()
@@ -4532,13 +4512,11 @@ impl VerificationContract {
                             dispute.votes_against -= 1;
                         }
                         env.storage().persistent().set(&dispute_key, &dispute);
-                        let count_key = DataKey::DisputeVoteCount(player_id, milestone_index);
-                        let count: u32 =
-                            env.storage().persistent().get(&count_key).unwrap_or(0u32);
+                        let count_key =
+                            DataKey::DisputeVoteCount(player_id, milestone_index, round);
+                        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0u32);
                         if count > 0 {
-                            env.storage()
-                                .persistent()
-                                .set(&count_key, &(count - 1));
+                            env.storage().persistent().set(&count_key, &(count - 1));
                         }
                     }
                 }
@@ -4577,14 +4555,14 @@ impl VerificationContract {
                     // Remove this validator from the attestor list so
                     // the attestor set stays consistent with the
                     // live vote count.
-                    let mut new_attestors: Vec<Address> = Vec::new(env);
-                    for j in 0..claim.attestors.len() {
-                        let a = claim.attestors.get(j).unwrap();
-                        if a != wallet {
-                            new_attestors.push_back(a.clone());
+                    let mut new_voters: Vec<Address> = Vec::new(env);
+                    for j in 0..claim.voters.len() {
+                        let a = claim.voters.get(j).unwrap();
+                        if &a != wallet {
+                            new_voters.push_back(a);
                         }
                     }
-                    claim.attestors = new_attestors;
+                    claim.voters = new_voters;
                     env.storage().persistent().set(&claim_key, &claim);
                     let vote_key = DataKey::PendingMilestoneVote(
                         vref.player_id,
@@ -4624,8 +4602,7 @@ impl VerificationContract {
         let window_ledgers = (window_secs / 5) as u32;
         let ttl = window_ledgers
             .saturating_add(ATTESTATION_VOTE_TTL_MARGIN_LEDGERS)
-            .max(PERSISTENT_TTL_MIN)
-            .min(PERSISTENT_TTL_MAX);
+            .clamp(PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
         (PERSISTENT_TTL_MIN.min(ttl), ttl)
     }
 
@@ -4752,8 +4729,8 @@ impl VerificationContract {
         let mut unique_attestors: Vec<Address> = Vec::new(env);
         for i in 0..attestor_wallets.len() {
             let wallet = attestor_wallets.get(i).unwrap();
-            if !unique_attestors.contains(wallet) {
-                unique_attestors.push_back(wallet.clone());
+            if !unique_attestors.contains(&wallet) {
+                unique_attestors.push_back(wallet);
             }
         }
 
@@ -4815,9 +4792,31 @@ impl VerificationContract {
             PERSISTENT_TTL_MIN,
             PERSISTENT_TTL_MAX,
         );
+
+        let val_key = DataKey::ValidatorMilestoneCount(validator_wallet.clone());
+        let val_count: u32 = env.storage().persistent().get(&val_key).unwrap_or(0u32);
+        env.storage().persistent().set(
+            &val_key,
+            &(safe_add_u32(val_count, 1).map_err(|_| VerificationError::Overflow)?),
+        );
         env.storage()
             .persistent()
-            .extend_ttl(&vp_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+            .extend_ttl(&val_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+
+        // Every attestor counts toward its own per-player cap, matching the
+        // pre-commit check above.
+        for i in 0..unique_attestors.len() {
+            let attestor = unique_attestors.get(i).unwrap();
+            let vp_key = DataKey::ValidatorPlayerMilestoneCount(attestor, player_id);
+            let vp_count: u32 = env.storage().persistent().get(&vp_key).unwrap_or(0u32);
+            env.storage().persistent().set(
+                &vp_key,
+                &(safe_add_u32(vp_count, 1).map_err(|_| VerificationError::Overflow)?),
+            );
+            env.storage()
+                .persistent()
+                .extend_ttl(&vp_key, PERSISTENT_TTL_MAX, PERSISTENT_TTL_MAX);
+        }
 
         let vp_index_key = DataKey::ValidatorPlayers(validator_wallet.clone());
         let mut vp_players: Vec<u64> = env
@@ -4828,65 +4827,39 @@ impl VerificationContract {
         if !vp_players.contains(player_id) {
             vp_players.push_back(player_id);
             env.storage().persistent().set(&vp_index_key, &vp_players);
-            env.storage()
-                .persistent()
-                .extend_ttl(&vp_index_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+            env.storage().persistent().extend_ttl(
+                &vp_index_key,
+                PERSISTENT_TTL_MAX,
+                PERSISTENT_TTL_MAX,
+            );
         }
 
-        let total: u32 = env
-            .storage()
-            .instance()
-            .get(&DataKey::TotalMilestoneCount)
-            .unwrap_or(0u32);
-        env.storage().instance().set(
-            &DataKey::TotalMilestoneCount,
-            &(safe_add_u32(total, 1).map_err(|_| VerificationError::Overflow)?),
-        );
+        Self::bump_total_milestone_count(env);
+        Self::push_global_milestone(env, player_id, next_index);
 
-        // ── O(1) ring-buffer write ────────────────────────────────────────────
-        // Reads one instance key (write_head), writes one persistent slot, and
-        // writes one instance key (write_head+1). Cost is constant regardless
-        // of how many entries currently live in the ring or have ever been
-        // written — there is no Vec to read, shift, or serialize.
-        let write_head: u32 = env
-            .storage()
-            .instance()
-            .get(&DataKey::GlobalMilestoneWriteHead)
-            .unwrap_or(0u32);
-        let slot = write_head % MAX_GLOBAL_MILESTONE_INDEX;
-        env.storage().persistent().set(
-            &DataKey::GlobalMilestoneSlot(slot),
-            &GlobalMilestoneEntry {
+        // Every attestor's approval list gets the milestone, so a for-cause
+        // cascade on any co-attestor reaches it (#1365).
+        for i in 0..unique_attestors.len() {
+            let attestor = unique_attestors.get(i).unwrap();
+            let validator_milestones_key = DataKey::ValidatorMilestones(attestor);
+            let mut validator_milestones: Vec<MilestoneRef> = env
+                .storage()
+                .persistent()
+                .get(&validator_milestones_key)
+                .unwrap_or_else(|| Vec::new(env));
+            validator_milestones.push_back(MilestoneRef {
                 player_id,
                 milestone_index: next_index,
-            },
-        );
-        env.storage().persistent().extend_ttl(
-            &DataKey::GlobalMilestoneSlot(slot),
-            PERSISTENT_TTL_MIN,
-            PERSISTENT_TTL_MAX,
-        );
-        env.storage().instance().set(
-            &DataKey::GlobalMilestoneWriteHead,
-            &(safe_add_u32(write_head, 1).map_err(|_| VerificationError::Overflow)?),
-        );
-
-        let validator_milestones_key = DataKey::ValidatorMilestones(validator_wallet.clone());
-        let mut validator_milestones: Vec<MilestoneRef> = env
-            .storage()
-            .persistent()
-            .get(&validator_milestones_key)
-            .unwrap_or_else(|| Vec::new(env));
-        validator_milestones.push_back(MilestoneRef {
-            player_id,
-            milestone_index: next_index,
-        });
-        env.storage()
-            .persistent()
-            .set(&validator_milestones_key, &validator_milestones);
-        env.storage()
-            .persistent()
-            .extend_ttl(&validator_milestones_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+            });
+            env.storage()
+                .persistent()
+                .set(&validator_milestones_key, &validator_milestones);
+            env.storage().persistent().extend_ttl(
+                &validator_milestones_key,
+                PERSISTENT_TTL_MAX,
+                PERSISTENT_TTL_MAX,
+            );
+        }
 
         events::milestone_approved(
             env,
@@ -4917,9 +4890,16 @@ impl VerificationContract {
                 &DataKey::PlayerAffiliations(player_id),
                 &player_affiliations,
             );
+        }
+        // Keep the diversity record alive on every approval (#1533).
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::PlayerAffiliations(player_id))
+        {
             env.storage().persistent().extend_ttl(
                 &DataKey::PlayerAffiliations(player_id),
-                PERSISTENT_TTL_MIN,
+                PERSISTENT_TTL_MAX,
                 PERSISTENT_TTL_MAX,
             );
         }
@@ -4969,7 +4949,7 @@ impl VerificationContract {
                 }
             }
         } else {
-            let affiliations_count = player_affiliations.len() as u32;
+            let affiliations_count = player_affiliations.len();
             events::level_advancement_deferred(
                 env,
                 player_id,
@@ -5011,6 +4991,7 @@ impl VerificationContract {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use scoutchain_shared_types::ProgressLevel;
     use soroban_sdk::{
         testutils::{Address as _, Events, Ledger, MockAuth, MockAuthInvoke},
         Env, IntoVal, String, Symbol,
@@ -5051,8 +5032,8 @@ mod tests {
                 wallet,
                 vitals: RegPlayerVitals {
                     age: 20,
-                    position: String::from_str(&env, "Forward"),
-                    region: String::from_str(&env, "Europe"),
+                    position: String::from_str(&env, "ST"),
+                    region: String::from_str(&env, "FR"),
                     nationality: String::from_str(&env, "ES"),
                 },
                 ipfs_hashes: Vec::new(&env),
@@ -5668,13 +5649,19 @@ mod tests {
         client.initialize(&admin);
 
         let validator = Address::generate(&env);
-        client.register_validator(&validator, &String::from_str(&env, "UEFA B License"));
+        client.register_validator(
+            &validator,
+            &String::from_str(&env, "UEFA B License"),
+            &String::from_str(&env, "Default Academy"),
+            &Vec::new(&env),
+        );
 
         let description = String::from_str(&env, "Scored 5 goals in Local Cup");
-        let evidence_hash = String::from_str(&env, "QmEvidence123");
+        let evidence_hash = String::from_str(&env, VALID_CID_V0);
         let player_id: u64 = 42;
 
-        let idx = client.approve_milestone(&validator, &player_id, &description, &evidence_hash);
+        let idx =
+            client.approve_milestone(&validator, &player_id, &description, &evidence_hash, &None);
 
         let milestone = client.get_milestone(&player_id, &idx);
         assert_eq!(milestone.player_id, player_id);
@@ -5718,40 +5705,40 @@ mod tests {
 
         let first_key = BytesN::from_array(&env, &[1u8; 32]);
         let second_key = BytesN::from_array(&env, &[2u8; 32]);
-        let events_before_registration = env.events().all().len();
-        client.register_attestation_key(&wallet, &first_key);
 
-        let events = env.events().all();
-        assert_eq!(events.len(), events_before_registration + 1);
+        // `env.events().all()` only holds the most recent invocation's events.
+        client.register_attestation_key(&wallet, &first_key);
         assert_eq!(
-            events.get(events_before_registration).unwrap(),
-            (
-                client.address.clone(),
+            env.events().all(),
+            soroban_sdk::vec![
+                &env,
                 (
-                    Symbol::new(&env, crate::events::ATTESTATION_KEY_REGISTERED),
-                    wallet.clone(),
+                    client.address.clone(),
+                    (
+                        Symbol::new(&env, crate::events::ATTESTATION_KEY_REGISTERED),
+                        wallet.clone(),
+                    )
+                        .into_val(&env),
+                    (first_key.clone(), None::<BytesN<32>>).into_val(&env),
                 )
-                    .into_val(&env),
-                (first_key.clone(), None::<BytesN<32>>).into_val(&env),
-            )
+            ]
         );
 
-        let events_before_rotation = events.len();
         client.register_attestation_key(&wallet, &second_key);
-
-        let events = env.events().all();
-        assert_eq!(events.len(), events_before_rotation + 1);
         assert_eq!(
-            events.get(events_before_rotation).unwrap(),
-            (
-                client.address.clone(),
+            env.events().all(),
+            soroban_sdk::vec![
+                &env,
                 (
-                    Symbol::new(&env, crate::events::ATTESTATION_KEY_REGISTERED),
-                    wallet.clone(),
+                    client.address.clone(),
+                    (
+                        Symbol::new(&env, crate::events::ATTESTATION_KEY_REGISTERED),
+                        wallet.clone(),
+                    )
+                        .into_val(&env),
+                    (second_key, Some(first_key)).into_val(&env),
                 )
-                    .into_val(&env),
-                (second_key, Some(first_key)).into_val(&env),
-            )
+            ]
         );
     }
 
@@ -5773,10 +5760,7 @@ mod tests {
 
         let public_key = BytesN::from_array(&env, &[3u8; 32]);
         let result = client.try_register_attestation_key(&wallet, &public_key);
-        assert!(matches!(
-            result,
-            Ok(Err(VerificationError::ValidatorInactive))
-        ));
+        assert_eq!(result, Err(Ok(VerificationError::ValidatorInactive)));
     }
 
     #[test]
@@ -5943,13 +5927,14 @@ mod tests {
         let validator = Address::generate(&env);
         client.register_validator(
             &validator,
-            &String::from_str(&env, "Coach"),
+            &String::from_str(&env, "Coach License"),
             &String::from_str(&env, "Default Academy"),
             &Vec::new(&env),
         );
 
         // Advance ledger sequence beyond PERSISTENT_TTL_MIN
-        env.ledger().set_sequence_number(env.ledger().sequence() + 600);
+        env.ledger()
+            .set_sequence_number(env.ledger().sequence() + 600);
 
         // Validator should still be accessible (TTL was bumped on register)
         let v = client.get_validator(&validator);
@@ -6450,8 +6435,12 @@ mod tests {
         client.revoke_validator(&v3, &RevocationSeverity::Routine, &reason);
         assert_eq!(client.get_active_validator_count(), 1);
 
-        // Revoking an already-revoked validator should not change the count
-        client.revoke_validator(&v3, &RevocationSeverity::Routine, &reason);
+        // Re-revoking at the same severity is rejected (#1393) and leaves the
+        // count unchanged.
+        assert_eq!(
+            client.try_revoke_validator(&v3, &RevocationSeverity::Routine, &reason),
+            Err(Ok(VerificationError::ValidatorAlreadyRevoked))
+        );
         assert_eq!(client.get_active_validator_count(), 1);
     }
 
@@ -6562,21 +6551,24 @@ mod tests {
         assert_eq!(client.get_validator_count(), 3);
         assert_eq!(client.get_validators().len(), 3);
 
-        // Revoke some validators - total count should remain 3, active count decreases
+        // Revoking frees a registry slot (#1391): the validator count tracks
+        // the live registry, so it drops together with the active count.
         let reason: Option<String> = None;
         client.revoke_validator(&v2, &RevocationSeverity::Routine, &reason);
-        assert_eq!(client.get_validator_count(), 3); // total still 3
-        assert_eq!(client.get_active_validator_count(), 2); // active decreased to 2
-        assert_eq!(client.get_validators().len(), 2); // get_validators() returns active only
+        assert_eq!(client.get_validator_count(), 2);
+        assert_eq!(client.get_active_validator_count(), 2);
+        assert_eq!(client.get_validators().len(), 2);
 
         client.revoke_validator(&v3, &RevocationSeverity::Routine, &reason);
-        assert_eq!(client.get_validator_count(), 3); // total still 3
-        assert_eq!(client.get_active_validator_count(), 1); // active decreased to 1
-        assert_eq!(client.get_validators().len(), 1); // get_validators() returns active only
+        assert_eq!(client.get_validator_count(), 1);
+        assert_eq!(client.get_active_validator_count(), 1);
+        assert_eq!(client.get_validators().len(), 1);
 
-        // Revoking an already-revoked validator should not change either count
-        client.revoke_validator(&v3, &RevocationSeverity::Routine, &reason);
-        assert_eq!(client.get_validator_count(), 3);
+        // A rejected re-revoke (#1393) changes neither count.
+        assert!(client
+            .try_revoke_validator(&v3, &RevocationSeverity::Routine, &reason)
+            .is_err());
+        assert_eq!(client.get_validator_count(), 1);
         assert_eq!(client.get_active_validator_count(), 1);
     }
 
@@ -7646,11 +7638,6 @@ mod tests {
             &None,
         );
 
-    #[test]
-    fn test_pause_unpause_events() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
         // Revoke with cause
         client.revoke_validator(
             &wallet_cause,
@@ -7731,18 +7718,12 @@ mod tests {
             &Some(String::from_str(&env, "Misconduct")),
         );
         assert!(client.is_milestone_flagged(&1u64, &1u32));
-        assert!(!client.is_milestone_flagged(
-            &(MILESTONE_FLAG_PAGE_SIZE as u64 + 1),
-            &1u32
-        ));
+        assert!(!client.is_milestone_flagged(&(MILESTONE_FLAG_PAGE_SIZE as u64 + 1), &1u32));
 
         client.continue_revocation_cascade(&validator);
 
         assert!(client.is_milestone_flagged(&1u64, &1u32));
-        assert!(client.is_milestone_flagged(
-            &(MILESTONE_FLAG_PAGE_SIZE as u64 + 1),
-            &1u32
-        ));
+        assert!(client.is_milestone_flagged(&(MILESTONE_FLAG_PAGE_SIZE as u64 + 1), &1u32));
     }
 
     // -------------------------------------------------------------------------
@@ -8174,7 +8155,7 @@ mod tests {
     /// Filing a second dispute on the same (player_id, milestone_index) must
     /// return `DisputeAlreadyExists` (code 32), not the generic `InvalidInput`.
     #[test]
-    fn test_duplicate_dispute_returns_dispute_already_exists() {
+    fn test_duplicate_dispute_returns_dispute_already_open() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
         let player_wallet = Address::generate(&env);
@@ -8217,8 +8198,8 @@ mod tests {
         );
         assert_eq!(
             result,
-            Err(Ok(VerificationError::DisputeAlreadyExists)),
-            "duplicate dispute must return DisputeAlreadyExists (code 32)"
+            Err(Ok(VerificationError::DisputeAlreadyOpen)),
+            "refiling while the current round is open must return DisputeAlreadyOpen (#1396)"
         );
     }
 
@@ -8235,7 +8216,7 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn test_old_admin_loses_access_after_transfer() {
+    fn test_old_admin_loses_access_after_transfer_admin() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
         client.initialize(&admin);
@@ -8267,71 +8248,120 @@ mod tests {
     // Issue #1454: Ring-buffer write head overflow tests
     // -------------------------------------------------------------------------
 
-    /// Asserts that approvals continue working when the ring-buffer write head
-    /// is seeded near u32::MAX (simulating a potential overflow boundary).
-    /// With wrapping_add the head wraps safely rather than returning Overflow.
+    fn register_test_validator(env: &Env, client: &VerificationContractClient<'static>) -> Address {
+        let validator = Address::generate(env);
+        client.register_validator(
+            &validator,
+            &String::from_str(env, "Coach License"),
+            &String::from_str(env, "Default Academy"),
+            &Vec::new(env),
+        );
+        validator
+    }
+
+    fn read_write_head(env: &Env, client: &VerificationContractClient<'static>) -> u32 {
+        env.as_contract(&client.address, || {
+            env.storage()
+                .instance()
+                .get::<DataKey, u32>(&DataKey::GlobalMilestoneWriteHead)
+                .unwrap_or(0)
+        })
+    }
+
+    /// Approvals keep working across the point where the ring buffer first
+    /// fills, and the head then stays bounded instead of counting up.
     #[test]
     fn test_ring_buffer_write_head_wraps_at_boundary() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
         client.initialize(&admin);
+        let validator = register_test_validator(&env, &client);
 
-        let validator = Address::generate(&env);
-        client.register_validator(&validator, &String::from_str(&env, "Coach"));
-
-        // Seed the write head to MAX_GLOBAL_MILESTONE_INDEX - 1 so the next
-        // approval wraps back to 0.
+        // Seed the head just below the cap so the next write fills the ring.
         env.as_contract(&client.address, || {
-            env.storage()
-                .instance()
-                .set(&DataKey::GlobalMilestoneWriteHead, &(MAX_GLOBAL_MILESTONE_INDEX - 1));
+            env.storage().instance().set(
+                &DataKey::GlobalMilestoneWriteHead,
+                &(MAX_GLOBAL_MILESTONE_INDEX - 1),
+            );
         });
 
-        // First approval: write head was at (MAX - 1), wraps to 0 after.
         let idx1 = client.approve_milestone(
             &validator,
             &1u64,
             &String::from_str(&env, "milestone before wrap"),
             &String::from_str(&env, VALID_CID_V0),
+            &None,
         );
         assert_eq!(idx1, 1);
+        assert_eq!(read_write_head(&env, &client), MAX_GLOBAL_MILESTONE_INDEX);
 
-        // Second approval: write head is now 0, should work fine.
         let idx2 = client.approve_milestone(
             &validator,
             &2u64,
             &String::from_str(&env, "milestone after wrap"),
             &String::from_str(&env, VALID_CID_V1),
+            &None,
         );
         assert_eq!(idx2, 1);
+        assert_eq!(
+            read_write_head(&env, &client),
+            MAX_GLOBAL_MILESTONE_INDEX + 1
+        );
 
-        // Both milestones are accessible.
         assert_eq!(client.get_milestone_count(&1u64), 1);
         assert_eq!(client.get_milestone_count(&2u64), 1);
     }
 
-    /// Asserts that the global index reads remain correct across the ring-buffer wrap.
+    /// A head at the top of its bounded range rolls back to `CAP` instead of
+    /// growing; the slot sequence is unchanged.
     #[test]
-    fn test_global_index_reads_correct_after_wrap() {
+    fn test_ring_buffer_write_head_never_exceeds_twice_cap() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
         client.initialize(&admin);
+        let validator = register_test_validator(&env, &client);
 
-        let validator = Address::generate(&env);
-        client.register_validator(&validator, &String::from_str(&env, "Coach"));
+        env.as_contract(&client.address, || {
+            env.storage().instance().set(
+                &DataKey::GlobalMilestoneWriteHead,
+                &(2 * MAX_GLOBAL_MILESTONE_INDEX - 1),
+            );
+        });
+        client.approve_milestone(
+            &validator,
+            &1u64,
+            &String::from_str(&env, "m1"),
+            &String::from_str(&env, VALID_CID_V0),
+            &None,
+        );
+        assert_eq!(read_write_head(&env, &client), MAX_GLOBAL_MILESTONE_INDEX);
 
-        // Approve two milestones.
+        // The entry landed in the last slot, which is the newest page entry.
+        let page = client.get_global_milestone_index(&(MAX_GLOBAL_MILESTONE_INDEX - 1), &1u32);
+        assert_eq!(page.entries.get(0).unwrap().player_id, 1u64);
+    }
+
+    /// The global index reads back in insertion order.
+    #[test]
+    fn test_global_index_reads_in_insertion_order() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        let validator = register_test_validator(&env, &client);
+
         client.approve_milestone(
             &validator,
             &10u64,
             &String::from_str(&env, "m1"),
             &String::from_str(&env, VALID_CID_V0),
+            &None,
         );
         client.approve_milestone(
             &validator,
             &11u64,
             &String::from_str(&env, "m2"),
             &String::from_str(&env, VALID_CID_V1),
+            &None,
         );
 
         let page = client.get_global_milestone_index(&0u32, &10u32);
@@ -8340,53 +8370,72 @@ mod tests {
         assert_eq!(page.entries.get(1).unwrap().player_id, 11u64);
     }
 
-    /// Asserts u64 total count is correct alongside u32 count.
+    /// The u64 total tracks the u32 total, and falls back to the legacy u32
+    /// value on contracts that predate the u64 key.
     #[test]
     fn test_total_milestone_count_u64() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
         client.initialize(&admin);
+        let validator = register_test_validator(&env, &client);
 
-        let validator = Address::generate(&env);
-        client.register_validator(&validator, &String::from_str(&env, "Coach"));
+        env.as_contract(&client.address, || {
+            env.storage()
+                .instance()
+                .set(&DataKey::TotalMilestoneCount, &7u32);
+        });
+        assert_eq!(client.get_total_milestone_count_u64(), 7u64);
 
         client.approve_milestone(
             &validator,
             &1u64,
             &String::from_str(&env, "m1"),
             &String::from_str(&env, VALID_CID_V0),
+            &None,
         );
-        client.approve_milestone(
-            &validator,
-            &2u64,
-            &String::from_str(&env, "m2"),
-            &String::from_str(&env, VALID_CID_V1),
-        );
-
-        assert_eq!(client.get_total_milestone_count_u64(), 2u64);
-        assert_eq!(client.get_total_milestone_count(), 2u32);
+        assert_eq!(client.get_total_milestone_count_u64(), 8u64);
+        assert_eq!(client.get_total_milestone_count(), 8u32);
     }
 
     // -------------------------------------------------------------------------
     // Issue #1453: Config setter events tests
     // -------------------------------------------------------------------------
 
+    /// Data payload of the last event whose first topic is `name`, if any.
+    fn last_event_data(env: &Env, name: &str) -> Option<Val> {
+        use soroban_sdk::xdr::{ContractEventBody, ScSymbol, ScVal};
+        let wanted = ScVal::Symbol(ScSymbol(name.try_into().unwrap()));
+        env.events()
+            .all()
+            .events()
+            .iter()
+            .rev()
+            .find_map(|e| match &e.body {
+                ContractEventBody::V0(v0) if v0.topics.first() == Some(&wanted) => Some(
+                    <Val as soroban_sdk::TryFromVal<Env, ScVal>>::try_from_val(env, &v0.data)
+                        .unwrap(),
+                ),
+                _ => None,
+            })
+    }
+
     #[test]
-    fn test_set_diversity_config_emits_event() {
+    fn test_set_diversity_config_emits_old_and_new() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
-        let new_config = DiversityConfig { min_unique_regions: 3, min_unique_validators: 5 };
-        client.set_diversity_config(&new_config);
+        client.set_diversity_config(&2u32, &1u32);
+        let data = last_event_data(&env, "diversity_config_updated").unwrap();
+        let (old, new): (Option<DiversityConfig>, DiversityConfig) = data.into_val(&env);
+        assert_eq!(old, None);
+        assert_eq!(new.required_distinct_affiliations, 2);
 
-        let events = env.events().all();
-        // The last event should be diversity_config_updated
-        let last = events.last().unwrap();
-        let (topics, _): (soroban_sdk::Vec<soroban_sdk::Val>, soroban_sdk::Val) = (last.1, last.2);
-        // First topic is the symbol
-        let symbol = Symbol::new(&env, "diversity_config_updated");
-        assert_eq!(topics.get(0).unwrap(), symbol.into_val(&env));
+        client.set_diversity_config(&3u32, &4u32);
+        let data = last_event_data(&env, "diversity_config_updated").unwrap();
+        let (old, new): (Option<DiversityConfig>, DiversityConfig) = data.into_val(&env);
+        assert_eq!(old.unwrap().required_distinct_affiliations, 2);
+        assert_eq!(new.starting_milestone_index, 4);
     }
 
     #[test]
@@ -8396,16 +8445,9 @@ mod tests {
         client.initialize(&admin);
 
         client.set_min_region_quorum(&2u32);
-
-        let events = env.events().all();
-        assert!(!events.is_empty());
-        // Event was emitted — verify last event has the right symbol
-        let all = env.events().all();
-        let found = all.iter().any(|e| {
-            let topics = e.1;
-            topics.len() > 0 && topics.get(0).unwrap() == Symbol::new(&env, "min_region_quorum_updated").into_val(&env)
-        });
-        assert!(found);
+        let data = last_event_data(&env, "min_region_quorum_updated").unwrap();
+        let (old, new): (u32, u32) = data.into_val(&env);
+        assert_eq!((old, new), (0, 2));
     }
 
     #[test]
@@ -8413,16 +8455,13 @@ mod tests {
         let (env, client) = setup();
         let admin = Address::generate(&env);
         client.initialize(&admin);
+        register_test_validator(&env, &client);
+        register_test_validator(&env, &client);
 
-        let threshold = MilestoneThreshold { min_votes: 3, approval_bps: 6600 };
-        client.set_milestone_threshold(&threshold);
-
-        let all = env.events().all();
-        let found = all.iter().any(|e| {
-            let topics = e.1;
-            topics.len() > 0 && topics.get(0).unwrap() == Symbol::new(&env, "milestone_threshold_updated").into_val(&env)
-        });
-        assert!(found);
+        client.set_milestone_threshold(&2u32);
+        let data = last_event_data(&env, "milestone_threshold_updated").unwrap();
+        let (old, new): (u32, u32) = data.into_val(&env);
+        assert_eq!((old, new), (1, 2));
     }
 
     #[test]
@@ -8431,14 +8470,11 @@ mod tests {
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
-        client.set_voting_window_secs(&86400u64);
-
-        let all = env.events().all();
-        let found = all.iter().any(|e| {
-            let topics = e.1;
-            topics.len() > 0 && topics.get(0).unwrap() == Symbol::new(&env, "voting_window_secs_updated").into_val(&env)
-        });
-        assert!(found);
+        let old_window = client.get_voting_window_secs();
+        client.set_voting_window_secs(&86_400u64);
+        let data = last_event_data(&env, "voting_window_secs_updated").unwrap();
+        let (old, new): (u64, u64) = data.into_val(&env);
+        assert_eq!((old, new), (old_window, 86_400));
     }
 
     #[test]
@@ -8447,14 +8483,11 @@ mod tests {
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
-        client.set_reg_cooldown(&3600u64);
-
-        let all = env.events().all();
-        let found = all.iter().any(|e| {
-            let topics = e.1;
-            topics.len() > 0 && topics.get(0).unwrap() == Symbol::new(&env, "reg_cooldown_updated").into_val(&env)
-        });
-        assert!(found);
+        let old_cooldown = client.get_reg_cooldown();
+        client.set_reg_cooldown(&0u64);
+        let data = last_event_data(&env, "reg_cooldown_updated").unwrap();
+        let (old, new): (u64, u64) = data.into_val(&env);
+        assert_eq!((old, new), (old_cooldown, 0));
     }
 
     #[test]
@@ -8462,34 +8495,11 @@ mod tests {
         let (env, client) = setup();
         let admin = Address::generate(&env);
         client.initialize(&admin);
+        for _ in 0..3 {
+            register_test_validator(&env, &client);
+        }
 
-        let jury = JuryConfig { jury_size: 5, quorum: 3 };
-        client.set_jury_config(&jury);
-
-        let all = env.events().all();
-        let found = all.iter().any(|e| {
-            let topics = e.1;
-            topics.len() > 0 && topics.get(0).unwrap() == Symbol::new(&env, "jury_config_updated").into_val(&env)
-        });
-        assert!(found);
-    }
-
-    #[test]
-    fn test_set_diversity_config_records_old_values() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        // Set initial value
-        let first = DiversityConfig { min_unique_regions: 1, min_unique_validators: 2 };
-        client.set_diversity_config(&first);
-
-        // Update — old values should be (1, 2)
-        let second = DiversityConfig { min_unique_regions: 3, min_unique_validators: 4 };
-        client.set_diversity_config(&second);
-
-        // Events contain old and new values in the data payload
-        let all = env.events().all();
-        assert!(!all.is_empty());
+        client.set_jury_config(&50u32, &3u32, &(3 * 24 * 60 * 60u64));
+        assert!(last_event_data(&env, "jury_config_updated").is_some());
     }
 }

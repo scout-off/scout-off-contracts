@@ -185,8 +185,7 @@ fn test_verification_broken_upgrade_wrong_rewire_fn_is_caught() {
 /// the WASM, so the event is attributed to the old code version.
 #[test]
 fn test_verification_upgrade_emits_contract_upgraded_event() {
-    use soroban_sdk::testutils::Events as _;
-    use soroban_sdk::{symbol_short, IntoVal};
+    use scoutchain_shared_types::testutils::has_event;
 
     let h = setup();
     let _ = seed(&h);
@@ -194,13 +193,7 @@ fn test_verification_upgrade_emits_contract_upgraded_event() {
     let new_wasm_hash = h.env.deployer().upload_contract_wasm(Bytes::new(&h.env));
     h.verification.upgrade(&new_wasm_hash);
 
-    let events = h.env.events().all();
-    let found = events.iter().any(|(_, topics, _)| {
-        topics.get(0).map_or(false, |first| {
-            let expected: soroban_sdk::Val = symbol_short!("contract_upgraded").into_val(&h.env);
-            first == expected
-        })
-    });
+    let found = has_event(&h.env, "contract_upgraded");
 
     assert!(
         found,

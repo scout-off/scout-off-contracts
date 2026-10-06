@@ -189,39 +189,6 @@ pub struct EvidenceAccessGrant {
     pub revoked_at: Option<u64>,
 }
 
-/// Indicates which activation path was used when a FeeConfig was applied.
-///
-/// Stored in each `FeeConfigHistoryEntry` so auditors can distinguish
-/// between an immediate admin update, a decrease-branch proposal bypass,
-/// a time-locked proposal activation, and a migration seed.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub enum FeeConfigSource {
-    /// Applied immediately via `update_fee_config` (admin direct call).
-    Immediate,
-    /// Applied via `propose_fee_config` instant-decrease branch.
-    Decrease,
-    /// Applied via `activate_fee_config` after a time-locked proposal.
-    Proposal,
-    /// Applied via `admin_seed_fee_config` migration helper.
-    Seed,
-}
-
-/// One entry in the fee-configuration history ring-buffer.
-///
-/// History is capped at `FEE_CONFIG_HISTORY_CAP` entries in instance
-/// storage; older entries are evicted when the cap is exceeded.
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct FeeConfigHistoryEntry {
-    /// The fee configuration that was activated.
-    pub config: FeeConfig,
-    /// Ledger timestamp when this config was activated, in Unix seconds.
-    pub activated_at: u64,
-    /// Which code path triggered this activation.
-    pub source: FeeConfigSource,
-}
-
 #[contracttype]
 pub enum DataKey {
     Admin,
@@ -299,17 +266,6 @@ pub enum DataKey {
     /// scout wallet → bool; true if the scout has opted in to auto-renewal.
     /// Set by `set_auto_renew`, consumed by `renew_if_due`.
     AutoRenew(Address),
-    /// Day-granularity expiry bucket: (expires_at / 86_400) → Vec<Address>.
-    ///
-    /// Maintained by `subscribe` alongside `Subscription(scout)` so that
-    /// `get_expiring_subscriptions` can page through soon-to-expire
-    /// subscriptions in O(days_covered) without walking every scout.
-    ///
-    /// Tradeoff: coarse day-bucket granularity keeps index storage cost low
-    /// (one Vec per day with at least one subscriber) at the cost of requiring
-    /// the caller to re-check `Subscription.expires_at` for exact filtering,
-    /// which `get_subscriptions_expiring_before` already does.
-    ExpiryBucket(u64),
 
     /// Earliest day bucket (expires_at / 86_400) that may contain live
     /// subscriptions. Updated on `add_to_expiry_bucket` and lazily advanced

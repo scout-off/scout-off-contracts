@@ -1,4 +1,4 @@
--- migrations/004_revoked_tokens.sql
+-- migrations/009_revoked_tokens.sql
 -- Creates the revoked_tokens table required by the backend API to invalidate
 -- JWT tokens on explicit sign-out or credential rotation.
 --

@@ -4,6 +4,7 @@
 //! `close_migration_window` in the progress contract.
 
 use scoutchain_progress::{ProgressContract, ProgressContractClient, ProgressEntry, ProgressError};
+use scoutchain_shared_types::testutils::count_events;
 use scoutchain_shared_types::ProgressLevel;
 use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, Symbol};
 
@@ -424,23 +425,19 @@ fn test_reopening_after_close_fails() {
 
 #[test]
 fn test_migration_window_events_emitted() {
-    let (env, client, admin) = setup();
-    
-    // Open migration window - should emit event
+    let (env, client, _admin) = setup();
+
     client.open_migration_window();
-    let events = env.events().all();
-    let open_events = events.filter_by_contract(&client.address).filter(|e| {
-        let topic = e.topic;
-        topic.get_unchecked::<Symbol>(0).to_string() == "migration_window_opened"
-    });
-    assert_eq!(open_events.count(), 1, "migration_window_opened event must be emitted");
-    
-    // Close migration window - should emit event
+    assert_eq!(
+        count_events(&env, "migration_window_opened", Some(&client.address)),
+        1,
+        "migration_window_opened event must be emitted"
+    );
+
     client.close_migration_window();
-    let events = env.events().all();
-    let close_events = events.filter_by_contract(&client.address).filter(|e| {
-        let topic = e.topic;
-        topic.get_unchecked::<Symbol>(0).to_string() == "migration_window_closed"
-    });
-    assert_eq!(close_events.count(), 1, "migration_window_closed event must be emitted");
+    assert_eq!(
+        count_events(&env, "migration_window_closed", Some(&client.address)),
+        1,
+        "migration_window_closed event must be emitted"
+    );
 }

@@ -89,8 +89,6 @@ pub enum ScoutAccessError {
     // ── Sybil resistance ──
     /// Scout is not verified; cannot subscribe to Pro or Elite tier.
     ScoutNotVerified = 27,
-    /// Registration contract is not wired; Pro/Elite subscriptions require it.
-    RegistrationContractNotSet = 28,
     /// batch_contact_players input exceeds the maximum allowed batch size.
     BatchTooLarge = 40,
 
@@ -156,6 +154,14 @@ pub enum ScoutAccessError {
     /// `revoke_evidence_access` caller's wallet does not own the `player_id`
     /// passed to the function, or the player is not registered.
     PlayerNotVerified = 43,
+
+    /// Registration contract is not wired; Pro/Elite subscriptions require it.
+    /// (Originally shipped as a duplicate `28`; renumbered so it no longer
+    /// collides with `AutoRenewNotEnabled`.)
+    RegistrationContractNotSet = 44,
+    /// `open_migration_window` was called after the window was permanently
+    /// closed by `close_migration_window`.
+    MigrationWindowSealed = 45,
 }
 
 impl AdminError for ScoutAccessError {

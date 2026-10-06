@@ -32,7 +32,7 @@ fn dummy_vitals(env: &Env, position: &str, region: &str) -> PlayerVitals {
         age: 20,
         position: String::from_str(env, position),
         region: String::from_str(env, region),
-        nationality: String::from_str(env, "Test"),
+        nationality: String::from_str(env, "TT"),
     }
 }
 
@@ -61,15 +61,15 @@ fn test_filter_players_page_limit_enforced() {
         let wallet = Address::generate(&env);
         client.register_player(
             &wallet,
-            &dummy_vitals(&env, "Forward", "WestAfrica"),
+            &dummy_vitals(&env, "ST", "NG"),
             &dummy_hashes(&env),
         );
     }
 
     // Request up to 100 results — must be capped at 50 internally.
     let result = client.filter_players(
-        &String::from_str(&env, "WestAfrica"),
-        &String::from_str(&env, "Forward"),
+        &String::from_str(&env, "NG"),
+        &String::from_str(&env, "ST"),
         &ProgressLevel::Unverified,
         &0u32,
         &100u32,
@@ -85,7 +85,10 @@ fn test_filter_players_page_limit_enforced() {
         50,
         "with 60 matching players and limit=100, exactly 50 should be returned"
     );
-    assert!(result.has_more, "page with 50 results out of 60 must have has_more=true");
+    assert!(
+        result.has_more,
+        "page with 50 results out of 60 must have has_more=true"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -103,14 +106,14 @@ fn test_filter_players_pagination_retrieves_all() {
         let wallet = Address::generate(&env);
         client.register_player(
             &wallet,
-            &dummy_vitals(&env, "Midfielder", "EastAfrica"),
+            &dummy_vitals(&env, "CM", "KE"),
             &dummy_hashes(&env),
         );
     }
 
     let page1 = client.filter_players(
-        &String::from_str(&env, "EastAfrica"),
-        &String::from_str(&env, "Midfielder"),
+        &String::from_str(&env, "KE"),
+        &String::from_str(&env, "CM"),
         &ProgressLevel::Unverified,
         &0u32,
         &50u32,
@@ -119,8 +122,8 @@ fn test_filter_players_pagination_retrieves_all() {
     assert!(page1.next_cursor > 0, "page 1 must indicate more results");
 
     let page2 = client.filter_players(
-        &String::from_str(&env, "EastAfrica"),
-        &String::from_str(&env, "Midfielder"),
+        &String::from_str(&env, "KE"),
+        &String::from_str(&env, "CM"),
         &ProgressLevel::Unverified,
         &(page1.next_cursor as u32),
         &50u32,
@@ -152,14 +155,14 @@ fn test_filter_players_limit_zero_rejected() {
         let wallet = Address::generate(&env);
         client.register_player(
             &wallet,
-            &dummy_vitals(&env, "Forward", "WestAfrica"),
+            &dummy_vitals(&env, "ST", "NG"),
             &dummy_hashes(&env),
         );
     }
 
-    let result = client.filter_players(
-        &String::from_str(&env, "WestAfrica"),
-        &String::from_str(&env, "Forward"),
+    let result = client.try_filter_players(
+        &String::from_str(&env, "NG"),
+        &String::from_str(&env, "ST"),
         &ProgressLevel::Unverified,
         &0u32,
         &0u32,
@@ -185,24 +188,27 @@ fn test_filter_players_has_more_flag() {
         let wallet = Address::generate(&env);
         client.register_player(
             &wallet,
-            &dummy_vitals(&env, "Midfielder", "EastAfrica"),
+            &dummy_vitals(&env, "CM", "KE"),
             &dummy_hashes(&env),
         );
     }
 
     let page1 = client.filter_players(
-        &String::from_str(&env, "EastAfrica"),
-        &String::from_str(&env, "Midfielder"),
+        &String::from_str(&env, "KE"),
+        &String::from_str(&env, "CM"),
         &ProgressLevel::Unverified,
         &0u32,
         &50u32,
     );
     assert_eq!(page1.profiles.len(), 50);
-    assert!(page1.has_more, "page 1 must have has_more=true when more results exist");
+    assert!(
+        page1.has_more,
+        "page 1 must have has_more=true when more results exist"
+    );
 
     let page2 = client.filter_players(
-        &String::from_str(&env, "EastAfrica"),
-        &String::from_str(&env, "Midfielder"),
+        &String::from_str(&env, "KE"),
+        &String::from_str(&env, "CM"),
         &ProgressLevel::Unverified,
         &(page1.next_cursor as u32),
         &50u32,
@@ -226,15 +232,15 @@ fn test_filter_players_cpu_cost_at_50_results() {
         let wallet = Address::generate(&env);
         client.register_player(
             &wallet,
-            &dummy_vitals(&env, "Goalkeeper", "SouthAfrica"),
+            &dummy_vitals(&env, "GK", "ZA"),
             &dummy_hashes(&env),
         );
     }
 
     env.cost_estimate().budget().reset_default();
     let result = client.filter_players(
-        &String::from_str(&env, "SouthAfrica"),
-        &String::from_str(&env, "Goalkeeper"),
+        &String::from_str(&env, "ZA"),
+        &String::from_str(&env, "GK"),
         &ProgressLevel::Unverified,
         &0u32,
         &50u32,
