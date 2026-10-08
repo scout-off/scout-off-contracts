@@ -219,11 +219,6 @@ def load(ok, key):
 
 reg, ver, prog, sa = load(reg_ok, "REG_STATE"), load(ver_ok, "VER_STATE"), load(prog_ok, "PROG_STATE"), load(sa_ok, "SA_STATE")
 
-def flat_link(state, field):
-    if state is None:
-        return (None, None)
-    return (state.get(f"{field}_contract"), state.get(f"{field}_epoch"))
-
 def nested_link(state, field):
     if state is None:
         return (None, None)
@@ -235,10 +230,10 @@ LINKS = [
     ("registration", reg_ok, *nested_link(reg, "progress"), "progress", prog_id),
     ("scout_access", sa_ok, *nested_link(sa, "progress"), "progress", prog_id),
     ("verification", ver_ok, *nested_link(ver, "registration"), "registration", reg_id),
-    ("progress", prog_ok, *flat_link(prog, "registration"), "registration", reg_id),
+    ("progress", prog_ok, *nested_link(prog, "registration"), "registration", reg_id),
     ("scout_access", sa_ok, *nested_link(sa, "registration"), "registration", reg_id),
-    ("progress", prog_ok, *flat_link(prog, "verification"), "verification", ver_id),
-    ("progress", prog_ok, *flat_link(prog, "scout_access"), "scout_access", sa_id),
+    ("progress", prog_ok, *nested_link(prog, "verification"), "verification", ver_id),
+    ("progress", prog_ok, *nested_link(prog, "scout_access"), "scout_access", sa_id),
 ]
 
 def classify(address, epoch, expected_id):
