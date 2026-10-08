@@ -13,6 +13,8 @@
 //! (no cross-contract harness), matching the style of
 //! `check_precedence_property_tests.rs`.
 
+mod common;
+
 use scoutchain_scout_access::{
     EvidenceAccessGrant, FeeConfig, ScoutAccessContract, ScoutAccessContractClient,
     SubscriptionTier,
@@ -63,6 +65,8 @@ fn setup() -> Harness {
     let id = env.register(ScoutAccessContract, ());
     let contract = ScoutAccessContractClient::new(&env, &id);
     contract.initialize(&admin, &xlm, &default_fees());
+    common::wire_registration(&env, Some(&contract), None);
+    common::wire_progress_level_stub(&env, &contract);
 
     Harness {
         env,
@@ -566,7 +570,10 @@ fn has_evidence_access_returns_true_before_expiry() {
     subscribe(&h, &scout, &SubscriptionTier::Elite);
     h.contract.pay_to_contact(&scout, &player_id);
 
-    let grant = h.contract.get_evidence_access_grant(&player_id, &scout).unwrap();
+    let grant = h
+        .contract
+        .get_evidence_access_grant(&player_id, &scout)
+        .unwrap();
     assert_eq!(grant.expires_at, START_TIME + EVIDENCE_ACCESS_TTL);
     assert!(
         h.contract.has_evidence_access(&player_id, &scout),
@@ -584,7 +591,9 @@ fn has_evidence_access_returns_false_after_expiry() {
     assert!(h.contract.has_evidence_access(&player_id, &scout));
 
     // Advance past the grant's expires_at.
-    h.env.ledger().with_mut(|l| l.timestamp += EVIDENCE_ACCESS_TTL + 1);
+    h.env
+        .ledger()
+        .with_mut(|l| l.timestamp += EVIDENCE_ACCESS_TTL + 1);
 
     assert!(
         !h.contract.has_evidence_access(&player_id, &scout),
@@ -617,7 +626,9 @@ fn revoke_evidence_access_by_player_revokes_grant() {
     // in this self-contained harness, so the call is expected to fail with
     // PlayerNotVerified — this test documents that the function exists and
     // enforces player verification.
-    let result = h.contract.try_revoke_evidence_access(&player, &player_id, &scout);
+    let result = h
+        .contract
+        .try_revoke_evidence_access(&player, &player_id, &scout);
     let err = result
         .expect_err("player not verified without a registration contract")
         .expect("must be a contract error, not a host error");

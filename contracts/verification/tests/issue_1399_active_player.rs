@@ -7,9 +7,7 @@ use scoutchain_verification::{
     VerificationError,
 };
 use soroban_sdk::{
-    contract, contractimpl, contracttype,
-    testutils::Address as _,
-    Address, Env, String, Vec,
+    contract, contractimpl, contracttype, testutils::Address as _, Address, Env, String, Vec,
 };
 
 #[contracttype]
@@ -51,8 +49,8 @@ impl RegStub {
             wallet,
             vitals: RegPlayerVitals {
                 age: 20,
-                position: String::from_str(&env, "Forward"),
-                region: String::from_str(&env, "Europe"),
+                position: String::from_str(&env, "ST"),
+                region: String::from_str(&env, "FR"),
                 nationality: String::from_str(&env, "ES"),
             },
             ipfs_hashes: Vec::new(&env),

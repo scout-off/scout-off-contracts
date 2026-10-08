@@ -8,6 +8,8 @@
 //! the Pro-tier contact-count increment all match the number of *distinct*
 //! player_ids in the batch, not the raw input length.
 
+mod common;
+
 use scoutchain_scout_access::{
     FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
 };
@@ -15,13 +17,14 @@ use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, E
 
 const CONTACT_FEE: i128 = 100_000;
 const BASIC_FEE: i128 = 1_000_000;
+const ELITE_FEE: i128 = 10_000_000;
 
 fn default_fees() -> FeeConfig {
     FeeConfig {
         contact_fee_stroops: CONTACT_FEE,
         basic_sub_stroops: BASIC_FEE,
         pro_sub_stroops: 3_000_000,
-        elite_sub_stroops: 10_000_000,
+        elite_sub_stroops: ELITE_FEE,
         sub_duration_secs: 2_592_000,
         pro_contact_limit: 10,
         trial_offer_escrow_stroops: 500_000,
@@ -48,10 +51,13 @@ fn setup() -> (
     let xlm = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
-    StellarAssetClient::new(&env, &xlm).mint(&scout, &10_000_000i128);
+    StellarAssetClient::new(&env, &xlm).mint(&scout, &20_000_000i128);
 
     client.initialize(&admin, &xlm, &default_fees());
-    client.subscribe(&scout, &SubscriptionTier::Basic);
+    common::wire_registration(&env, Some(&client), None);
+    common::wire_progress_level_stub(&env, &client);
+    // Elite: Basic has no contact entitlement since #1357.
+    client.subscribe(&scout, &SubscriptionTier::Elite);
 
     (env, client, admin, scout, xlm)
 }
@@ -91,7 +97,7 @@ fn test_batch_contact_players_dedupes_exact_duplicate_ids() {
     let balance = soroban_sdk::token::Client::new(&env, &xlm).balance(&scout);
     assert_eq!(
         balance,
-        10_000_000i128 - BASIC_FEE - CONTACT_FEE,
+        20_000_000i128 - ELITE_FEE - CONTACT_FEE,
         "scout should only be charged for one distinct contact"
     );
 
@@ -121,7 +127,7 @@ fn test_batch_contact_players_dedupes_duplicate_among_distinct_ids() {
     let balance = soroban_sdk::token::Client::new(&env, &xlm).balance(&scout);
     assert_eq!(
         balance,
-        10_000_000i128 - BASIC_FEE - (CONTACT_FEE * 2),
+        20_000_000i128 - ELITE_FEE - (CONTACT_FEE * 2),
         "scout should be charged for exactly 2 distinct contacts, not 3"
     );
 
@@ -141,7 +147,7 @@ fn test_batch_contact_players_still_skips_already_contacted_players() {
     let balance_after_first = soroban_sdk::token::Client::new(&env, &xlm).balance(&scout);
     assert_eq!(
         balance_after_first,
-        10_000_000i128 - BASIC_FEE - CONTACT_FEE
+        20_000_000i128 - ELITE_FEE - CONTACT_FEE
     );
 
     // Second batch mixes an already-contacted id, a repeated new id, and a

@@ -8,7 +8,7 @@ use scoutchain_registration::{PlayerVitals, RegistrationContract, RegistrationCo
 use scoutchain_shared_types::ProgressLevel;
 use scoutchain_verification::{VerificationContract, VerificationContractClient};
 use soroban_sdk::{
-    testutils::{Address as _, MockAuth, MockAuthInvoke},
+    testutils::{Address as _, Ledger as _},
     Address, Env, String, Vec,
 };
 
@@ -16,7 +16,7 @@ use soroban_sdk::{
 fn valid_vitals(env: &Env) -> PlayerVitals {
     PlayerVitals {
         age: 20,
-        position: String::from_str(env, "Forward"),
+        position: String::from_str(env, "ST"),
         region: String::from_str(env, "EU"),
         nationality: String::from_str(env, "FR"),
     }
@@ -147,7 +147,8 @@ fn test_reset_player_level_rejected_for_unknown_player_when_wired() {
     // Player 999 does NOT exist in registration
     let unknown_player_id: u64 = 999;
 
-    let result = progress.try_reset_player_level(&unknown_player_id, &ProgressLevel::VerifiedIdentity);
+    let result =
+        progress.try_reset_player_level(&unknown_player_id, &ProgressLevel::VerifiedIdentity);
 
     assert!(
         matches!(result, Err(Ok(ProgressError::PlayerNotRegistered))),
@@ -167,19 +168,27 @@ fn test_advance_level_succeeds_for_registered_player_when_wired() {
     let (registration, progress, _verification, _admin, ver_id) = setup_full_stack();
 
     // Register a player in the registration contract
-    let wallet = Address::generate(&registration.env());
-    let player_id = registration
-        .register_player(&wallet, &valid_vitals(&registration.env()), &one_hash(&registration.env()))
-        .unwrap();
+    let wallet = Address::generate(&registration.env);
+    let player_id = registration.register_player(
+        &wallet,
+        &valid_vitals(&registration.env),
+        &one_hash(&registration.env),
+    );
 
     // Now advance_level should succeed
     let result = progress.try_advance_level(&ver_id, &player_id, &1u32);
 
-    assert!(result.is_ok(), "advance_level must succeed for registered player: {result:?}");
-    assert_eq!(result.unwrap(), ProgressLevel::VerifiedIdentity);
+    assert!(
+        result.is_ok(),
+        "advance_level must succeed for registered player: {result:?}"
+    );
+    assert_eq!(result.unwrap(), Ok(ProgressLevel::VerifiedIdentity));
 
     // Level and history should be updated
-    assert_eq!(progress.get_level(&player_id), ProgressLevel::VerifiedIdentity);
+    assert_eq!(
+        progress.get_level(&player_id),
+        ProgressLevel::VerifiedIdentity
+    );
     assert_eq!(progress.get_history_count(&player_id), 1);
 }
 
@@ -188,10 +197,12 @@ fn test_reset_player_level_succeeds_for_registered_player_when_wired() {
     let (registration, progress, _verification, _admin, ver_id) = setup_full_stack();
 
     // Register a player in the registration contract
-    let wallet = Address::generate(&registration.env());
-    let player_id = registration
-        .register_player(&wallet, &valid_vitals(&registration.env()), &one_hash(&registration.env()))
-        .unwrap();
+    let wallet = Address::generate(&registration.env);
+    let player_id = registration.register_player(
+        &wallet,
+        &valid_vitals(&registration.env),
+        &one_hash(&registration.env),
+    );
 
     // First advance the player
     progress.advance_level(&ver_id, &player_id, &1u32);
@@ -199,7 +210,10 @@ fn test_reset_player_level_succeeds_for_registered_player_when_wired() {
     // Now reset should succeed
     let result = progress.try_reset_player_level(&player_id, &ProgressLevel::Unverified);
 
-    assert!(result.is_ok(), "reset_player_level must succeed for registered player: {result:?}");
+    assert!(
+        result.is_ok(),
+        "reset_player_level must succeed for registered player: {result:?}"
+    );
 
     // Level and history should be updated
     assert_eq!(progress.get_level(&player_id), ProgressLevel::Unverified);

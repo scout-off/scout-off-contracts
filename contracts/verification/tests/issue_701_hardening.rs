@@ -132,19 +132,19 @@ fn pubkey_bytesn(env: &Env, sk: &SigningKey) -> BytesN<32> {
     BytesN::from_array(env, &sk.verifying_key().to_bytes())
 }
 
-    fn attestation_message(env: &Env, attestation: &MilestoneAttestation) -> Bytes {
-        let mut message = Bytes::new(env);
-        message.extend_from_slice(ATTESTATION_DOMAIN.as_bytes());
-        message.append(&attestation.contract_id.clone().to_xdr(env));
-        message.append(&Bytes::from_slice(env, &attestation.network_id.to_array()));
-        message.append(&attestation.validator_wallet.clone().to_xdr(env));
-        message.extend_from_slice(&attestation.player_id.to_be_bytes());
-        message.append(&attestation.description.clone().to_xdr(env));
-        message.append(&attestation.evidence_hash.clone().to_xdr(env));
-        message.extend_from_slice(&attestation.nonce.to_be_bytes());
-        message.extend_from_slice(&attestation.expires_at.to_be_bytes());
-        message
-    }
+fn attestation_message(env: &Env, attestation: &MilestoneAttestation) -> Bytes {
+    let mut message = Bytes::new(env);
+    message.extend_from_slice(ATTESTATION_DOMAIN.as_bytes());
+    message.append(&attestation.contract_id.clone().to_xdr(env));
+    message.append(&Bytes::from_slice(env, &attestation.network_id.to_array()));
+    message.append(&attestation.validator_wallet.clone().to_xdr(env));
+    message.extend_from_slice(&attestation.player_id.to_be_bytes());
+    message.append(&attestation.description.clone().to_xdr(env));
+    message.append(&attestation.evidence_hash.clone().to_xdr(env));
+    message.extend_from_slice(&attestation.nonce.to_be_bytes());
+    message.extend_from_slice(&attestation.expires_at.to_be_bytes());
+    message
+}
 
 fn sign_attestation(env: &Env, sk: &SigningKey, attestation: &MilestoneAttestation) -> BytesN<64> {
     let message = attestation_message(env, attestation);

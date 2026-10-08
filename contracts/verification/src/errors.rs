@@ -53,11 +53,6 @@ pub enum VerificationError {
     ProgressCallFailed = 12,
     /// Milestone counter overflowed.
     Overflow = 13,
-    MilestoneNotFound = 14,
-    ValidatorCapReached = 15,
-    /// A single validator has already approved
-    /// MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR milestones for this player.
-    MilestoneLimitExceeded = 16,
 
     // ── Admin transfer ──
     /// `accept_admin` called before an admin transfer was proposed.
@@ -170,6 +165,47 @@ pub enum VerificationError {
     /// `MAX_ATTESTATION_FUTURE_TOLERANCE_SECS`. Prevents long-lived signed
     /// payloads from being held and replayed days later.
     AttestationWindowTooLarge = 46,
+
+    // ── Validator lifecycle & threshold (issues #1392–#1395) ──
+    /// `set_milestone_threshold` was given a value above the current number
+    /// of active validators, which would make every new claim unreachable.
+    ThresholdExceedsActiveValidators = 47,
+    /// `revoke_validator` targeted a validator that is already revoked with
+    /// the same or higher severity.
+    ValidatorAlreadyRevoked = 48,
+
+    // ── Dispute rounds (issue #1396) ──
+    /// The latest dispute round for this milestone is still unresolved.
+    DisputeAlreadyOpen = 49,
+    /// The milestone has already been disputed `MAX_DISPUTE_ROUNDS` times.
+    MaxDisputeRoundsReached = 50,
+    /// A new round was filed before `DISPUTE_REOPEN_COOLDOWN_SECS` elapsed
+    /// since the previous round was resolved.
+    DisputeCooldown = 51,
+    /// The player already holds `MAX_OPEN_DISPUTES_PER_PLAYER` unresolved
+    /// disputes.
+    TooManyOpenDisputes = 52,
+
+    // ── Pending claims (issues #1397, #1398) ──
+    /// A vote's description hash differs from the one locked in by the first
+    /// voter of the current round.
+    DescriptionMismatch = 53,
+    /// No pending claim exists for this `(player_id, evidence_hash)`.
+    ClaimNotFound = 54,
+    /// `prune_expired_claim` was called on a claim whose voting window is
+    /// still open.
+    ClaimNotExpired = 55,
+
+    // ── Player gates (issue #1399) ──
+    /// The registration contract has no player with this ID.
+    PlayerNotRegistered = 56,
+    /// The player has been deactivated in the registration contract.
+    PlayerDeactivated = 57,
+
+    // ── Migration window (issue #1410) ──
+    /// `open_migration_window` was called after the window was permanently
+    /// closed by `close_migration_window`.
+    MigrationWindowSealed = 58,
 }
 
 impl AdminError for VerificationError {

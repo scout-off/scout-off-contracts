@@ -295,6 +295,8 @@ fn test_retry_with_fresh_evidence_hash_succeeds_after_wiring_fixed() {
     let progress = ProgressContractClient::new(&env, &prog_id);
     progress.initialize(&admin);
     progress.set_verification_contract(&ver_id);
+    // Progress requires a registration contract for level syncs (#1409).
+    progress.set_registration_contract(&env.register(RegistrationStub, ()));
 
     // Wire verification → progress.
     client.set_progress_contract(&prog_id);
@@ -376,4 +378,18 @@ fn test_validator_cap_bounds_evidence_storage() {
         100,
         "active validator count must be exactly 100 at the cap"
     );
+}
+
+/// Registration stand-in that accepts every level sync from progress.
+#[soroban_sdk::contract]
+struct RegistrationStub;
+
+#[soroban_sdk::contractimpl]
+impl RegistrationStub {
+    pub fn set_player_level(
+        _env: Env,
+        _player_id: u64,
+        _level: scoutchain_shared_types::ProgressLevel,
+    ) {
+    }
 }

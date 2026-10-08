@@ -2,6 +2,11 @@ use soroban_sdk::{contracttype, Address, BytesN};
 
 pub use scoutchain_shared_types::{ProgressLevel, WiringLink};
 
+/// Storage layout version this build of the contract writes and expects.
+/// `migrate` walks stored state forward to this version; see
+/// [`DataKey::SchemaVersion`].
+pub const CODE_SCHEMA_VERSION: u32 = 1;
+
 /// One step of a Merkle inclusion proof for [`ProgressEntry`] history
 /// commitments (see [`DataKey::HistoryRoot`]).
 ///
@@ -19,7 +24,7 @@ pub struct HistoryProofStep {
 
 /// A single entry in the immutable progress history
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ProgressEntry {
     /// Unique player identifier whose level changed.
     pub player_id: u64,

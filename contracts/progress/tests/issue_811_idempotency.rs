@@ -75,7 +75,7 @@ use soroban_sdk::{testutils::Address as _, Address, Bytes, Env, String, Vec};
 fn valid_vitals(env: &Env) -> PlayerVitals {
     PlayerVitals {
         age: 20,
-        position: String::from_str(env, "Forward"),
+        position: String::from_str(env, "ST"),
         region: String::from_str(env, "EU"),
         nationality: String::from_str(env, "FR"),
     }
@@ -132,7 +132,8 @@ fn setup() -> Harness {
 /// Register a player and return the assigned player ID.
 fn register_player(h: &Harness) -> u64 {
     let wallet = Address::generate(&h.env);
-    h.registration.register_player(&wallet, &valid_vitals(&h.env), &one_hash(&h.env)).unwrap()
+    h.registration
+        .register_player(&wallet, &valid_vitals(&h.env), &one_hash(&h.env))
 }
 
 /// Read `HistoryCounter` straight out of persistent storage, bypassing the
@@ -476,7 +477,7 @@ fn test_secondary_caller_replay_with_unbacked_milestone_ref_is_rejected() {
 
     // Register a player in registration contract so advance_level's sync succeeds
     let wallet = Address::generate(&env);
-    let pid = registration.register_player(&wallet, &valid_vitals(&env), &one_hash(&env)).unwrap();
+    let pid = registration.register_player(&wallet, &valid_vitals(&env), &one_hash(&env));
 
     // milestone_ref == 0 is rejected outright, and any ref beyond the real
     // milestone count is rejected too — a replay cannot invent justification.

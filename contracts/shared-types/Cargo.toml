@@ -6,6 +6,10 @@ edition.workspace = true
 [lib]
 crate-type = ["rlib"]
 
+[features]
+# Test-only helpers shared by the contract crates' test suites.
+testutils = ["soroban-sdk/testutils"]
+
 [dependencies]
 soroban-sdk = { workspace = true }
 

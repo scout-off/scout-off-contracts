@@ -12,6 +12,6 @@
 
 ## Migration
 
-1. Run `migrations/008_dispute_rounds.sql` against the indexer DB before activating the new WASM.
+1. Run `migrations/012_dispute_rounds.sql` against the indexer DB before activating the new WASM.
 2. Resolve or acknowledge open disputes on any already-deployed verification instance before upgrade — prior `MilestoneDispute(player, idx)` entries are not readable under the new key shape.
 3. Re-run the storage-layout compat script with `--acknowledge-breaking-change`.

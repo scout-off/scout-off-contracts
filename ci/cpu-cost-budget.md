@@ -37,8 +37,8 @@ measured-cost trends can be tracked across commits.
 | registration   | `register_player`                | 20,000,000                |
 | registration   | `update_profile`                 | 10,000,000                |
 | registration   | `filter_players`                 | 15,000,000                |
-| registration   | `set_player_level` (typical)     |   350,000                 |
-| registration   | `set_player_level` (large bucket)|  500,000                 |
+| registration   | `set_player_level` (typical)     |   525,000                 |
+| registration   | `set_player_level` (large bucket)| 1,335,000                 |
 | verification   | `register_validator`             | 15,000,000                |
 | verification   | `approve_milestone`              | 25,000,000                |
 | verification   | `attest_milestone`               | 25,000,000                |

@@ -22,7 +22,7 @@ use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String, Vec};
 fn valid_vitals(env: &Env) -> PlayerVitals {
     PlayerVitals {
         age: 20,
-        position: String::from_str(env, "Forward"),
+        position: String::from_str(env, "ST"),
         region: String::from_str(env, "EU"),
         nationality: String::from_str(env, "FR"),
     }
@@ -75,7 +75,8 @@ fn setup() -> Harness {
 /// Register a player and return the assigned player ID.
 fn register_player(h: &Harness) -> u64 {
     let wallet = Address::generate(&h.env);
-    h.registration.register_player(&wallet, &valid_vitals(&h.env), &one_hash(&h.env)).unwrap()
+    h.registration
+        .register_player(&wallet, &valid_vitals(&h.env), &one_hash(&h.env))
 }
 
 // ── genuine proofs verify ───────────────────────────────────────────────────

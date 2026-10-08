@@ -58,7 +58,12 @@ import re
 import sys
 
 def extract_codes(path):
-    """Return ({code_int: variant_name}, full_src) from a #[contracterror] enum."""
+    """Return ({code_int: [variant_name, ...]}, full_src) from a #[contracterror] enum.
+
+    A valid enum has one variant per code. A baseline that was merged with a
+    duplicated discriminant (which cannot compile) lists every variant that
+    claimed the code, so the fix may keep whichever one was really shipped.
+    """
     src = open(path).read()
     m = re.search(r'#\[contracterror\].*?enum\s+\w+\s*\{([^}]+)\}', src, re.DOTALL)
     if not m:
@@ -66,7 +71,7 @@ def extract_codes(path):
     body = m.group(1)
     result = {}
     for variant, code in re.findall(r'\b([A-Z][A-Za-z0-9]+)\s*=\s*(\d+)', body):
-        result[int(code)] = variant
+        result.setdefault(int(code), []).append(variant)
     return result, src
 
 def has_reserved_comment(src, code):
@@ -82,10 +87,18 @@ head_map, head_src = extract_codes(sys.argv[2])
 violations  = []
 reserved_ok = []
 
-for code, base_variant in sorted(base_map.items()):
+for dup_code, variants in sorted(head_map.items()):
+    if len(variants) > 1:
+        violations.append(
+            "Code {} assigned to more than one variant: {}"
+            " -- every error code must be unique".format(dup_code, ", ".join(variants))
+        )
+
+for code, base_variants in sorted(base_map.items()):
+    base_variant = " / ".join(base_variants)
     if code in head_map:
-        head_variant = head_map[code]
-        if base_variant != head_variant:
+        head_variant = head_map[code][0]
+        if head_variant not in base_variants:
             violations.append(
                 "Code {} renamed: was '{}', now '{}'"
                 " -- renaming an existing error code is a breaking change"

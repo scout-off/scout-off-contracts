@@ -15,7 +15,8 @@
 //!    500+ prior approvals stays within budget.
 
 use scoutchain_verification::{
-    RevocationSeverity, VerificationContract, VerificationContractClient, VerificationError,
+    AttestationStatus, RevocationSeverity, VerificationContract, VerificationContractClient,
+    VerificationError,
 };
 use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
 
@@ -406,19 +407,18 @@ fn cascade_sweep_cpu_cost_bounded_at_500_milestones() {
 #[test]
 fn for_cause_revocation_flags_milestones_where_revoked_validator_is_co_attestor() {
     let (env, client) = setup();
-    client.set_milestone_threshold(&3u32);
 
     let v1 = register_validator(&env, &client);
     let v2 = register_validator(&env, &client);
     let v3 = register_validator(&env, &client);
+    // The threshold may not exceed the active validator count (#1395).
+    client.set_milestone_threshold(&3u32);
     let player_id = 6000u64;
     let description = String::from_str(&env, "co-attestor cascade test");
     let evidence = cid(&env, 6000);
 
-    // v1, v2, v3 all attest using approve_milestone-style calls
-    // (attest_milestone requires threshold mode, but for the
-    // cascade test we just need the milestone committed with
-    // all three as attestors).
+    // v1, v2, v3 all attest; the third vote reaches the threshold and
+    // commits the milestone with all three as attestors.
     env.mock_all_auths();
     client.attest_milestone(&v1, &player_id, &description, &evidence);
     client.attest_milestone(&v2, &player_id, &description, &evidence);

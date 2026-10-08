@@ -14,7 +14,7 @@ use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
 fn valid_vitals(env: &Env) -> PlayerVitals {
     PlayerVitals {
         age: 20,
-        position: String::from_str(env, "Forward"),
+        position: String::from_str(env, "ST"),
         region: String::from_str(env, "EU"),
         nationality: String::from_str(env, "FR"),
     }
@@ -50,13 +50,18 @@ fn setup() -> Harness {
     client.set_registration_contract(&reg_id);
     registration.set_progress_contract(&id);
 
-    Harness { env, client, registration }
+    Harness {
+        env,
+        client,
+        registration,
+    }
 }
 
 /// Register a player and return the assigned player ID.
 fn register_player(h: &Harness) -> u64 {
     let wallet = Address::generate(&h.env);
-    h.registration.register_player(&wallet, &valid_vitals(&h.env), &one_hash(&h.env)).unwrap()
+    h.registration
+        .register_player(&wallet, &valid_vitals(&h.env), &one_hash(&h.env))
 }
 
 /// Advance `player_id` by `n` levels using a whitelisted caller.
@@ -288,9 +293,9 @@ fn test_cursor_snapshot_umax_does_not_panic() {
     let player_id: u64 = 30;
 
     // No history — real count is 0. Caller-supplied u32::MAX must not trap.
-    let (entries, next_index, snapshot) = h
-        .client
-        .get_history_page_with_cursor(&player_id, &Some(u32::MAX), &Some(1u32), &10u32);
+    let (entries, next_index, snapshot) =
+        h.client
+            .get_history_page_with_cursor(&player_id, &Some(u32::MAX), &Some(1u32), &10u32);
 
     assert_eq!(entries.len(), 0, "no entries for a player with no history");
     assert_eq!(snapshot, 0u32, "snapshot clamped to real count (0)");
@@ -302,8 +307,8 @@ fn test_cursor_snapshot_umax_does_not_panic() {
 #[test]
 fn test_cursor_next_index_near_umax_does_not_panic() {
     let h = setup();
-    let player_id: u64 = 31;
-    let ver = setup_secondary_caller(&h);
+    let player_id = register_player(&h);
+    let ver = setup_whitelisted_caller(&h);
     advance_n(&h, &ver, player_id, 3); // real count = 3
 
     // next_index far beyond snapshot_count — must exit early, not overflow.
@@ -322,14 +327,14 @@ fn test_cursor_next_index_near_umax_does_not_panic() {
 #[test]
 fn test_cursor_snapshot_larger_than_real_count_is_clamped() {
     let h = setup();
-    let player_id: u64 = 32;
-    let ver = setup_secondary_caller(&h);
+    let player_id = register_player(&h);
+    let ver = setup_whitelisted_caller(&h);
     advance_n(&h, &ver, player_id, 2); // real count = 2
 
     // Pass snapshot = 1000 — must be clamped to 2, return at most 2 entries.
-    let (entries, _next, snapshot) = h
-        .client
-        .get_history_page_with_cursor(&player_id, &Some(1000u32), &Some(1u32), &50u32);
+    let (entries, _next, snapshot) =
+        h.client
+            .get_history_page_with_cursor(&player_id, &Some(1000u32), &Some(1u32), &50u32);
 
     assert_eq!(snapshot, 2u32, "snapshot must be clamped to real count");
     assert_eq!(entries.len(), 2);
@@ -339,8 +344,8 @@ fn test_cursor_snapshot_larger_than_real_count_is_clamped() {
 #[test]
 fn test_history_page_extreme_offset_limit_no_panic() {
     let h = setup();
-    let player_id: u64 = 33;
-    let ver = setup_secondary_caller(&h);
+    let player_id = register_player(&h);
+    let ver = setup_whitelisted_caller(&h);
     advance_n(&h, &ver, player_id, 3);
 
     // offset = u32::MAX — beyond count, must return empty

@@ -57,8 +57,8 @@ impl RegStub {
             wallet,
             vitals: RegPlayerVitals {
                 age: 20,
-                position: String::from_str(&env, "Forward"),
-                region: String::from_str(&env, "Europe"),
+                position: String::from_str(&env, "ST"),
+                region: String::from_str(&env, "FR"),
                 nationality: String::from_str(&env, "ES"),
             },
             ipfs_hashes: Vec::new(&env),
@@ -95,22 +95,56 @@ fn setup() -> (Env, VerificationContractClient<'static>, Address, Address) {
     (env, client, admin, player)
 }
 
-fn reg_validator(env: &Env, client: &VerificationContractClient, creds: &str) -> Address {
+std::thread_local! {
+    static NEXT_ACADEMY: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+    /// Jurors registered by `setup_jury_dispute` *before* the dispute was
+    /// filed; `reg_validator` hands these out first.
+    static JUROR_POOL: core::cell::RefCell<std::vec::Vec<Address>> =
+        const { core::cell::RefCell::new(std::vec::Vec::new()) };
+}
+
+/// Register a validator with its own academy. Since #1375 a validator that
+/// shares the approver's affiliation is excluded from the jury.
+fn register_fresh_validator(
+    env: &Env,
+    client: &VerificationContractClient,
+    creds: &str,
+) -> Address {
+    let academy = NEXT_ACADEMY.with(|n| {
+        n.set(n.get() + 1);
+        std::format!("Test Academy {}", n.get())
+    });
     let wallet = Address::generate(env);
     client.register_validator(
         &wallet,
         &String::from_str(env, creds),
-        &String::from_str(env, "Test Academy"),
+        &String::from_str(env, &academy),
         &Vec::new(env),
     );
     wallet
 }
 
+/// A validator for the test to use. After `setup_jury_dispute` this returns
+/// one of the jurors registered before filing, since only those may vote
+/// (#1375); otherwise it registers a fresh one.
+fn reg_validator(env: &Env, client: &VerificationContractClient, creds: &str) -> Address {
+    JUROR_POOL
+        .with(|pool| pool.borrow_mut().pop())
+        .unwrap_or_else(|| register_fresh_validator(env, client, creds))
+}
+
 fn seed_validators(env: &Env, client: &VerificationContractClient, n: u32) {
     let creds = [
-        CREDENTIALS, CRED2, CRED3, CRED4, CRED5,
-        "Extra-License-A-2026", "Extra-License-B-2026", "Extra-License-C-2026",
-        "Extra-License-D-2026", "Extra-License-E-2026",
+        CREDENTIALS,
+        CRED2,
+        CRED3,
+        CRED4,
+        CRED5,
+        "Extra-License-A-2026",
+        "Extra-License-B-2026",
+        "Extra-License-C-2026",
+        "Extra-License-D-2026",
+        "Extra-License-E-2026",
     ];
     for i in 0..n {
         let c = creds[(i as usize) % creds.len()];
@@ -119,8 +153,10 @@ fn seed_validators(env: &Env, client: &VerificationContractClient, n: u32) {
     }
 }
 
-
 fn file_jury_dispute(env: &Env, client: &VerificationContractClient, player: &Address) {
+    // Only validators registered strictly before filing may vote (#1375), so
+    // file one second after the validators set up so far.
+    env.ledger().with_mut(|l| l.timestamp += 1);
     // impact_score >= default threshold (100) → jury path
     client.dispute_milestone(
         player,
@@ -132,8 +168,11 @@ fn file_jury_dispute(env: &Env, client: &VerificationContractClient, player: &Ad
 }
 
 /// Creates a milestone and files a jury dispute. Returns the approver wallet.
+///
+/// Also registers a pool of eligible jurors before filing, which later
+/// `reg_validator` calls hand out.
 fn setup_jury_dispute(env: &Env, client: &VerificationContractClient, player: &Address) -> Address {
-    let validator = reg_validator(env, client, CREDENTIALS);
+    let validator = register_fresh_validator(env, client, CREDENTIALS);
     client.approve_milestone(
         &validator,
         &1u64,
@@ -141,6 +180,10 @@ fn setup_jury_dispute(env: &Env, client: &VerificationContractClient, player: &A
         &String::from_str(env, CID_1),
         &None,
     );
+    let jurors: std::vec::Vec<Address> = (0..8)
+        .map(|_| register_fresh_validator(env, client, CRED2))
+        .collect();
+    JUROR_POOL.with(|pool| *pool.borrow_mut() = jurors);
     file_jury_dispute(env, client, player);
     validator
 }
@@ -306,6 +349,17 @@ fn test_eligibility_conflict_of_interest_original_approver() {
     assert_eq!(result, Err(Ok(VerificationError::ConflictOfInterest)));
 }
 
+/// Validators registered after the dispute was filed cannot vote (#1375).
+#[test]
+fn test_eligibility_registered_after_filing_rejected() {
+    let (env, client, _admin, player) = setup();
+    setup_jury_dispute(&env, &client, &player);
+
+    let late = register_fresh_validator(&env, &client, CRED3);
+    let result = client.try_cast_dispute_vote(&late, &1u64, &1u32, &true);
+    assert_eq!(result, Err(Ok(VerificationError::NotEligibleJuror)));
+}
+
 #[test]
 fn test_eligibility_already_voted() {
     let (env, client, _admin, player) = setup();
@@ -419,16 +473,9 @@ fn test_tally_tie_break_resolves_not_upheld() {
         &String::from_str(&env, CID_1),
         &None,
     );
-    client.dispute_milestone(
-        &player,
-        &1u64,
-        &1u32,
-        &String::from_str(&env, REASON),
-        &100u32,
-    );
-
     let v1 = reg_validator(&env, &client, CRED2);
     let v2 = reg_validator(&env, &client, CRED3);
+    file_jury_dispute(&env, &client, &player);
 
     // 1 for, 1 against — tied at quorum=2
     client.cast_dispute_vote(&v1, &1u64, &1u32, &true);
@@ -569,18 +616,11 @@ fn test_adversarial_tied_at_quorum_refuses_early_close_then_resolves_false() {
         &String::from_str(&env, CID_1),
         &None,
     );
-    client.dispute_milestone(
-        &player,
-        &1u64,
-        &1u32,
-        &String::from_str(&env, REASON),
-        &100u32,
-    );
-
     let v1 = reg_validator(&env, &client, CRED2);
     let v2 = reg_validator(&env, &client, CRED3);
     let v3 = reg_validator(&env, &client, CRED4);
     let v4 = reg_validator(&env, &client, CRED5);
+    file_jury_dispute(&env, &client, &player);
 
     // 2 for, 2 against — tied at quorum=4
     client.cast_dispute_vote(&v1, &1u64, &1u32, &true);

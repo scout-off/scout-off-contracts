@@ -56,9 +56,10 @@ fn attest(
 #[test]
 fn mismatched_description_is_rejected() {
     let (env, client) = setup();
-    client.set_milestone_threshold(&3u32);
     let v1 = register(&env, &client);
     let v2 = register(&env, &client);
+    register(&env, &client); // a threshold of 3 needs 3 active validators (#1395)
+    client.set_milestone_threshold(&3u32);
     let player = 1u64;
     let evidence = cid(&env);
     let d1 = String::from_str(&env, "U17 national team selection");
@@ -89,9 +90,9 @@ fn mismatched_description_is_rejected() {
 #[test]
 fn matching_description_still_commits() {
     let (env, client) = setup();
-    client.set_milestone_threshold(&2u32);
     let v1 = register(&env, &client);
     let v2 = register(&env, &client);
+    client.set_milestone_threshold(&2u32);
     let player = 2u64;
     let evidence = cid(&env);
     let desc = String::from_str(&env, "hat-trick in cup final");

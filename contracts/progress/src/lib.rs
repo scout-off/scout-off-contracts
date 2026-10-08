@@ -1,49 +1,19 @@
-#![cfg_attr(target_family = "wasm", no_std)]
 #![no_std]
 
 mod errors;
 mod events;
 mod types;
 
-use errors::ProgressError;
-use scoutchain_shared_types::{require_admin, ContractHealth, MigrationStatus, ProgressLevel};
-use types::{DataKey, ProgressEntry, CODE_SCHEMA_VERSION};
 pub use errors::ProgressError;
 use scoutchain_shared_types::{
     read_wiring_link, require_admin, safe_math::safe_add_u32, write_wiring_link, ContractHealth,
-    ProgressLevel,
+    MigrationStatus, ProgressLevel,
 };
+use types::CODE_SCHEMA_VERSION;
 pub use types::{DataKey, FrontierPeak, HistoryProofStep, ProgressEntry, ProgressWiringState};
 
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, String, Vec};
-
-// Generated client for the registration contract — used to sync a player's
-// level back after a dispute reset. The registration contract must already be
-// deployed and its address set via `set_registration_contract`; without it the
-// level sync is simply skipped.
-mod registration_contract {
-    soroban_sdk::contractimport!(
-        file = "fixtures/scoutchain_registration.wasm"
-    );
-}
-
-/// The imported WASM carries its own `ProgressLevel` type, distinct from the
-/// one in shared-types, so the level has to be translated before it crosses the
-/// contract boundary. Both enums are declared in the same order, so this is a
-/// positional match rather than a string or numeric round-trip.
-fn to_imported_level(level: &ProgressLevel) -> registration_contract::ProgressLevel {
-    match level {
-        ProgressLevel::Unverified => registration_contract::ProgressLevel::Unverified,
-        ProgressLevel::VerifiedIdentity => {
-            registration_contract::ProgressLevel::VerifiedIdentity
-        }
-        ProgressLevel::PerformanceMilestones => {
-            registration_contract::ProgressLevel::PerformanceMilestones
-        }
-        ProgressLevel::EliteTier => registration_contract::ProgressLevel::EliteTier,
-    }
-}
 
 const INSTANCE_TTL_MIN: u32 = 100;
 const INSTANCE_TTL_MAX: u32 = 500;
@@ -57,10 +27,6 @@ const PERSISTENT_TTL_MAX: u32 = 518_400;
 // Admin key bumped conservatively; syncs with registration contract to ensure
 // cross-contract admin operations remain valid.
 const ADMIN_BUMP_LEDGERS: u32 = 518_400;
-
-// Bump applied to the admin key on every privileged call, so the admin address
-// cannot lapse out of persistent storage between privileged calls.
-const ADMIN_BUMP_LEDGERS: u32 = 100_000;
 
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const HISTORY_PAGE_SIZE: u32 = 8;
@@ -336,15 +302,11 @@ impl ProgressContract {
         );
 
         // Sync to registration contract if set
-        if let Some(reg_contract) = env
-            .storage()
-            .instance()
-            .get::<DataKey, Address>(&DataKey::RegistrationContract)
-        {
-            let reg_client = registration_contract::Client::new(&env, &reg_contract);
-            match reg_client.try_set_player_level(&player_id, &to_imported_level(&target_level)) {
-                Ok(Ok(())) => {}
-                _ => return Err(ProgressError::RegistrationCallFailed),
+        let reg_client = registration_contract::Client::new(&env, &reg_contract);
+        match reg_client.try_set_player_level(&player_id, &target_level) {
+            Ok(Ok(())) => {}
+            Err(Ok(registration_contract::RegClientError::PlayerNotFound)) => {
+                return Err(ProgressError::PlayerNotRegistered)
             }
             _ => return Err(ProgressError::RegistrationCallFailed),
         }
@@ -453,15 +415,11 @@ impl ProgressContract {
         );
 
         // Sync to registration contract if set
-        if let Some(reg_contract) = env
-            .storage()
-            .instance()
-            .get::<DataKey, Address>(&DataKey::RegistrationContract)
-        {
-            let reg_client = registration_contract::Client::new(&env, &reg_contract);
-            match reg_client.try_set_player_level(&player_id, &to_imported_level(&new_level)) {
-                Ok(Ok(())) => {}
-                _ => return Err(ProgressError::RegistrationCallFailed),
+        let reg_client = registration_contract::Client::new(&env, &reg_contract);
+        match reg_client.try_set_player_level(&player_id, &new_level) {
+            Ok(Ok(())) => {}
+            Err(Ok(registration_contract::RegClientError::PlayerNotFound)) => {
+                return Err(ProgressError::PlayerNotRegistered)
             }
             _ => return Err(ProgressError::RegistrationCallFailed),
         }
@@ -613,8 +571,8 @@ impl ProgressContract {
 
         let effective_limit = limit.clamp(1, MAX_PAGE);
         let start = offset.saturating_add(1); // entries are 1-indexed
-        // Use saturating_add / saturating_sub to prevent overflow when
-        // start or effective_limit are near u32::MAX.
+                                              // Use saturating_add / saturating_sub to prevent overflow when
+                                              // start or effective_limit are near u32::MAX.
         let end = start
             .saturating_add(effective_limit)
             .saturating_sub(1)
@@ -780,15 +738,9 @@ impl ProgressContract {
         let pages_to_scan = total_pages.min(MAX_PAGES_SCAN);
 
         let mut result: Vec<ProgressEntry> = Vec::new(&env);
-        let mut scanned = 0u32;
 
-        // Scan from newest page backwards
-        for page_index in (0..total_pages).rev() {
-            if scanned >= pages_to_scan {
-                break;
-            }
-            scanned += 1;
-
+        // Scan from newest page backwards, at most `pages_to_scan` pages.
+        for page_index in (0..total_pages).rev().take(pages_to_scan as usize) {
             let page_key = DataKey::HistoryPage(player_id, page_index);
             let page: Vec<ProgressEntry> = match env.storage().persistent().get(&page_key) {
                 Some(p) => p,
@@ -1009,7 +961,12 @@ impl ProgressContract {
     pub fn open_migration_window(env: Env) -> Result<(), ProgressError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         Self::require_initialized(&env)?;
-        if env.storage().instance().get::<DataKey, bool>(&DataKey::MigrationWindowSealed).unwrap_or(false) {
+        if env
+            .storage()
+            .instance()
+            .get::<DataKey, bool>(&DataKey::MigrationWindowSealed)
+            .unwrap_or(false)
+        {
             return Err(ProgressError::MigrationWindowSealed);
         }
         env.storage()
@@ -1404,11 +1361,7 @@ impl ProgressContract {
             cursor = cursor.saturating_add(1);
 
             let counter_key = DataKey::HistoryCounter(cursor);
-            let count: u32 = env
-                .storage()
-                .persistent()
-                .get(&counter_key)
-                .unwrap_or(0u32);
+            let count: u32 = env.storage().persistent().get(&counter_key).unwrap_or(0u32);
             let vec_key = DataKey::HistoryVec(cursor);
 
             if count > 0 && !env.storage().persistent().has(&vec_key) {
@@ -1958,17 +1911,6 @@ impl ProgressContract {
         }
         Ok(())
     }
-
-    fn require_admin(env: &Env) -> Result<Address, ProgressError> {
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(ProgressError::NotInitialized)?;
-        admin.require_auth();
-        env.storage().persistent().extend_ttl(&DataKey::Admin, ADMIN_BUMP_LEDGERS, ADMIN_BUMP_LEDGERS);
-        Ok(admin)
-    }
 }
 
 // =============================================================================
@@ -1981,6 +1923,23 @@ mod tests {
         testutils::{Address as _, Events as _, MockAuth, MockAuthInvoke},
         vec, Env, IntoVal, Symbol,
     };
+
+    /// Registration stand-in that accepts every level sync. Since #1409,
+    /// `advance_level` / `reset_player_level` fail closed with
+    /// `RegistrationNotConfigured` unless a registration contract is wired;
+    /// these unit tests are about progress itself, so they wire this stub.
+    #[soroban_sdk::contract]
+    struct RegistrationStub;
+
+    #[soroban_sdk::contractimpl]
+    impl RegistrationStub {
+        pub fn set_player_level(_env: Env, _player_id: u64, _level: ProgressLevel) {}
+    }
+
+    fn wire_registration_stub(env: &Env, client: &ProgressContractClient) {
+        let reg_id = env.register(RegistrationStub, ());
+        client.set_registration_contract(&reg_id);
+    }
 
     #[test]
     fn test_get_level_unverified_for_new_player() {
@@ -2129,6 +2088,7 @@ mod tests {
             }
         }
         client.set_verification_contract(&ver_id);
+        wire_registration_stub(&env, &client);
 
         // Caller identity used across tests to invoke advance_level. Auth is
         // mocked in these tests, so its identity need not match the validator
@@ -2143,9 +2103,9 @@ mod tests {
     /// is needed for that — hence this variant, which returns it.
     ///
     /// No verification contract is wired: the tests that use this drive
-    /// `reset_player_level` (admin-only, and it skips the cross-contract level
-    /// sync when `RegistrationContract` is unset), which is the only path that
-    /// grows history without bound.
+    /// `reset_player_level` (admin-only), which is the only path that grows
+    /// history without bound. Registration is wired to the accepting stub
+    /// because `reset_player_level` requires it (#1409).
     fn setup_for_storage_tests() -> (Env, ProgressContractClient<'static>, Address) {
         let env = Env::default();
         env.mock_all_auths();
@@ -2153,7 +2113,19 @@ mod tests {
         let client = ProgressContractClient::new(&env, &id);
         let admin = Address::generate(&env);
         client.initialize(&admin);
+        wire_registration_stub(&env, &client);
         (env, client, id)
+    }
+
+    /// Append one history entry via `reset_player_level`, alternating the
+    /// target between `Unverified` and `VerifiedIdentity` so the no-op guard
+    /// (`NoLevelChange`, #1464) never trips.
+    fn append_reset(client: &ProgressContractClient, player: u64) {
+        let target = match client.get_level(&player) {
+            ProgressLevel::Unverified => ProgressLevel::VerifiedIdentity,
+            _ => ProgressLevel::Unverified,
+        };
+        client.reset_player_level(&player, &target);
     }
 
     #[test]
@@ -2713,6 +2685,7 @@ mod tests {
             &None,
         );
         client.set_verification_contract(&ver_id);
+        wire_registration_stub(&env, &client);
 
         client.advance_level(&milestone_validator, &player_id, &1u32);
 
@@ -2752,6 +2725,7 @@ mod tests {
         client.initialize(&admin);
         let verification = Address::generate(&env);
         client.set_verification_contract(&verification);
+        wire_registration_stub(&env, &client);
 
         let validator = Address::generate(&env);
         let player_id = 1u64;
@@ -2821,7 +2795,10 @@ mod tests {
 
         // Advance to VerifiedIdentity
         client.advance_level(&validator, &player_id, &1u32);
-        assert_eq!(client.get_level(&player_id), ProgressLevel::VerifiedIdentity);
+        assert_eq!(
+            client.get_level(&player_id),
+            ProgressLevel::VerifiedIdentity
+        );
         assert_eq!(client.get_history_count(&player_id), 1);
 
         // Attempt to reset to current level — must be rejected
@@ -2829,7 +2806,10 @@ mod tests {
         assert_eq!(result, Err(Ok(ProgressError::NoLevelChange)));
 
         // Level and history count must be unchanged
-        assert_eq!(client.get_level(&player_id), ProgressLevel::VerifiedIdentity);
+        assert_eq!(
+            client.get_level(&player_id),
+            ProgressLevel::VerifiedIdentity
+        );
         assert_eq!(
             client.get_history_count(&player_id),
             1,
@@ -2968,6 +2948,7 @@ mod tests {
         prog_client.set_verification_contract(&ver_id);
         let scout_access = Address::generate(&env);
         prog_client.set_scout_access_contract(&scout_access);
+        wire_registration_stub(&env, &prog_client);
 
         let validator = Address::generate(&env);
         ver_client.register_validator(
@@ -3329,7 +3310,7 @@ mod tests {
         // reset_player_level is the admin-only path that grows history without
         // bound — exactly the growth #1368 is about.
         for _ in 0..12 {
-            client.reset_player_level(&player, &ProgressLevel::VerifiedIdentity);
+            append_reset(&client, player);
         }
         let n = client.get_history_count(&player);
         assert_eq!(n, 12);
@@ -3366,7 +3347,7 @@ mod tests {
         let (env, client, id) = setup_for_storage_tests();
         let player = 55u64;
         for _ in 0..5 {
-            client.reset_player_level(&player, &ProgressLevel::VerifiedIdentity);
+            append_reset(&client, player);
         }
 
         // Simulate the pre-upgrade state: drop the accumulator, leaving the
@@ -3381,7 +3362,7 @@ mod tests {
         let root_before = client.get_progress_root(&player);
 
         // Next append must rebuild the frontier rather than skip or mis-fold it.
-        client.reset_player_level(&player, &ProgressLevel::VerifiedIdentity);
+        append_reset(&client, player);
         let n = client.get_history_count(&player);
         assert_eq!(n, 6);
 
@@ -3411,7 +3392,7 @@ mod tests {
         let (env, client, id) = setup_for_storage_tests();
         let player = 55u64;
         for _ in 0..5 {
-            client.reset_player_level(&player, &ProgressLevel::VerifiedIdentity);
+            append_reset(&client, player);
         }
         env.as_contract(&id, || {
             env.storage()
@@ -3420,7 +3401,7 @@ mod tests {
         });
 
         for _ in 0..3 {
-            client.reset_player_level(&player, &ProgressLevel::VerifiedIdentity);
+            append_reset(&client, player);
         }
         let n = client.get_history_count(&player);
         assert_eq!(n, 8);
@@ -3441,7 +3422,7 @@ mod tests {
         let (env, client, id) = setup_for_storage_tests();
         let player = 20u64;
         for _ in 0..4 {
-            client.reset_player_level(&player, &ProgressLevel::VerifiedIdentity);
+            append_reset(&client, player);
         }
         // Below the bound: proof generation succeeds.
         let ok = client.try_get_history_proof(&player, &2u32);
@@ -3577,21 +3558,4 @@ mod tests {
             "expected HistoryEntryNotFound for missing history index"
         );
     }
-
-    #[test]
-    fn test_get_history_entry_returns_history_entry_not_found() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let player_id = 42u64;
-        // No level advances — index 1 does not exist
-        let result = client.try_get_history_entry(&player_id, &1u32);
-        assert_eq!(
-            result,
-            Err(Ok(ProgressError::HistoryEntryNotFound)),
-            "expected HistoryEntryNotFound for out-of-range index"
-        );
-    }
-}
 }

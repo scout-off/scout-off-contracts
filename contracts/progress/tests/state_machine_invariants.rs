@@ -13,7 +13,7 @@
 //! proptest over a finite action domain) rather than proptest macros, which
 //! don't work in no_std WASM context.
 
-use scoutchain_progress::{ProgressContract, ProgressContractClient};
+use scoutchain_progress::{ProgressContract, ProgressContractClient, ProgressError};
 use scoutchain_registration::{PlayerVitals, RegistrationContract, RegistrationContractClient};
 use scoutchain_shared_types::ProgressLevel;
 use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
@@ -21,7 +21,7 @@ use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
 fn valid_vitals(env: &Env) -> PlayerVitals {
     PlayerVitals {
         age: 20,
-        position: String::from_str(env, "Forward"),
+        position: String::from_str(env, "ST"),
         region: String::from_str(env, "EU"),
         nationality: String::from_str(env, "FR"),
     }
@@ -70,13 +70,19 @@ fn setup() -> Harness {
     client.set_registration_contract(&reg_id);
     registration.set_progress_contract(&id);
 
-    Harness { client, registration, caller }
+    Harness {
+        client,
+        registration,
+        caller,
+    }
 }
 
 /// Register a player and return the assigned player ID.
 fn register_player(h: &Harness) -> u64 {
-    let wallet = Address::generate(&h.env);
-    h.registration.register_player(&wallet, &valid_vitals(&h.env), &one_hash(&h.env)).unwrap()
+    let env = &h.client.env;
+    let wallet = Address::generate(env);
+    h.registration
+        .register_player(&wallet, &valid_vitals(env), &one_hash(env))
 }
 
 /// Convert ProgressLevel to its numeric tier (0–3).
@@ -230,9 +236,12 @@ fn test_multiple_players_independent() {
     }
     // Player B: only one step
     h.client.advance_level(&h.caller, &pid_b, &1u32);
-    // Player C: reset immediately (starts at 0, stays at 0)
-    h.client
-        .reset_player_level(&pid_c, &ProgressLevel::Unverified);
+    // Player C: a reset to its current level is a rejected no-op (#1464).
+    assert_eq!(
+        h.client
+            .try_reset_player_level(&pid_c, &ProgressLevel::Unverified),
+        Err(Ok(ProgressError::NoLevelChange))
+    );
 
     assert_eq!(h.client.get_level(&pid_a), ProgressLevel::EliteTier);
     assert_eq!(h.client.get_level(&pid_b), ProgressLevel::VerifiedIdentity);
@@ -306,16 +315,23 @@ fn test_exhaustive_action_sequences() {
                         );
                     }
                 }
-                Action::ResetUnverified => {
-                    h.client
-                        .reset_player_level(&pid, &ProgressLevel::Unverified);
-                    expected = ProgressLevel::Unverified;
-                    assert_eq!(h.client.get_level(&pid), expected);
-                }
-                Action::ResetVerifiedIdentity => {
-                    h.client
-                        .reset_player_level(&pid, &ProgressLevel::VerifiedIdentity);
-                    expected = ProgressLevel::VerifiedIdentity;
+                Action::ResetUnverified | Action::ResetVerifiedIdentity => {
+                    let target = match action {
+                        Action::ResetUnverified => ProgressLevel::Unverified,
+                        _ => ProgressLevel::VerifiedIdentity,
+                    };
+                    let result = h.client.try_reset_player_level(&pid, &target);
+                    if target == expected {
+                        // No-op resets are rejected and change nothing (#1464).
+                        assert_eq!(
+                            result,
+                            Err(Ok(ProgressError::NoLevelChange)),
+                            "no-op reset must be rejected in seq {seq:?}"
+                        );
+                    } else {
+                        assert!(result.is_ok(), "reset failed in seq {seq:?}: {result:?}");
+                        expected = target;
+                    }
                     assert_eq!(h.client.get_level(&pid), expected);
                 }
             }

@@ -9,6 +9,7 @@ use scoutchain_scout_access::{
     ScoutAccessContractClient, ScoutAccessError, Subscription, SubscriptionTier, TrialEscrow,
     TrialOffer,
 };
+use scoutchain_shared_types::testutils::count_events;
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
     Address, Env, String, Symbol,
@@ -555,22 +556,18 @@ fn test_reopening_after_close_fails() {
 #[test]
 fn test_migration_window_events_emitted() {
     let (env, client, _admin) = setup();
-    
-    // Open migration window - should emit event
+
     client.open_migration_window();
-    let events = env.events().all();
-    let open_events = events.filter_by_contract(&client.address).filter(|e| {
-        let topic = e.topic;
-        topic.get_unchecked::<Symbol>(0).to_string() == "migration_window_opened"
-    });
-    assert_eq!(open_events.count(), 1, "migration_window_opened event must be emitted");
-    
-    // Close migration window - should emit event
+    assert_eq!(
+        count_events(&env, "migration_window_opened", Some(&client.address)),
+        1,
+        "migration_window_opened event must be emitted"
+    );
+
     client.close_migration_window();
-    let events = env.events().all();
-    let close_events = events.filter_by_contract(&client.address).filter(|e| {
-        let topic = e.topic;
-        topic.get_unchecked::<Symbol>(0).to_string() == "migration_window_closed"
-    });
-    assert_eq!(close_events.count(), 1, "migration_window_closed event must be emitted");
+    assert_eq!(
+        count_events(&env, "migration_window_closed", Some(&client.address)),
+        1,
+        "migration_window_closed event must be emitted"
+    );
 }

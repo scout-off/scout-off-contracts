@@ -10,8 +10,9 @@
 //! 6. Unknown scout_id returns ScoutNotFound.
 
 use scoutchain_registration::{RegistrationContract, RegistrationContractClient, ScoutStatus};
-use soroban_sdk::testutils::{Address as _, Events, MockAuth, MockAuthInvoke};
-use soroban_sdk::{vec, Address, Env, String, Val, Vec};
+use scoutchain_shared_types::testutils::count_events;
+use soroban_sdk::testutils::{Address as _, MockAuth, MockAuthInvoke};
+use soroban_sdk::{vec, Address, Env, IntoVal, String, Val, Vec};
 
 struct Harness {
     env: Env,
@@ -22,7 +23,7 @@ struct Harness {
 
 fn auth(env: &Env, address: &Address, contract_id: &Address, fn_name: &str, args: Vec<Val>) {
     env.mock_auths(&[MockAuth {
-        address: address.clone(),
+        address,
         invoke: &MockAuthInvoke {
             contract: contract_id,
             fn_name,
@@ -43,7 +44,7 @@ fn setup() -> Harness {
         &admin,
         &contract_id,
         "initialize",
-        vec![&env, admin.to_val()],
+        vec![&env, admin.into_val(&env)],
     );
     client.initialize(&admin);
 
@@ -54,7 +55,11 @@ fn setup() -> Harness {
         &wallet,
         &contract_id,
         "register_scout",
-        vec![&env, wallet.to_val(), String::from_str(&env, "EU").to_val()],
+        vec![
+            &env,
+            wallet.into_val(&env),
+            String::from_str(&env, "EU").into_val(&env),
+        ],
     );
     let scout_id = client.register_scout(&wallet, &String::from_str(&env, "EU"));
 
@@ -84,7 +89,7 @@ fn test_deactivate_sets_deactivated_status() {
         &h.admin,
         &h.contract_id,
         "deactivate_scout",
-        vec![&h.env, (1u64).to_val()],
+        vec![&h.env, 1u64.into_val(&h.env)],
     );
     h.client.deactivate_scout(&1);
 
@@ -101,7 +106,7 @@ fn test_deactivate_idempotent() {
         &h.admin,
         &h.contract_id,
         "deactivate_scout",
-        vec![&h.env, (1u64).to_val()],
+        vec![&h.env, 1u64.into_val(&h.env)],
     );
     h.client.deactivate_scout(&1);
 
@@ -111,7 +116,7 @@ fn test_deactivate_idempotent() {
         &h.admin,
         &h.contract_id,
         "deactivate_scout",
-        vec![&h.env, (1u64).to_val()],
+        vec![&h.env, 1u64.into_val(&h.env)],
     );
     h.client.deactivate_scout(&1);
 
@@ -130,7 +135,7 @@ fn test_reactivate_clears_deactivated_status() {
         &h.admin,
         &h.contract_id,
         "deactivate_scout",
-        vec![&h.env, (1u64).to_val()],
+        vec![&h.env, 1u64.into_val(&h.env)],
     );
     h.client.deactivate_scout(&1);
     assert!(h.client.is_scout_deactivated(&1));
@@ -141,7 +146,7 @@ fn test_reactivate_clears_deactivated_status() {
         &h.admin,
         &h.contract_id,
         "reactivate_scout",
-        vec![&h.env, (1u64).to_val()],
+        vec![&h.env, 1u64.into_val(&h.env)],
     );
     h.client.reactivate_scout(&1);
 
@@ -159,7 +164,7 @@ fn test_reactivate_idempotent() {
         &h.admin,
         &h.contract_id,
         "reactivate_scout",
-        vec![&h.env, (1u64).to_val()],
+        vec![&h.env, 1u64.into_val(&h.env)],
     );
     h.client.reactivate_scout(&1);
 
@@ -178,7 +183,7 @@ fn test_deactivate_rejects_non_admin() {
         &random,
         &h.contract_id,
         "deactivate_scout",
-        vec![&h.env, (1u64).to_val()],
+        vec![&h.env, 1u64.into_val(&h.env)],
     );
     let result = h.client.try_deactivate_scout(&1);
     assert!(result.is_err(), "non-admin must be rejected");
@@ -194,7 +199,7 @@ fn test_deactivate_unknown_scout() {
         &h.admin,
         &h.contract_id,
         "deactivate_scout",
-        vec![&h.env, (999u64).to_val()],
+        vec![&h.env, 999u64.into_val(&h.env)],
     );
     let result = h.client.try_deactivate_scout(&999);
     assert!(result.is_err(), "unknown scout must be rejected");
@@ -210,15 +215,11 @@ fn test_deactivate_emits_event() {
         &h.admin,
         &h.contract_id,
         "deactivate_scout",
-        vec![&h.env, (1u64).to_val()],
+        vec![&h.env, 1u64.into_val(&h.env)],
     );
     h.client.deactivate_scout(&1);
 
-    let events = h.env.events().all();
-    let found = events.iter().any(|e| {
-        e.0 == h.contract_id
-            && e.1.to_string().contains("scout_deactivated")
-    });
+    let found = count_events(&h.env, "scout_deactivated", Some(&h.contract_id)) > 0;
     assert!(found, "scout_deactivated event must be emitted");
 }
 
@@ -233,7 +234,7 @@ fn test_reactivate_emits_event() {
         &h.admin,
         &h.contract_id,
         "deactivate_scout",
-        vec![&h.env, (1u64).to_val()],
+        vec![&h.env, 1u64.into_val(&h.env)],
     );
     h.client.deactivate_scout(&1);
 
@@ -243,15 +244,11 @@ fn test_reactivate_emits_event() {
         &h.admin,
         &h.contract_id,
         "reactivate_scout",
-        vec![&h.env, (1u64).to_val()],
+        vec![&h.env, 1u64.into_val(&h.env)],
     );
     h.client.reactivate_scout(&1);
 
-    let events = h.env.events().all();
-    let found = events.iter().any(|e| {
-        e.0 == h.contract_id
-            && e.1.to_string().contains("scout_reactivated")
-    });
+    let found = count_events(&h.env, "scout_reactivated", Some(&h.contract_id)) > 0;
     assert!(found, "scout_reactivated event must be emitted");
 }
 
@@ -276,7 +273,7 @@ fn test_full_round_trip() {
         &h.admin,
         &h.contract_id,
         "deactivate_scout",
-        vec![&h.env, (1u64).to_val()],
+        vec![&h.env, 1u64.into_val(&h.env)],
     );
     h.client.deactivate_scout(&1);
     assert_eq!(h.client.get_scout_status(&1), ScoutStatus::Deactivated);
@@ -287,7 +284,7 @@ fn test_full_round_trip() {
         &h.admin,
         &h.contract_id,
         "reactivate_scout",
-        vec![&h.env, (1u64).to_val()],
+        vec![&h.env, 1u64.into_val(&h.env)],
     );
     h.client.reactivate_scout(&1);
     assert_eq!(h.client.get_scout_status(&1), ScoutStatus::Active);
@@ -298,7 +295,7 @@ fn test_full_round_trip() {
         &h.admin,
         &h.contract_id,
         "deactivate_scout",
-        vec![&h.env, (1u64).to_val()],
+        vec![&h.env, 1u64.into_val(&h.env)],
     );
     h.client.deactivate_scout(&1);
     assert_eq!(h.client.get_scout_status(&1), ScoutStatus::Deactivated);
