@@ -237,7 +237,8 @@ stellar contract invoke \
 
 echo ""
 echo "==> Setting registration cooldown..."
-REG_COOLDOWN_SECS=$(python3 -c "import json; print(json.load(open('config/${NETWORK}.json')).get('reg_cooldown_secs', 86400))")
+# Networks without a config file (e.g. local) fall back to the 24h default.
+REG_COOLDOWN_SECS=$(python3 -c "import json, os; p='config/${NETWORK}.json'; print(json.load(open(p)).get('reg_cooldown_secs', 86400) if os.path.exists(p) else 86400)")
 stellar contract invoke \
   --id "$REGISTRATION_CONTRACT_ID" \
   --source "$DEPLOYER" \
