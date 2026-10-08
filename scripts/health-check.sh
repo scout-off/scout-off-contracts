@@ -65,13 +65,13 @@ try:
         print("NOT_INITIALIZED")
     elif paused:
         print("PAUSED")
-    elif '"$NETWORK"' == "mainnet" and mig_open:
+    elif sys.argv[1] == "mainnet" and mig_open:
         print("MIGRATION_WINDOW_OPEN_MAINNET")
     else:
         print("OK")
 except Exception as e:
     print(f"ERROR: {e}")
-' <<< "$result")
+' "$NETWORK" <<< "$result")
 
   if [[ "$health_status" == "OK" ]]; then
     echo "    OK: $name is healthy."
