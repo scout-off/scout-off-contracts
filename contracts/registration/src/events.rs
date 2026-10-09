@@ -1,5 +1,6 @@
 #![allow(deprecated, dead_code)]
-use soroban_sdk::{Address, Env, Symbol};
+use scoutchain_shared_types::ProgressLevel;
+use soroban_sdk::{Address, BytesN, Env, String, Symbol};
 
 use crate::types::MigrationRole;
 
@@ -15,8 +16,12 @@ pub const SCOUT_DEACTIVATED: &str = "scout_deactivated";
 pub const SCOUT_REACTIVATED: &str = "scout_reactivated";
 pub const ADMIN_TRANSFER_PROPOSED: &str = "admin_transfer_proposed";
 pub const ADMIN_TRANSFERRED: &str = "admin_transferred";
+pub const CONTRACT_UPGRADED: &str = "contract_upgraded";
 pub const MIGRATION_REDEEMED: &str = "migration_redeemed";
 pub const WIRING_UPDATED: &str = "wiring_updated";
+pub const CONTRACT_PAUSED: &str = "contract_paused";
+pub const CONTRACT_UNPAUSED: &str = "contract_unpaused";
+pub const REG_COOLDOWN_UPDATED: &str = "reg_cooldown_updated";
 
 /// topics: (event_name, admin, link)  data: (new_address, new_epoch)
 ///
@@ -81,11 +86,17 @@ pub fn profile_updated(env: &Env, player_id: u64, wallet: &Address) {
     );
 }
 
-/// topics: (event_name, admin)  data: player_id
-pub fn player_deregistered(env: &Env, player_id: u64, admin: &Address) {
+/// topics: (event_name, admin)  data: (player_id, level, region)
+pub fn player_deregistered(
+    env: &Env,
+    player_id: u64,
+    level: &ProgressLevel,
+    region: &String,
+    admin: &Address,
+) {
     env.events().publish(
         (Symbol::new(env, "player_deregistered"), admin.clone()),
-        player_id,
+        (player_id, level.clone(), region.clone()),
     );
 }
 
@@ -105,12 +116,12 @@ pub fn player_reactivated(env: &Env, player_id: u64, admin: &Address) {
     );
 }
 
-/// topics: (event_name, caller)  data: player_id
+/// topics: (event_name, caller)  data: (player_id, level)
 /// `caller` is the progress contract address performing the level sync.
-pub fn player_level_synced(env: &Env, player_id: u64, caller: &Address) {
+pub fn player_level_synced(env: &Env, player_id: u64, caller: &Address, level: &ProgressLevel) {
     env.events().publish(
         (Symbol::new(env, "player_level_synced"), caller.clone()),
-        player_id,
+        (player_id, level.clone()),
     );
 }
 
@@ -122,6 +133,14 @@ pub fn scout_verified(env: &Env, scout_id: u64, wallet: &Address) {
     );
 }
 
+/// Emitted before `update_current_contract_wasm` — attributed to the old code version.
+/// topics: (event_name, admin)  data: new_wasm_hash
+pub fn contract_upgraded(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>) {
+    env.events().publish(
+        (Symbol::new(env, CONTRACT_UPGRADED), admin.clone()),
+        new_wasm_hash.clone(),
+    );
+}
 /// topics: (event_name, admin)  data: scout_id
 pub fn scout_deactivated(env: &Env, scout_id: u64, admin: &Address) {
     env.events().publish(
@@ -135,6 +154,14 @@ pub fn scout_reactivated(env: &Env, scout_id: u64, admin: &Address) {
     env.events().publish(
         (Symbol::new(env, SCOUT_REACTIVATED), admin.clone()),
         scout_id,
+    );
+}
+
+/// topics: (event_name, admin)  data: (old_cooldown_secs, new_cooldown_secs)
+pub fn reg_cooldown_updated(env: &Env, admin: &Address, old_cooldown: u64, new_cooldown: u64) {
+    env.events().publish(
+        (Symbol::new(env, REG_COOLDOWN_UPDATED), admin.clone()),
+        (old_cooldown, new_cooldown),
     );
 }
 
@@ -170,4 +197,16 @@ pub fn scout_record_restored(env: &Env, admin: &Address, scout_id: u64) {
         (Symbol::new(env, "scout_record_restored"), admin.clone()),
         scout_id,
     );
+}
+
+/// topics: (event_name, admin)  data: ()
+pub fn contract_paused(env: &Env, admin: &Address) {
+    env.events()
+        .publish((Symbol::new(env, CONTRACT_PAUSED), admin.clone()), ());
+}
+
+/// topics: (event_name, admin)  data: ()
+pub fn contract_unpaused(env: &Env, admin: &Address) {
+    env.events()
+        .publish((Symbol::new(env, CONTRACT_UNPAUSED), admin.clone()), ());
 }

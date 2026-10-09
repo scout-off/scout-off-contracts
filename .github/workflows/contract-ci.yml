@@ -37,10 +37,10 @@ jobs:
         run: cargo update -p ed25519-dalek@3.0.0 --precise 3.0.0-rc.0 || true
 
       - name: Run tests
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
       - name: Test progress contract
-        run: cargo test -p scoutchain-progress -- --nocapture
+        run: cargo test -p scoutchain-progress --locked -- --nocapture
 
       - name: CPU-instruction cost budget report
         # cost_budget.rs asserted its own pass/fail already as part of the
@@ -51,7 +51,7 @@ jobs:
         # budget.
         run: |
           set -euo pipefail
-          cargo test --workspace --test cost_budget -- --nocapture --test-threads=1 \
+          cargo test --workspace --locked --test cost_budget -- --nocapture --test-threads=1 \
             | tee cpu-cost-budget-report.txt
 
       - name: Upload CPU-cost budget report artifact
@@ -62,7 +62,7 @@ jobs:
           if-no-files-found: error
 
       - name: Build WASM (release)
-        run: cargo build --workspace --target wasm32v1-none --release
+        run: cargo build --workspace --target wasm32v1-none --release --locked
 
   lint:
     name: Lint
@@ -162,7 +162,7 @@ jobs:
           node-version: '20'
 
       - name: Build WASM contracts
-        run: cargo build --workspace --target wasm32v1-none --release
+        run: cargo build --workspace --target wasm32v1-none --release --locked
 
       - name: Start Soroban local sandbox
         run: |
@@ -492,7 +492,7 @@ jobs:
           key: ${{ runner.os }}-cargo-wasm32v1-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build WASM (release)
-        run: cargo build --workspace --target wasm32v1-none --release
+        run: cargo build --workspace --target wasm32v1-none --release --locked
 
       - name: Install Stellar CLI (pinned)
         run: |

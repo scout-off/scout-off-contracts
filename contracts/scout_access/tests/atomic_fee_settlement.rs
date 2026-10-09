@@ -35,6 +35,8 @@
 //! verify the storage mutation and the transfer are both observable, confirming
 //! they happen in the same transaction frame.
 
+mod common;
+
 use scoutchain_progress::{ProgressContract, ProgressContractClient};
 use scoutchain_scout_access::{
     FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
@@ -97,6 +99,7 @@ fn setup() -> Harness {
     let progress_id = env.register(ProgressContract, ());
     let progress = ProgressContractClient::new(&env, &progress_id);
     progress.initialize(&admin);
+    common::wire_registration(&env, None, Some(&progress));
     progress.set_verification_contract(&ver_id);
 
     let xlm = env
@@ -106,6 +109,7 @@ fn setup() -> Harness {
     let sa_id = env.register(ScoutAccessContract, ());
     let scout_access = ScoutAccessContractClient::new(&env, &sa_id);
     scout_access.initialize(&admin, &xlm, &default_fees());
+    common::wire_registration(&env, Some(&scout_access), None);
     scout_access.set_progress_contract(&progress_id);
     progress.set_scout_access_contract(&sa_id);
 

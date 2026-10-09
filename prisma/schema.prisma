@@ -9,3 +9,39 @@ model RevokedToken {
   jti       String   @id
   createdAt DateTime @default(now())
 }
+
+model Player {
+  wallet      String  @unique(map: "idx_players_wallet")
+  playerId    BigInt
+  age         Int
+  position    String
+  region      String
+  nationality String
+  ipfsHashes  String[]
+  level       Int    @default(0)
+  deactivated Boolean @default(false)
+  registeredAt BigInt
+  updatedAt   BigInt
+  createdAt   DateTime @default(now())
+}
+
+model Scout {
+  wallet     String  @unique(map: "idx_scouts_wallet")
+  region     String
+  verified   Boolean @default(false)
+  registeredAt BigInt
+  createdAt  DateTime @default(now())
+}
+
+model Validator {
+  wallet      String  @id
+  credentials String
+  active      Boolean @default(true)
+  registeredAt BigInt
+  createdAt   DateTime @default(now())
+}
+
+model Admin {
+  address   String  @id
+  createdAt DateTime @default(now())
+}

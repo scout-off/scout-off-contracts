@@ -1,5 +1,6 @@
 #![allow(deprecated)]
-use soroban_sdk::{Address, Env, String, Symbol};
+use crate::types::DiversityConfig;
+use soroban_sdk::{Address, BytesN, Env, String, Symbol};
 
 pub const MILESTONE_APPROVED: &str = "milestone_approved";
 pub const VALIDATOR_REGISTERED: &str = "validator_registered";
@@ -16,12 +17,23 @@ pub const PROGRESS_CONTRACT_UPDATED: &str = "progress_contract_updated";
 pub const DISPUTE_RESOLVED: &str = "dispute_resolved";
 pub const ADMIN_TRANSFER_PROPOSED: &str = "admin_transfer_proposed";
 pub const ADMIN_TRANSFERRED: &str = "admin_transferred";
+pub const CONTRACT_UPGRADED: &str = "contract_upgraded";
 pub const ATTESTATION_RECORDED: &str = "attestation_recorded";
 pub const ATTESTATION_WINDOW_EXPIRED: &str = "attestation_window_expired";
 pub const VALIDATOR_PENDING_VOTES_INVALIDATED: &str = "validator_votes_invalidated";
 pub const WIRING_UPDATED: &str = "wiring_updated";
 pub const DISPUTE_VOTE_CAST: &str = "dispute_vote_cast";
 pub const DISPUTE_TALLIED: &str = "dispute_tallied";
+pub const ATTESTATION_KEY_REGISTERED: &str = "attestation_key_registered";
+pub const MIGRATION_WINDOW_OPENED: &str = "migration_window_opened";
+pub const MIGRATION_WINDOW_CLOSED: &str = "migration_window_closed";
+pub const MILESTONE_THRESHOLD_UPDATED: &str = "milestone_threshold_updated";
+pub const MILESTONE_THRESHOLD_UNREACHABLE: &str = "milestone_threshold_unreachable";
+pub const JURY_CONFIG_UPDATED: &str = "jury_config_updated";
+pub const DIVERSITY_CONFIG_UPDATED: &str = "diversity_config_updated";
+pub const MIN_REGION_QUORUM_UPDATED: &str = "min_region_quorum_updated";
+pub const VOTING_WINDOW_SECS_UPDATED: &str = "voting_window_secs_updated";
+pub const REG_COOLDOWN_UPDATED: &str = "reg_cooldown_updated";
 
 /// topics: (event_name, old_admin)  data: new_admin
 pub fn admin_transfer_proposed(env: &Env, old_admin: &Address, new_admin: &Address) {
@@ -64,6 +76,19 @@ pub fn validator_registered(env: &Env, wallet: &Address, credentials: &String) {
     env.events().publish(
         (Symbol::new(env, "validator_registered"), wallet.clone()),
         credentials.clone(),
+    );
+}
+
+/// topics: (event_name, wallet)  data: (public_key, rotated_from)
+pub fn attestation_key_registered(
+    env: &Env,
+    wallet: &Address,
+    public_key: &soroban_sdk::BytesN<32>,
+    rotated_from: &Option<soroban_sdk::BytesN<32>>,
+) {
+    env.events().publish(
+        (Symbol::new(env, ATTESTATION_KEY_REGISTERED), wallet.clone()),
+        (public_key.clone(), rotated_from.clone()),
     );
 }
 
@@ -222,6 +247,28 @@ pub fn level_advancement_skipped(env: &Env, player_id: u64, reason: &String) {
     );
 }
 
+/// Emitted when diversity gating blocks level advancement (the milestone is
+/// committed but the player's level has not advanced because they need more
+/// distinct validator affiliations).
+///
+/// topics: (event_name, player_id)  data: (milestone_index, distinct_affiliations, required)
+///
+/// `distinct_affiliations` is the player's current count of distinct validator
+/// affiliations; `required` is the threshold from `DiversityConfig`. UIs can
+/// show "needs 1 more independent validator" from this data.
+pub fn level_advancement_deferred(
+    env: &Env,
+    player_id: u64,
+    milestone_index: u32,
+    distinct_affiliations: u32,
+    required: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "level_advancement_deferred"), player_id),
+        (milestone_index, distinct_affiliations, required),
+    );
+}
+
 /// Emitted when level advancement is skipped because the progress contract
 /// address has not been configured.  Common during testing without a full
 /// deployment.  In production this indicates a missing wiring step and the
@@ -233,9 +280,7 @@ pub fn progress_contract_not_set(env: &Env, player_id: u64) {
     );
 }
 
-/// Emitted on every accepted `attest_milestone` vote (including the
-/// threshold-crossing one).
-/// topics: (event_name, validator)  data: (player_id, evidence_hash, vote_count, threshold)
+/// topics: (event_name, validator)  data: (player_id, evidence_hash, vote_count, threshold, description_hash)
 pub fn attestation_recorded(
     env: &Env,
     validator: &Address,
@@ -243,10 +288,17 @@ pub fn attestation_recorded(
     evidence_hash: &String,
     vote_count: u32,
     threshold: u32,
+    description_hash: &BytesN<32>,
 ) {
     env.events().publish(
         (Symbol::new(env, ATTESTATION_RECORDED), validator.clone()),
-        (player_id, evidence_hash.clone(), vote_count, threshold),
+        (
+            player_id,
+            evidence_hash.clone(),
+            vote_count,
+            threshold,
+            description_hash.clone(),
+        ),
     );
 }
 
@@ -404,5 +456,125 @@ pub fn dispute_tallied(
     env.events().publish(
         (Symbol::new(env, DISPUTE_TALLIED), player_id),
         (milestone_index, upheld, votes_for, votes_against),
+    );
+}
+
+/// Emitted before `update_current_contract_wasm` — attributed to the old code version.
+/// topics: (event_name, admin)  data: new_wasm_hash
+pub fn contract_upgraded(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>) {
+    env.events().publish(
+        (Symbol::new(env, CONTRACT_UPGRADED), admin.clone()),
+        new_wasm_hash.clone(),
+    );
+}
+
+/// topics: (event_name, admin)  data: ()
+pub fn migration_window_opened(env: &Env, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, MIGRATION_WINDOW_OPENED), admin.clone()),
+        (),
+    );
+}
+
+/// topics: (event_name, admin)  data: ()
+pub fn migration_window_closed(env: &Env, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, MIGRATION_WINDOW_CLOSED), admin.clone()),
+        (),
+    );
+}
+
+// ── Config setter events (issue #1453) ─────────────────────────────────────
+// Every admin config setter emits `(old, new)` so indexers can reconstruct the
+// full configuration history without polling getters.
+
+/// topics: (event_name, admin)  data: (old_threshold, new_threshold)
+pub fn milestone_threshold_updated(env: &Env, admin: &Address, old: u32, new: u32) {
+    env.events().publish(
+        (Symbol::new(env, MILESTONE_THRESHOLD_UPDATED), admin.clone()),
+        (old, new),
+    );
+}
+
+/// Emitted when a revocation leaves fewer active validators than the
+/// configured k-of-n threshold, so new claims can no longer reach commit.
+/// topics: (event_name, admin)  data: (threshold, active_validator_count)
+pub fn milestone_threshold_unreachable(
+    env: &Env,
+    admin: &Address,
+    threshold: u32,
+    active_count: u32,
+) {
+    env.events().publish(
+        (
+            Symbol::new(env, MILESTONE_THRESHOLD_UNREACHABLE),
+            admin.clone(),
+        ),
+        (threshold, active_count),
+    );
+}
+
+/// topics: (event_name, admin)
+/// data: (old_impact_threshold, old_quorum, old_voting_window_secs,
+///        new_impact_threshold, new_quorum, new_voting_window_secs)
+#[allow(clippy::too_many_arguments)]
+pub fn jury_config_updated(
+    env: &Env,
+    admin: &Address,
+    old_impact_threshold: u32,
+    old_quorum: u32,
+    old_voting_window_secs: u64,
+    new_impact_threshold: u32,
+    new_quorum: u32,
+    new_voting_window_secs: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, JURY_CONFIG_UPDATED), admin.clone()),
+        (
+            old_impact_threshold,
+            old_quorum,
+            old_voting_window_secs,
+            new_impact_threshold,
+            new_quorum,
+            new_voting_window_secs,
+        ),
+    );
+}
+
+/// topics: (event_name, admin)  data: (old_config, new_config)
+/// `old_config` is `None` when no diversity config had been set before.
+pub fn diversity_config_updated(
+    env: &Env,
+    admin: &Address,
+    old: &Option<DiversityConfig>,
+    new: &DiversityConfig,
+) {
+    env.events().publish(
+        (Symbol::new(env, DIVERSITY_CONFIG_UPDATED), admin.clone()),
+        (old.clone(), new.clone()),
+    );
+}
+
+/// topics: (event_name, admin)  data: (old_min_regions, new_min_regions)
+pub fn min_region_quorum_updated(env: &Env, admin: &Address, old: u32, new: u32) {
+    env.events().publish(
+        (Symbol::new(env, MIN_REGION_QUORUM_UPDATED), admin.clone()),
+        (old, new),
+    );
+}
+
+/// topics: (event_name, admin)  data: (old_window_secs, new_window_secs)
+pub fn voting_window_secs_updated(env: &Env, admin: &Address, old: u64, new: u64) {
+    env.events().publish(
+        (Symbol::new(env, VOTING_WINDOW_SECS_UPDATED), admin.clone()),
+        (old, new),
+    );
+}
+
+/// topics: (event_name, admin)  data: (old_cooldown_secs, new_cooldown_secs)
+pub fn reg_cooldown_updated(env: &Env, admin: &Address, old: u64, new: u64) {
+    env.events().publish(
+        (Symbol::new(env, REG_COOLDOWN_UPDATED), admin.clone()),
+        (old, new),
     );
 }

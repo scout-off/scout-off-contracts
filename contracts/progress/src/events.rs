@@ -1,12 +1,16 @@
 #![allow(deprecated, dead_code)]
 use scoutchain_shared_types::ProgressLevel;
-use soroban_sdk::{Address, Env, Symbol};
+use soroban_sdk::{Address, BytesN, Env, Symbol};
 
 pub const ADMIN_TRANSFERRED: &str = "admin_transferred";
 pub const ADMIN_TRANSFER_PROPOSED: &str = "admin_transfer_proposed";
 pub const PROGRESS_UPDATED: &str = "progress_updated";
 pub const PLAYER_LEVEL_RESET: &str = "player_level_reset";
 pub const WIRING_UPDATED: &str = "wiring_updated";
+pub const CONTRACT_UPGRADED: &str = "contract_upgraded";
+pub const MIGRATION_WINDOW_OPENED: &str = "migration_window_opened";
+pub const MIGRATION_WINDOW_CLOSED: &str = "migration_window_closed";
+pub const SCHEMA_MIGRATED: &str = "schema_migrated";
 
 /// topics: (event_name, old_admin)  data: new_admin
 pub fn admin_transferred(env: &Env, old_admin: &Address, new_admin: &Address) {
@@ -101,4 +105,36 @@ pub fn player_level_record_restored(env: &Env, admin: &Address, player_id: u64) 
         ),
         player_id,
     );
+}
+
+/// topics: (event_name, admin)  data: ()
+pub fn migration_window_opened(env: &Env, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, MIGRATION_WINDOW_OPENED), admin.clone()),
+        (),
+    );
+}
+
+/// topics: (event_name, admin)  data: ()
+pub fn migration_window_closed(env: &Env, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, MIGRATION_WINDOW_CLOSED), admin.clone()),
+        (),
+    );
+}
+
+/// Emitted before `update_current_contract_wasm` — attributed to the old code version.
+/// topics: (event_name, admin)  data: new_wasm_hash
+pub fn contract_upgraded(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>) {
+    env.events().publish(
+        (Symbol::new(env, CONTRACT_UPGRADED), admin.clone()),
+        new_wasm_hash.clone(),
+    );
+}
+
+/// Emitted by `migrate` when the stored schema version advances.
+/// topics: (event_name,)  data: (from_version, to_version)
+pub fn schema_migrated(env: &Env, from: u32, to: u32) {
+    env.events()
+        .publish((Symbol::new(env, SCHEMA_MIGRATED),), (from, to));
 }

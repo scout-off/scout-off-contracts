@@ -9,7 +9,7 @@
 
 use scoutchain_registration::{RegistrationContract, RegistrationContractClient};
 use scoutchain_scout_access::{
-    FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
+    FeeConfig, ScoutAccessContract, ScoutAccessContractClient, ScoutAccessError, SubscriptionTier,
 };
 use soroban_sdk::{
     testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke},
@@ -69,10 +69,9 @@ fn setup() -> Harness {
     registration_client.initialize(&admin);
 
     // Register scouts in registration contract
-    let _scout1_id =
-        registration_client.register_scout(&scout1, &String::from_str(&env, "North America"));
+    let _scout1_id = registration_client.register_scout(&scout1, &String::from_str(&env, "US"));
 
-    let _scout2_id = registration_client.register_scout(&scout2, &String::from_str(&env, "Europe"));
+    let _scout2_id = registration_client.register_scout(&scout2, &String::from_str(&env, "FR"));
 
     // Deploy scout_access contract
     let sa_id = env.register(ScoutAccessContract, ());
@@ -171,12 +170,14 @@ fn test_unverified_scout_can_subscribe_basic() {
 }
 
 #[test]
-fn test_unverified_scout_can_subscribe_elite() {
+fn test_unverified_scout_cannot_subscribe_elite() {
     let h = setup();
 
-    // Elite tier should work for unverified scouts (no gating on Elite)
-    h.scout_access_client
-        .subscribe(&h.scout1, &SubscriptionTier::Elite);
+    // Since #1417 Elite is gated like Pro: unverified scouts are rejected.
+    let result = h
+        .scout_access_client
+        .try_subscribe(&h.scout1, &SubscriptionTier::Elite);
+    assert_eq!(result, Err(Ok(ScoutAccessError::ScoutNotVerified)));
 }
 
 #[test]
@@ -203,9 +204,11 @@ fn test_multiple_scouts_independent_verification() {
         "unverified scout2 should not subscribe to Pro"
     );
 
-    // scout2 can still get Elite
-    h.scout_access_client
-        .subscribe(&h.scout2, &SubscriptionTier::Elite);
+    // scout2 cannot get Elite either (#1417)
+    let result = h
+        .scout_access_client
+        .try_subscribe(&h.scout2, &SubscriptionTier::Elite);
+    assert_eq!(result, Err(Ok(ScoutAccessError::ScoutNotVerified)));
 }
 
 #[test]
@@ -273,8 +276,10 @@ fn test_set_registration_contract_requires_admin() {
     );
 }
 
+/// Pro/Elite fail closed when no registration contract is wired (#1417);
+/// Basic stays open.
 #[test]
-fn test_registration_contract_graceful_degradation() {
+fn test_unwired_registration_fails_closed_for_paid_tiers() {
     let h = setup();
     let scout3 = Address::generate(&h.env);
 
@@ -287,8 +292,13 @@ fn test_registration_contract_graceful_degradation() {
     let sa_client = ScoutAccessContractClient::new(&h.env, &sa_id);
     sa_client.initialize(&h.admin, &h.xlm, &default_fees());
 
-    // Without registration contract wired, Pro subscriptions should be allowed (graceful degradation)
-    sa_client.subscribe(&scout3, &SubscriptionTier::Pro);
+    for tier in [SubscriptionTier::Pro, SubscriptionTier::Elite] {
+        assert_eq!(
+            sa_client.try_subscribe(&scout3, &tier),
+            Err(Ok(ScoutAccessError::RegistrationContractNotSet))
+        );
+    }
+    sa_client.subscribe(&scout3, &SubscriptionTier::Basic);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -312,13 +322,13 @@ fn test_multi_wallet_sybil_attempt_blocked() {
     // Register all 3 in registration contract
     let _id1 = h
         .registration_client
-        .register_scout(&attacker1, &String::from_str(&h.env, "Region1"));
+        .register_scout(&attacker1, &String::from_str(&h.env, "NG"));
     let _id2 = h
         .registration_client
-        .register_scout(&attacker2, &String::from_str(&h.env, "Region2"));
+        .register_scout(&attacker2, &String::from_str(&h.env, "GH"));
     let _id3 = h
         .registration_client
-        .register_scout(&attacker3, &String::from_str(&h.env, "Region3"));
+        .register_scout(&attacker3, &String::from_str(&h.env, "SN"));
 
     // All 3 are unverified by default
     let result1 = h
@@ -359,8 +369,9 @@ fn test_multi_wallet_sybil_attempt_blocked() {
     );
 }
 
+/// The Elite tier is no longer a way around verification (#1417).
 #[test]
-fn test_attacker_can_pay_for_elite_instead() {
+fn test_attacker_cannot_pay_for_elite_instead() {
     let h = setup();
 
     let attacker = Address::generate(&h.env);
@@ -368,13 +379,12 @@ fn test_attacker_can_pay_for_elite_instead() {
     token_client.mint(&attacker, &1_000_000_000);
 
     h.registration_client
-        .register_scout(&attacker, &String::from_str(&h.env, "AttackerRegion"));
+        .register_scout(&attacker, &String::from_str(&h.env, "KE"));
 
-    // Elite tier always works (no verification needed)
-    h.scout_access_client
-        .subscribe(&attacker, &SubscriptionTier::Elite);
-
-    // This demonstrates that Elite (0.7 XLM unlimited) is still cheaper than
-    // 3 Pro wallets (0.9 XLM for 30 contacts), so the mitigation raises friction
-    // but doesn't completely prevent an attacker who wants unlimited contacts.
+    // Elite used to skip verification, which made it the cheapest route to
+    // unlimited contacts for an unverified attacker; it is now gated too.
+    let result = h
+        .scout_access_client
+        .try_subscribe(&attacker, &SubscriptionTier::Elite);
+    assert_eq!(result, Err(Ok(ScoutAccessError::ScoutNotVerified)));
 }

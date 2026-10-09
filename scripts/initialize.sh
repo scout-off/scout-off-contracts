@@ -236,6 +236,17 @@ stellar contract invoke \
   --addr "$REGISTRATION_CONTRACT_ID"
 
 echo ""
+echo "==> Setting registration cooldown..."
+# Networks without a config file (e.g. local) fall back to the 24h default.
+REG_COOLDOWN_SECS=$(python3 -c "import json, os; p='config/${NETWORK}.json'; print(json.load(open(p)).get('reg_cooldown_secs', 86400) if os.path.exists(p) else 86400)")
+stellar contract invoke \
+  --id "$REGISTRATION_CONTRACT_ID" \
+  --source "$DEPLOYER" \
+  --network "$NETWORK" \
+  -- set_reg_cooldown \
+  --cooldown_secs "$REG_COOLDOWN_SECS"
+
+echo ""
 echo "==> Verifying wiring consistency (post-wiring gate)..."
 # Every wiring call above is a separate, independently-failable
 # `stellar contract invoke` — Soroban has no atomic multi-contract

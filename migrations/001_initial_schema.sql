@@ -1,5 +1,8 @@
 -- ScoutChain — initial PostgreSQL schema
 -- Run by the backend on first startup or via a migration tool (e.g. node-pg-migrate)
+--
+-- Note: validator deactivation status is tracked via the `active` BOOLEAN column
+-- in the `validators` table below (see #837).
 -- Note: CREATE TABLE IF NOT EXISTS does not retroactively add constraints to existing tables.
 -- Existing deployed databases require a companion ALTER TABLE ... ADD CONSTRAINT migration.
 
@@ -17,9 +20,9 @@ CREATE TABLE IF NOT EXISTS players (
     player_id       BIGINT PRIMARY KEY,
     wallet          VARCHAR(56)  NOT NULL UNIQUE,   -- Stellar G-address
     age             INTEGER      NOT NULL,
-    position        VARCHAR(64)  NOT NULL,
-    region          VARCHAR(128) NOT NULL,
-    nationality     VARCHAR(128) NOT NULL,
+    position        VARCHAR(16)  NOT NULL,
+    region          VARCHAR(10)  NOT NULL,
+    nationality     VARCHAR(2)   NOT NULL,
     ipfs_hashes     TEXT[]       NOT NULL DEFAULT '{}',
     level           SMALLINT     NOT NULL DEFAULT 0, -- 0-3
     deactivated     BOOLEAN      NOT NULL DEFAULT FALSE,

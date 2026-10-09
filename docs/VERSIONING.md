@@ -10,7 +10,7 @@ ScoutChain contracts follow [Semantic Versioning 2.0.0](https://semver.org/) â€”
 | **MINOR** | Backward-compatible addition â€” new function, new event, new error code appended at end of enum |
 | **PATCH** | Backward-compatible fix â€” bug fix, gas optimisation, documentation update in source |
 
-The current workspace version of all four contracts is **v1.1.0**. Contract-specific
+The current workspace version of all four contracts is **v2.0.0**. Contract-specific
 releases in the Version History table may describe changes that were deployed to
 only one contract, but the shared workspace version remains the build-time value
 reported by every contract's `version()` function.
@@ -70,7 +70,7 @@ The upgrade procedure is implemented in `scripts/upgrade.sh` (see [DEPLOYMENT.md
 
 - [ ] Read all BREAKING CHANGES listed in the release notes for the target version
 - [ ] Snapshot current on-chain state that lives in **instance** storage (fee config, initialized flag, contract links) â€” these survive the WASM swap but must be re-verified
-- [ ] Check `version()` on all four contracts to confirm the baseline version before upgrade. Each contract should return the expected deployed workspace version (currently `1.1.0`, from `CARGO_PKG_VERSION`, with no `v` prefix).
+- [ ] Check `version()` on all four contracts to confirm the baseline version before upgrade. Each contract should return the expected deployed workspace version (currently `2.0.0`, from `CARGO_PKG_VERSION`, with no `v` prefix).
 - [ ] Run `cargo test --workspace` against the new code locally
 - [ ] Rehearse the upgrade locally with the storage-survival harness â€” **no testnet fees required.** For each contract it deploys v1, seeds representative state, calls `upgrade()`, and asserts every row of the "What survives an upgrade" table in `docs/DEPLOYMENT.md` (persistent state unchanged; instance `Initialized`/`Paused` flags intact; cross-contract links re-wirable), including the `verification` `AlreadyConfigured` re-wire quirk. Run:
   - `cargo test -p scoutchain-registration  --test upgrade_rehearsal`
@@ -147,3 +147,63 @@ When adding new entries to the Version History table:
 <!-- Template / Example for future entries: -->
 <!-- | v0.2.0 (verification) | YYYY-MM-DD | MINOR | Added batch verification helper functions | -->
 <!-- | v1.0.0 (all) | YYYY-MM-DD | MAJOR | BREAKING: Updated storage key layout across all contracts | -->
+
+---
+
+## Storage Schema Versioning (progress contract)
+
+SemVer describes the *published contract version*. It does not by itself tell an
+operator whether deployed storage still matches what the running WASM expects,
+which is what a schema version records.
+
+The `progress` contract keeps a separate storage layout version in
+`DataKey::SchemaVersion`, and exposes it as `CODE_SCHEMA_VERSION` in
+`contracts/progress/src/types.rs`.
+
+### When to bump
+
+Bump `CODE_SCHEMA_VERSION` **only** when the storage *layout* changes:
+
+| Change | Bump? |
+|--------|-------|
+| A new `DataKey` variant is added | **Yes** |
+| A stored field changes type or meaning | **Yes** |
+| A new entrypoint writes keys of its own | No — older readers ignore unknown keys |
+| A new query function is added | No |
+| A fix that does not alter the layout | No |
+
+### Reading the version
+
+`schema_version()` returns the version recorded in storage, and returns `0` when
+the key is absent. An absent key means the contract predates versioning, so a
+deployment that has never been migrated reads as *behind* the code rather than
+as current.
+
+```bash
+stellar contract invoke --id $PROGRESS_CONTRACT_ID -- schema_version
+```
+
+### Running a migration
+
+`migrate(target_version, max_items)` is admin-only, bounded, and resumable:
+
+- **Bounded** — it does at most `max_items` units of work per call, so a
+  migration that cannot fit in one transaction can be spread across several.
+- **Resumable** — progress is recorded in `DataKey::MigrationCursor`, so a
+  repeated call continues rather than restarting.
+- **Idempotent** — calling it when storage is already at `target_version`
+  reports `complete` and rewrites nothing, so a retried script is harmless.
+- **Refuses downgrades** — a target below the stored version returns
+  `SchemaVersionTooNew` instead of discarding data the current code expects.
+- **Rejects unknown targets** — a target above `CODE_SCHEMA_VERSION` returns
+  `UnknownSchemaTarget`.
+- **No-op on `max_items == 0`** — zero would otherwise advance the stored
+  version without doing any work, silently marking the migration complete.
+
+Each call that changes the version emits `schema_migrated(from, to)`.
+
+The current migration is v0 ? v1, which backfills `DataKey::HistoryVec` from
+the already-correct `DataKey::HistoryEntry(player, index)` keys. It is a copy,
+not a recomputation, so history values are preserved exactly.
+
+`scripts/upgrade.sh` drives the loop and then verifies through `schema_version`.

@@ -1,14 +1,15 @@
 "use strict";
 var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
+    return (mod && this.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const supertest_1 = __importDefault(require("supertest"));
 const app_1 = __importDefault(require("../../src/app"));
 const sep10_1 = require("../../src/services/sep10");
 const db_1 = require("../../src/db");
+const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 beforeEach(async () => {
-    await db_1.prisma.revoked_tokens.deleteMany();
+    await db_1.prisma.revokedToken.deleteMany();
 });
 afterAll(async () => {
     await db_1.prisma.$disconnect();
@@ -16,7 +17,7 @@ afterAll(async () => {
 describe("Token revocation through real SEP-10 flow", () => {
     it("should include jti claim in JWT issued through sep10 signing path", async () => {
         const token = (0, sep10_1.issueSep10Token)({ sub: "user123", role: "validator" }, "test-secret");
-        const decoded = jwt.verify(token, "test-secret");
+        const decoded = jsonwebtoken_1.default.verify(token, "test-secret");
         expect(decoded.jti).toBeDefined();
         expect(typeof decoded.jti).toBe("string");
     });
@@ -42,7 +43,7 @@ describe("Token revocation through real SEP-10 flow", () => {
         expect(response.body.error).toContain("revoked");
     });
     it("should return 400 if token does not contain jti claim (manual test helper tokens)", async () => {
-        const manualToken = jwt.sign({ sub: "user123", role: "validator" }, "test-secret");
+        const manualToken = jsonwebtoken_1.default.sign({ sub: "user123", role: "validator" }, "test-secret");
         await (0, supertest_1.default)(app_1.default)
             .post("/api/admin/tokens/revoke")
             .send({ token: manualToken })

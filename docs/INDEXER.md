@@ -10,13 +10,14 @@ into PostgreSQL for fast querying.  It runs as a separate process from the API.
 | Table | Source | Description |
 |-------|--------|-------------|
 | `players` | `registration.get_player` / `filter_players` | Player profiles, vitals, IPFS hashes |
-| `scouts` | `registration.get_scout` | Scout profiles, region, **verified** flag |
+| `scouts` | `registration.get_scout` | Scout profiles, region, **verified** flag, **deactivated** flag |
 | `contact_records` | `scout_access.player_contacted` events | Contact audit trail |
 | `trial_offers` | `scout_access.log_trial_offer` events | Trial offer records |
 | `scout_subscriptions` | `scout_access.scout_subscribed` events | Active subscriptions |
 | `fee_withdrawals` | `scout_access.fees_withdrawn` events | Fee withdrawal audit log |
 | `milestone_flags` | `verification.milestone_flagged` / `milestone_flag_cleared` events | Milestones pending re-review due to for-cause validator revocations |
 | `revocation_records` | `verification.validator_revoked_for_cause` / `revocation_cascade_complete` events | Revoked-validator severity + cascade status |
+| `evidence_access_grants` | `scout_access.get_player_access_grants` | Per-(player, scout) grants: `granted_at`, `expires_at`, `tier_at_grant`, `revoked`, `revoked_at` |
 
 ## Reconciliation
 
@@ -25,9 +26,10 @@ local database.  The script reports:
 
 - Players/scouts present on-chain but missing in the database
 - Players/scouts present in the database but missing on-chain
-- Field-level mismatches for `players.deactivated` and `scouts.verified`
+- Field-level mismatches for `players.deactivated`, `scouts.verified`, and `scouts.deactivated`
 - Milestone flags: milestones that are flagged on-chain (`is_milestone_flagged` returns `true`) but absent from the `milestone_flags` table, and vice-versa
 - Revocation records: validators with a `RevocationRecord` on-chain but no matching row in `revocation_records`
+- Evidence access grants: `evidence_access_grants` rows that are present on-chain but missing in the DB (or vice-versa), and field-level mismatches for `granted_at`, `expires_at`, `tier_at_grant`, `revoked`, and `revoked_at`
 
 `player_level_history`, `validator_history`, `fee_config_history`, and
 `admin_transfers` are pure event logs with no single "current state" getter

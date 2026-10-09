@@ -150,6 +150,62 @@ pub enum VerificationError {
     /// `tally_dispute` called before the voting window closes and the
     /// required quorum of votes has not yet been reached.
     QuorumNotReached = 43,
+
+    // ── Jury eligibility (issue #1375) ──
+    /// `cast_dispute_vote` called by a validator registered after the dispute
+    /// was filed (jury_eligibility_cutoff). Pre-filing validators only.
+    NotEligibleJuror = 44,
+
+    // ── Attestation expiry & bounded nonce window (issue #1381) ──
+    /// Off-chain attestation payload's `expires_at` timestamp is in the past
+    /// relative to the current ledger time — the signed message is stale and
+    /// may have been intercepted.
+    AttestationExpired = 45,
+    /// `expires_at` on the attestation is too far in the future, exceeding
+    /// `MAX_ATTESTATION_FUTURE_TOLERANCE_SECS`. Prevents long-lived signed
+    /// payloads from being held and replayed days later.
+    AttestationWindowTooLarge = 46,
+
+    // ── Validator lifecycle & threshold (issues #1392–#1395) ──
+    /// `set_milestone_threshold` was given a value above the current number
+    /// of active validators, which would make every new claim unreachable.
+    ThresholdExceedsActiveValidators = 47,
+    /// `revoke_validator` targeted a validator that is already revoked with
+    /// the same or higher severity.
+    ValidatorAlreadyRevoked = 48,
+
+    // ── Dispute rounds (issue #1396) ──
+    /// The latest dispute round for this milestone is still unresolved.
+    DisputeAlreadyOpen = 49,
+    /// The milestone has already been disputed `MAX_DISPUTE_ROUNDS` times.
+    MaxDisputeRoundsReached = 50,
+    /// A new round was filed before `DISPUTE_REOPEN_COOLDOWN_SECS` elapsed
+    /// since the previous round was resolved.
+    DisputeCooldown = 51,
+    /// The player already holds `MAX_OPEN_DISPUTES_PER_PLAYER` unresolved
+    /// disputes.
+    TooManyOpenDisputes = 52,
+
+    // ── Pending claims (issues #1397, #1398) ──
+    /// A vote's description hash differs from the one locked in by the first
+    /// voter of the current round.
+    DescriptionMismatch = 53,
+    /// No pending claim exists for this `(player_id, evidence_hash)`.
+    ClaimNotFound = 54,
+    /// `prune_expired_claim` was called on a claim whose voting window is
+    /// still open.
+    ClaimNotExpired = 55,
+
+    // ── Player gates (issue #1399) ──
+    /// The registration contract has no player with this ID.
+    PlayerNotRegistered = 56,
+    /// The player has been deactivated in the registration contract.
+    PlayerDeactivated = 57,
+
+    // ── Migration window (issue #1410) ──
+    /// `open_migration_window` was called after the window was permanently
+    /// closed by `close_migration_window`.
+    MigrationWindowSealed = 58,
 }
 
 impl AdminError for VerificationError {

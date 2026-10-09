@@ -17,11 +17,27 @@
 //! an operator who forgets to re-verify the instance `Paused` flag.
 
 use scoutchain_progress::{ProgressContract, ProgressContractClient};
+use scoutchain_registration::{PlayerVitals, RegistrationContract, RegistrationContractClient};
 use scoutchain_shared_types::ProgressLevel;
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    Address, Bytes, Env,
+    Address, Bytes, Env, String, Vec,
 };
+
+fn valid_vitals(env: &Env) -> PlayerVitals {
+    PlayerVitals {
+        age: 20,
+        position: String::from_str(env, "ST"),
+        region: String::from_str(env, "EU"),
+        nationality: String::from_str(env, "FR"),
+    }
+}
+
+fn one_hash(env: &Env) -> Vec<String> {
+    let mut v = Vec::new(env);
+    v.push_back(String::from_str(env, "bafytestcid"));
+    v
+}
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -30,6 +46,7 @@ use soroban_sdk::{
 struct Harness {
     env: Env,
     progress: ProgressContractClient<'static>,
+    registration: RegistrationContractClient<'static>,
     /// Dummy address whitelisted as the primary `advance_level` caller.
     verifier: Address,
 }
@@ -45,6 +62,11 @@ fn setup() -> Harness {
     env.ledger().with_mut(|l| l.timestamp = 1_000_000);
 
     let admin = Address::generate(&env);
+
+    let reg_id = env.register(RegistrationContract, ());
+    let registration = RegistrationContractClient::new(&env, &reg_id);
+    registration.initialize(&admin);
+
     let id = env.register(ProgressContract, ());
     let progress = ProgressContractClient::new(&env, &id);
     progress.initialize(&admin);
@@ -54,26 +76,43 @@ fn setup() -> Harness {
     // plain generated address is sufficient here.
     let verifier = Address::generate(&env);
     progress.set_verification_contract(&verifier);
+    progress.set_registration_contract(&reg_id);
+    registration.set_progress_contract(&id);
 
     Harness {
         env,
         progress,
+        registration,
         verifier,
     }
 }
 
-/// Seed three players at three different levels so the survival assertions cover
-/// more than a single value.
-fn seed(h: &Harness) {
+fn seed(h: &Harness) -> (u64, u64, u64) {
+    let p1 = {
+        let wallet = Address::generate(&h.env);
+        h.registration
+            .register_player(&wallet, &valid_vitals(&h.env), &one_hash(&h.env))
+    };
+    let p2 = {
+        let wallet = Address::generate(&h.env);
+        h.registration
+            .register_player(&wallet, &valid_vitals(&h.env), &one_hash(&h.env))
+    };
+    let p3 = {
+        let wallet = Address::generate(&h.env);
+        h.registration
+            .register_player(&wallet, &valid_vitals(&h.env), &one_hash(&h.env))
+    };
     // Player 1 -> VerifiedIdentity (1 advance).
-    h.progress.advance_level(&h.verifier, &1u64, &1u32);
+    h.progress.advance_level(&h.verifier, &p1, &1u32);
     // Player 2 -> PerformanceMilestones (2 advances).
-    h.progress.advance_level(&h.verifier, &2u64, &1u32);
-    h.progress.advance_level(&h.verifier, &2u64, &2u32);
+    h.progress.advance_level(&h.verifier, &p2, &1u32);
+    h.progress.advance_level(&h.verifier, &p2, &2u32);
     // Player 3 -> EliteTier (3 advances).
-    h.progress.advance_level(&h.verifier, &3u64, &1u32);
-    h.progress.advance_level(&h.verifier, &3u64, &2u32);
-    h.progress.advance_level(&h.verifier, &3u64, &3u32);
+    h.progress.advance_level(&h.verifier, &p3, &1u32);
+    h.progress.advance_level(&h.verifier, &p3, &2u32);
+    h.progress.advance_level(&h.verifier, &p3, &3u32);
+    (p1, p2, p3)
 }
 
 // ---------------------------------------------------------------------------
@@ -84,14 +123,14 @@ fn seed(h: &Harness) {
 #[test]
 fn test_progress_upgrade_preserves_state() {
     let h = setup();
-    seed(&h);
+    let (p1, p2, p3) = seed(&h);
 
     // --- Snapshot (pre-upgrade) ---
-    let l1 = h.progress.get_level(&1u64);
-    let l2 = h.progress.get_level(&2u64);
-    let l3 = h.progress.get_level(&3u64);
-    let hist1 = h.progress.get_history_count(&1u64);
-    let hist3 = h.progress.get_history_count(&3u64);
+    let l1 = h.progress.get_level(&p1);
+    let l2 = h.progress.get_level(&p2);
+    let l3 = h.progress.get_level(&p3);
+    let hist1 = h.progress.get_history_count(&p1);
+    let hist3 = h.progress.get_history_count(&p3);
     let health = h.progress.health();
 
     assert_eq!(l1, ProgressLevel::VerifiedIdentity);
@@ -111,11 +150,11 @@ fn test_progress_upgrade_preserves_state() {
     h.progress.set_verification_contract(&h.verifier);
 
     // --- Assert: persistent storage survived (player levels + history) ---
-    assert_eq!(h.progress.get_level(&1u64), l1);
-    assert_eq!(h.progress.get_level(&2u64), l2);
-    assert_eq!(h.progress.get_level(&3u64), l3);
-    assert_eq!(h.progress.get_history_count(&1u64), hist1);
-    assert_eq!(h.progress.get_history_count(&3u64), hist3);
+    assert_eq!(h.progress.get_level(&p1), l1);
+    assert_eq!(h.progress.get_level(&p2), l2);
+    assert_eq!(h.progress.get_level(&p3), l3);
+    assert_eq!(h.progress.get_history_count(&p1), hist1);
+    assert_eq!(h.progress.get_history_count(&p3), hist3);
 
     // --- Assert: instance flags survived ---
     assert_eq!(h.progress.health(), health);
@@ -128,9 +167,9 @@ fn test_progress_upgrade_preserves_state() {
 
     // --- Assert: the re-wired verification link works — advance_level (which
     // requires the link) still advances a player one tier post-upgrade. ---
-    h.progress.advance_level(&h.verifier, &1u64, &2u32);
+    h.progress.advance_level(&h.verifier, &p1, &2u32);
     assert_eq!(
-        h.progress.get_level(&1u64),
+        h.progress.get_level(&p1),
         ProgressLevel::PerformanceMilestones
     );
 
@@ -148,18 +187,41 @@ fn test_progress_upgrade_preserves_state() {
 /// upgrade and the contract is left paused. The harness's post-upgrade
 /// functional check — a state-changing `advance_level` call — then panics with
 /// `ContractPaused`, catching the skipped re-verification step instead of
-/// letting a half-configured contract through.
+/// silently passing.
 #[test]
-#[should_panic]
-fn test_progress_broken_upgrade_left_paused_is_caught() {
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_progress_upgrade_panic_on_missed_paused_flag() {
     let h = setup();
-    seed(&h);
+    let (p1, _p2, _p3) = seed(&h);
+
+    // Pause before upgrade
+    h.progress.pause_contract();
 
     rehearse_upgrade(&h);
 
-    // Simulate a botched re-verification: the contract is (still) paused.
-    h.progress.pause_contract();
+    // Re-wire verification (instance link) but FORGET to check/clear paused flag.
+    h.progress.set_verification_contract(&h.verifier);
 
     // Post-upgrade functional check — must not silently succeed while paused.
-    h.progress.advance_level(&h.verifier, &1u64, &2u32);
+    h.progress.advance_level(&h.verifier, &p1, &2u32);
+}
+
+/// Assert that `upgrade()` emits a `contract_upgraded` event before swapping
+/// the WASM, so the event is attributed to the old code version.
+#[test]
+fn test_progress_upgrade_emits_contract_upgraded_event() {
+    use scoutchain_shared_types::testutils::has_event;
+
+    let h = setup();
+    seed(&h);
+
+    let new_wasm_hash = h.env.deployer().upload_contract_wasm(Bytes::new(&h.env));
+    h.progress.upgrade(&new_wasm_hash);
+
+    let found = has_event(&h.env, "contract_upgraded");
+
+    assert!(
+        found,
+        "expected a 'contract_upgraded' event to be emitted by upgrade()"
+    );
 }

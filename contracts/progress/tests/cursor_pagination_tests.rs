@@ -7,24 +7,61 @@
 //! concurrent mutation.
 
 use scoutchain_progress::{ProgressContract, ProgressContractClient};
+use scoutchain_registration::{PlayerVitals, RegistrationContract, RegistrationContractClient};
 use scoutchain_shared_types::ProgressLevel;
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
+
+fn valid_vitals(env: &Env) -> PlayerVitals {
+    PlayerVitals {
+        age: 20,
+        position: String::from_str(env, "ST"),
+        region: String::from_str(env, "EU"),
+        nationality: String::from_str(env, "FR"),
+    }
+}
+
+fn one_hash(env: &Env) -> Vec<String> {
+    let mut v = Vec::new(env);
+    v.push_back(String::from_str(env, "bafytestcid"));
+    v
+}
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 struct Harness {
     env: Env,
     client: ProgressContractClient<'static>,
+    registration: RegistrationContractClient<'static>,
 }
 
 fn setup() -> Harness {
     let env = Env::default();
     env.mock_all_auths();
     let admin = Address::generate(&env);
+
+    let reg_id = env.register(RegistrationContract, ());
+    let registration = RegistrationContractClient::new(&env, &reg_id);
+    registration.initialize(&admin);
+
     let id = env.register(ProgressContract, ());
     let client = ProgressContractClient::new(&env, &id);
     client.initialize(&admin);
-    Harness { env, client }
+
+    client.set_registration_contract(&reg_id);
+    registration.set_progress_contract(&id);
+
+    Harness {
+        env,
+        client,
+        registration,
+    }
+}
+
+/// Register a player and return the assigned player ID.
+fn register_player(h: &Harness) -> u64 {
+    let wallet = Address::generate(&h.env);
+    h.registration
+        .register_player(&wallet, &valid_vitals(&h.env), &one_hash(&h.env))
 }
 
 /// Advance `player_id` by `n` levels using a whitelisted caller.
@@ -54,7 +91,7 @@ fn setup_whitelisted_caller(h: &Harness) -> Address {
 #[test]
 fn test_first_page_no_cursor() {
     let h = setup();
-    let player_id: u64 = 1;
+    let player_id = register_player(&h);
     let ver = setup_whitelisted_caller(&h);
     advance_n(&h, &ver, player_id, 3); // 3 history entries
 
@@ -75,7 +112,7 @@ fn test_first_page_no_cursor() {
 #[test]
 fn test_full_walk_no_gaps_no_duplicates() {
     let h = setup();
-    let player_id: u64 = 2;
+    let player_id = register_player(&h);
     let ver = setup_whitelisted_caller(&h);
     advance_n(&h, &ver, player_id, 3);
 
@@ -120,7 +157,7 @@ fn test_full_walk_no_gaps_no_duplicates() {
 #[test]
 fn test_new_entries_not_visible_to_existing_cursor() {
     let h = setup();
-    let player_id: u64 = 10;
+    let player_id = register_player(&h);
     let ver = setup_whitelisted_caller(&h);
 
     // Start with 2 history entries
@@ -162,7 +199,7 @@ fn test_new_entries_not_visible_to_existing_cursor() {
 #[test]
 fn test_empty_history() {
     let h = setup();
-    let player_id: u64 = 99;
+    let player_id = register_player(&h);
 
     let (entries, next_index, snapshot) = h
         .client
@@ -177,7 +214,7 @@ fn test_empty_history() {
 #[test]
 fn test_exhausted_cursor_returns_empty() {
     let h = setup();
-    let player_id: u64 = 5;
+    let player_id = register_player(&h);
     let ver = setup_whitelisted_caller(&h);
     advance_n(&h, &ver, player_id, 1);
 
@@ -199,7 +236,7 @@ fn test_exhausted_cursor_returns_empty() {
 #[test]
 fn test_limit_capped_at_50() {
     let h = setup();
-    let player_id: u64 = 7;
+    let player_id = register_player(&h);
     let ver = setup_whitelisted_caller(&h);
     // Only 3 entries available but we request 100
     advance_n(&h, &ver, player_id, 3);
@@ -215,7 +252,7 @@ fn test_limit_capped_at_50() {
 #[test]
 fn test_snapshot_isolation_two_consumers() {
     let h = setup();
-    let player_id: u64 = 20;
+    let player_id = register_player(&h);
     let ver = setup_whitelisted_caller(&h);
 
     // Consumer A starts with 2 entries
@@ -244,4 +281,82 @@ fn test_snapshot_isolation_two_consumers() {
         "consumer A sees only entry 2 (within snapshot)"
     );
     assert_eq!(next_a2, 0u32, "consumer A exhausted");
+}
+
+// ── #1465: overflow and validation tests ─────────────────────────────────────
+
+/// Passing cursor_snapshot = u32::MAX must not panic; it is clamped to the
+/// real count (0 for a player with no history) and returns empty.
+#[test]
+fn test_cursor_snapshot_umax_does_not_panic() {
+    let h = setup();
+    let player_id: u64 = 30;
+
+    // No history — real count is 0. Caller-supplied u32::MAX must not trap.
+    let (entries, next_index, snapshot) =
+        h.client
+            .get_history_page_with_cursor(&player_id, &Some(u32::MAX), &Some(1u32), &10u32);
+
+    assert_eq!(entries.len(), 0, "no entries for a player with no history");
+    assert_eq!(snapshot, 0u32, "snapshot clamped to real count (0)");
+    assert_eq!(next_index, 0u32);
+}
+
+/// cursor_next_index near u32::MAX must not cause overflow when computing
+/// `end = next_index + effective_limit - 1`.
+#[test]
+fn test_cursor_next_index_near_umax_does_not_panic() {
+    let h = setup();
+    let player_id = register_player(&h);
+    let ver = setup_whitelisted_caller(&h);
+    advance_n(&h, &ver, player_id, 3); // real count = 3
+
+    // next_index far beyond snapshot_count — must exit early, not overflow.
+    let (entries, next_index, _) = h.client.get_history_page_with_cursor(
+        &player_id,
+        &Some(3u32),
+        &Some(u32::MAX - 10),
+        &50u32,
+    );
+
+    assert_eq!(entries.len(), 0, "next_index beyond snapshot returns empty");
+    assert_eq!(next_index, 0u32);
+}
+
+/// A caller-supplied cursor_snapshot larger than the real count is clamped.
+#[test]
+fn test_cursor_snapshot_larger_than_real_count_is_clamped() {
+    let h = setup();
+    let player_id = register_player(&h);
+    let ver = setup_whitelisted_caller(&h);
+    advance_n(&h, &ver, player_id, 2); // real count = 2
+
+    // Pass snapshot = 1000 — must be clamped to 2, return at most 2 entries.
+    let (entries, _next, snapshot) =
+        h.client
+            .get_history_page_with_cursor(&player_id, &Some(1000u32), &Some(1u32), &50u32);
+
+    assert_eq!(snapshot, 2u32, "snapshot must be clamped to real count");
+    assert_eq!(entries.len(), 2);
+}
+
+/// get_progress_history_page with extreme offset/limit values must not panic.
+#[test]
+fn test_history_page_extreme_offset_limit_no_panic() {
+    let h = setup();
+    let player_id = register_player(&h);
+    let ver = setup_whitelisted_caller(&h);
+    advance_n(&h, &ver, player_id, 3);
+
+    // offset = u32::MAX — beyond count, must return empty
+    let entries = h
+        .client
+        .get_progress_history_page(&player_id, &u32::MAX, &50u32);
+    assert_eq!(entries.len(), 0);
+
+    // limit = u32::MAX — capped at 50, must return the 3 available entries
+    let entries = h
+        .client
+        .get_progress_history_page(&player_id, &0u32, &u32::MAX);
+    assert_eq!(entries.len(), 3);
 }
