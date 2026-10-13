@@ -1,5 +1,7 @@
 # ScoutChain Runbook
 
+> **See also:** [Glossary](GLOSSARY.md)
+
 Operational procedures for the ScoutChain platform.
 
 ---
