@@ -515,6 +515,47 @@ a shared testnet or mainnet contract other people rely on.
 
 ---
 
+## Contract Upgrades
+
+Every `upgrade(new_wasm_hash)` call in all four contracts emits a
+`contract_upgraded` event **before** `update_current_contract_wasm` executes,
+so the event is attributed to the old code version and is always present in the
+committed ledger state.
+
+### Event schema
+
+| Field   | Value |
+|---------|-------|
+| Topics  | `("contract_upgraded", admin_address)` |
+| Data    | `new_wasm_hash` (BytesN\<32\>) |
+
+### Verifying an upgrade on-chain
+
+After running `scripts/upgrade.sh`, confirm the event was emitted:
+
+```bash
+source .env && source .env.contracts
+# Fetch the latest transaction for the contract and check for the event
+stellar contract events \
+  --id "$REGISTRATION_CONTRACT_ID" \
+  --network "$STELLAR_NETWORK" \
+  --start-ledger <ledger_before_upgrade>
+```
+
+Look for a record with topic `["contract_upgraded", "<admin_address>"]` and
+data equal to the new WASM hash. Repeat for all four contract IDs. If no such
+event appears, the upgrade transaction may not have been confirmed — do not
+proceed until it is verified.
+
+### What to check after every upgrade
+
+1. Confirm the `contract_upgraded` event appears in the ledger for each contract.
+2. Re-wire instance-storage links per the [DEPLOYMENT.md post-upgrade checklist](DEPLOYMENT.md).
+3. Run `scripts/verify-cross-contract-wiring.sh` and `scripts/health-check.sh`.
+4. Run the upgrade rehearsal tests locally: `cargo test --workspace --test upgrade_rehearsal`.
+
+---
+
 ## Related Documentation
 
 - [DEPLOYMENT.md](DEPLOYMENT.md) — contract deployment order and initialization

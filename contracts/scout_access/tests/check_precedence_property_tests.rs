@@ -10,6 +10,8 @@
 //! generate the full combinatorial space, which is equivalent for finite
 //! boolean/enum domains.
 
+mod common;
+
 use scoutchain_scout_access::{
     FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
 };
@@ -64,6 +66,8 @@ fn setup_initialized() -> Harness {
     let id = env.register(ScoutAccessContract, ());
     let contract = ScoutAccessContractClient::new(&env, &id);
     contract.initialize(&admin, &xlm, &default_fees());
+    common::wire_registration(&env, Some(&contract), None);
+    common::wire_progress_level_stub(&env, &contract);
 
     Harness { env, xlm, contract }
 }
@@ -287,6 +291,10 @@ fn test_pay_to_contact_check_precedence_exhaustive() {
                                     Some(ScoutAccessError::ScoutNotSubscribed)
                                 } else if is_expired {
                                     Some(ScoutAccessError::SubscriptionExpired)
+                                } else if matches!(tier, TierOpt::Basic) {
+                                    // Basic has no contact entitlement (#1357), so
+                                    // the "already contacted" setup never lands.
+                                    Some(ScoutAccessError::TierNotPermitted)
                                 } else if already_contacted && !quota_exceeded {
                                     // Reachable only when the quota-exhaustion setup
                                     // did not run: player 1 was actually contacted.
@@ -420,6 +428,9 @@ fn test_batch_contact_players_check_precedence_exhaustive() {
                         Some(ScoutAccessError::ScoutNotSubscribed)
                     } else if is_expired {
                         Some(ScoutAccessError::SubscriptionExpired)
+                    } else if matches!(tier, TierOpt::Basic) {
+                        // Basic has no contact entitlement (#1357).
+                        Some(ScoutAccessError::TierNotPermitted)
                     } else {
                         None
                     };

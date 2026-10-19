@@ -8,6 +8,8 @@
 //! - Verifying that business logic uses the active config, never the pending one
 //! - Handling overlapping proposals
 
+mod common;
+
 use scoutchain_scout_access::{
     FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
 };
@@ -63,6 +65,8 @@ fn setup() -> Harness {
     let contract_id = env.register(ScoutAccessContract, ());
     let client = ScoutAccessContractClient::new(&env, &contract_id);
     client.initialize(&admin, &xlm, &default_fees());
+    common::wire_registration(&env, Some(&client), None);
+    common::wire_progress_level_stub(&env, &client);
 
     Harness {
         env,

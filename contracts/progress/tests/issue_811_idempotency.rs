@@ -67,15 +67,32 @@
 use scoutchain_progress::{
     DataKey, ProgressContract, ProgressContractClient, ProgressEntry, ProgressError,
 };
+use scoutchain_registration::{PlayerVitals, RegistrationContract, RegistrationContractClient};
 use scoutchain_shared_types::ProgressLevel;
 use scoutchain_verification::{VerificationContract, VerificationContractClient};
-use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
+use soroban_sdk::{testutils::Address as _, Address, Bytes, Env, String, Vec};
+
+fn valid_vitals(env: &Env) -> PlayerVitals {
+    PlayerVitals {
+        age: 20,
+        position: String::from_str(env, "ST"),
+        region: String::from_str(env, "EU"),
+        nationality: String::from_str(env, "FR"),
+    }
+}
+
+fn one_hash(env: &Env) -> Vec<String> {
+    let mut v = Vec::new(env);
+    v.push_back(String::from_str(env, "bafytestcid"));
+    v
+}
 
 // ── harness ──────────────────────────────────────────────────────────────────
 
 struct Harness {
     env: Env,
     client: ProgressContractClient<'static>,
+    registration: RegistrationContractClient<'static>,
     /// Address whitelisted as the *primary* `advance_level` caller (stands in
     /// for the verification contract). The primary path does not cross-call
     /// back into verification, so a plain generated address is sufficient.
@@ -89,19 +106,34 @@ fn setup() -> Harness {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
+
+    let reg_id = env.register(RegistrationContract, ());
+    let registration = RegistrationContractClient::new(&env, &reg_id);
+    registration.initialize(&admin);
+
     let id = env.register(ProgressContract, ());
     let client = ProgressContractClient::new(&env, &id);
     client.initialize(&admin);
 
     let caller = Address::generate(&env);
     client.set_verification_contract(&caller);
+    client.set_registration_contract(&reg_id);
+    registration.set_progress_contract(&id);
 
     Harness {
         env,
         client,
+        registration,
         caller,
         contract_id: id,
     }
+}
+
+/// Register a player and return the assigned player ID.
+fn register_player(h: &Harness) -> u64 {
+    let wallet = Address::generate(&h.env);
+    h.registration
+        .register_player(&wallet, &valid_vitals(&h.env), &one_hash(&h.env))
 }
 
 /// Read `HistoryCounter` straight out of persistent storage, bypassing the
@@ -188,7 +220,7 @@ fn assert_history_representations_agree(h: &Harness, player_id: u64) {
 #[test]
 fn test_history_is_sharded_into_fixed_pages() {
     let h = setup();
-    let pid: u64 = 99;
+    let pid = register_player(&h);
     // A player can advance at most three tiers. Reset after each complete
     // progression so the test creates 20 valid history entries while still
     // exercising multiple fixed-size pages.
@@ -217,7 +249,7 @@ fn test_history_is_sharded_into_fixed_pages() {
 #[test]
 fn test_duplicate_advance_level_with_same_milestone_ref_double_applies() {
     let h = setup();
-    let pid: u64 = 1;
+    let pid = register_player(&h);
     let milestone_ref: u32 = 1;
 
     let first = h.client.advance_level(&h.caller, &pid, &milestone_ref);
@@ -267,7 +299,7 @@ fn test_duplicate_advance_level_with_same_milestone_ref_double_applies() {
 #[test]
 fn test_replay_at_max_level_is_inert() {
     let h = setup();
-    let pid: u64 = 2;
+    let pid = register_player(&h);
 
     for i in 1..=3u32 {
         h.client.advance_level(&h.caller, &pid, &i);
@@ -308,7 +340,7 @@ fn test_replay_at_max_level_is_inert() {
 #[test]
 fn test_rejected_advance_leaves_no_partial_state() {
     let h = setup();
-    let pid: u64 = 3;
+    let pid = register_player(&h);
 
     // Untouched player: nothing should exist yet.
     assert_eq!(raw_history_counter(&h, pid), 0);
@@ -384,7 +416,7 @@ fn test_replay_requires_a_wired_and_authorized_caller() {
 
     // (2) Wired, but auth is genuinely enforced rather than mocked.
     let h = setup();
-    let pid: u64 = 4;
+    let pid = register_player(&h);
     h.client.advance_level(&h.caller, &pid, &1u32);
     let counter_before = raw_history_counter(&h, pid);
 
@@ -433,10 +465,19 @@ fn test_secondary_caller_replay_with_unbacked_milestone_ref_is_rejected() {
     VerificationContractClient::new(&env, &verification_id).initialize(&admin);
     client.set_verification_contract(&verification_id);
 
+    // Also wire registration contract for the secondary path check.
+    let reg_id = env.register(RegistrationContract, ());
+    let registration = RegistrationContractClient::new(&env, &reg_id);
+    registration.initialize(&admin);
+    client.set_registration_contract(&reg_id);
+    registration.set_progress_contract(&progress_id);
+
     let scout_access = Address::generate(&env);
     client.set_scout_access_contract(&scout_access);
 
-    let pid: u64 = 5;
+    // Register a player in registration contract so advance_level's sync succeeds
+    let wallet = Address::generate(&env);
+    let pid = registration.register_player(&wallet, &valid_vitals(&env), &one_hash(&env));
 
     // milestone_ref == 0 is rejected outright, and any ref beyond the real
     // milestone count is rejected too — a replay cannot invent justification.
@@ -478,7 +519,7 @@ fn test_secondary_caller_replay_with_unbacked_milestone_ref_is_rejected() {
 #[test]
 fn test_reset_then_replay_keeps_history_consistent() {
     let h = setup();
-    let pid: u64 = 6;
+    let pid = register_player(&h);
 
     h.client.advance_level(&h.caller, &pid, &1u32);
     h.client.advance_level(&h.caller, &pid, &2u32);
@@ -516,7 +557,7 @@ fn test_reset_then_replay_keeps_history_consistent() {
 #[test]
 fn test_history_representations_never_diverge_under_replay() {
     let h = setup();
-    let pid: u64 = 7;
+    let pid = register_player(&h);
 
     // Replay the same milestone_ref until the state machine saturates.
     for _ in 0..3 {

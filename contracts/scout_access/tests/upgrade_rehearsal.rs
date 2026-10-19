@@ -19,6 +19,8 @@
 //! subscription after the upgrade only succeeds if the surviving instance-stored
 //! XLM token address and fee config are still usable.
 
+mod common;
+
 use scoutchain_scout_access::{
     FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
 };
@@ -82,6 +84,7 @@ fn setup() -> Harness {
     let id = env.register(ScoutAccessContract, ());
     let scout_access = ScoutAccessContractClient::new(&env, &id);
     scout_access.initialize(&admin, &xlm, &default_fees());
+    common::wire_registration(&env, Some(&scout_access), None);
 
     Harness {
         env,
@@ -194,4 +197,24 @@ fn test_scout_access_broken_upgrade_left_paused_is_caught() {
     let scout2 = Address::generate(&h.env);
     fund(&h, &scout2, 50_000_000);
     h.scout_access.subscribe(&scout2, &SubscriptionTier::Basic);
+}
+
+/// Assert that `upgrade()` emits a `contract_upgraded` event before swapping
+/// the WASM, so the event is attributed to the old code version.
+#[test]
+fn test_scout_access_upgrade_emits_contract_upgraded_event() {
+    use scoutchain_shared_types::testutils::has_event;
+
+    let h = setup();
+    let _ = seed(&h);
+
+    let new_wasm_hash = h.env.deployer().upload_contract_wasm(Bytes::new(&h.env));
+    h.scout_access.upgrade(&new_wasm_hash);
+
+    let found = has_event(&h.env, "contract_upgraded");
+
+    assert!(
+        found,
+        "expected a 'contract_upgraded' event to be emitted by upgrade()"
+    );
 }

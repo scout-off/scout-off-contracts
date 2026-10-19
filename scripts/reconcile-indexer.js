@@ -291,6 +291,19 @@ async function reconcileScouts(pg, cfg, report) {
     // in migrations/001_initial_schema.sql and is checked here against the
     // on-chain value returned by registration.get_scout(...).verified.
     report.check("scouts", key, "verified", Boolean(s.verified), Boolean(dbRow.verified));
+
+    const deactivatedResult = invoke(
+      cfg.network,
+      cfg.source,
+      cfg.registrationId,
+      "is_scout_deactivated",
+      ["--scout_id", key],
+    );
+    if (deactivatedResult.ok) {
+      report.check("scouts", key, "deactivated", deactivatedResult.value === true, Boolean(dbRow.deactivated));
+    } else {
+      report.add("scouts", key, "deactivated", "getter_failed", dbRow.deactivated, deactivatedResult.error);
+    }
   }
 }
 
@@ -528,16 +541,88 @@ async function reconcileContactRecords(pg, cfg, report, playerIds) {
       if (!dbScouts.has(scout)) {
         report.add("contact_records", `${key}:${scout}`, "existence", "present", "missing");
       }
-    }
-    for (const scout of dbScouts) {
-      if (!result.value.includes(scout)) {
-        report.add("contact_records", `${key}:${scout}`, "existence", "missing", "present");
+      }
+      for (const scout of dbScouts) {
+        if (!result.value.includes(scout)) {
+          report.add("contact_records", `${key}:${scout}`, "existence", "missing", "present");
+        }
       }
     }
   }
-}
 
-async function reconcileDisputeVotes(pg, cfg, report, playerIds) {
+  async function reconcileEvidenceAccessGrants(pg, cfg, report, playerIds) {
+    // Walk every (player_id, scout) grant pair that the indexer recorded in
+    // the evidence_access_grants table, and diff it against on-chain state
+    // returned by get_player_access_grants.  Because the on-chain getter
+    // paginates at 50 entries per call, we page through until the returned
+    // page is empty (or smaller than the page size), collecting every grant
+    // the contract knows about for that player.
+
+    for (const id of playerIds) {
+      const key = String(id);
+
+      // --- Collect on-chain grants for this player across all pages ---
+      const chainGrants = [];
+      let offset = 0;
+      while (true) {
+        const page = invoke(cfg.network, cfg.source, cfg.scoutAccessId,
+          "get_player_access_grants",
+          ["--player_id", key, "--offset", String(offset), "--limit", "50"]);
+        if (!page.ok) break;
+        if (!Array.isArray(page.value)) break;
+        for (const g of page.value) chainGrants.push(g);
+        if (page.value.length < 50) break;
+        offset += 50;
+      }
+
+      // --- Query DB rows for this player ---
+      const { rows: dbRows } = await pg.query(
+        "SELECT player_id, scout, granted_at, expires_at, tier_at_grant, revoked, revoked_at " +
+        "FROM evidence_access_grants WHERE player_id = $1",
+        [id]);
+
+      // --- Build lookup sets ---
+      const chainByKey = new Map(); // "scout" -> grant object
+      for (const g of chainGrants) {
+        if (g && g.scout) chainByKey.set(String(g.scout), g);
+      }
+      const dbByKey = new Map();    // "scout" -> db row
+      for (const r of dbRows) {
+        dbByKey.set(String(r.scout), r);
+      }
+
+      // --- Field-level comparison ---
+      const fields = [
+        { name: "granted_at", convert: (v) => String(v ?? "") },
+        { name: "expires_at", convert: (v) => String(v ?? "") },
+        { name: "tier_at_grant", convert: (v) => String(v ?? "") },
+        { name: "revoked", convert: (v) => Boolean(v) },
+        { name: "revoked_at", convert: (v) => String(v ?? "") },
+      ];
+
+      for (const [scoutKey, chainGrant] of chainByKey) {
+        const dbRow = dbByKey.get(scoutKey);
+        if (!dbRow) {
+          report.add("evidence_access_grants", `${key}:${scoutKey}`, "existence", "present", "missing");
+          continue;
+        }
+        for (const f of fields) {
+          const chainVal = f.convert(chainGrant[f.name]);
+          const dbVal = f.convert(dbRow[f.name]);
+          report.check("evidence_access_grants", `${key}:${scoutKey}`, f.name, chainVal, dbVal);
+        }
+      }
+
+      // --- DB-only rows (grant in DB, not on chain) ---
+      for (const [scoutKey, dbRow] of dbByKey) {
+        if (!chainByKey.has(scoutKey)) {
+          report.add("evidence_access_grants", `${key}:${scoutKey}`, "existence", "missing", "present");
+        }
+      }
+    }
+  }
+
+  async function reconcileDisputeVotes(pg, cfg, report, playerIds) {
   // Walk every jury-required dispute and cross-check the per-validator vote
   // rows in the dispute_votes table against on-chain state.
   //

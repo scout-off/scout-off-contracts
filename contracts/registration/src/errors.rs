@@ -60,6 +60,10 @@ pub enum ScoutChainError {
     /// `restore_scout_record` targeted a scout entry that has been fully
     /// evicted and is unrecoverable.
     ScoutRecordEvicted = 18,
+
+    // ── Cooldown config ──
+    /// Cooldown value exceeds the maximum allowed (7 days).
+    InvalidCooldown = 19,
 }
 
 impl AdminError for ScoutChainError {
@@ -91,6 +95,7 @@ mod tests {
         ("RegistrationCooldown", 16),
         ("PlayerRecordEvicted", 17),
         ("ScoutRecordEvicted", 18),
+        ("InvalidCooldown", 19),
     ];
 
     #[test]

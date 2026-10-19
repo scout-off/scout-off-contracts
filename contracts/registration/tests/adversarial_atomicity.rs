@@ -27,7 +27,7 @@ fn setup() -> Harness {
 fn valid_vitals(env: &Env) -> PlayerVitals {
     PlayerVitals {
         age: 20,
-        position: String::from_str(env, "Forward"),
+        position: String::from_str(env, "ST"),
         region: String::from_str(env, "EU"),
         nationality: String::from_str(env, "FR"),
     }
@@ -80,7 +80,7 @@ fn test_invalid_registration_commits_no_state() {
 
     let bad = PlayerVitals {
         age: 0,
-        position: String::from_str(&h.env, "Forward"),
+        position: String::from_str(&h.env, "ST"),
         region: String::from_str(&h.env, "EU"),
         nationality: String::from_str(&h.env, "FR"),
     };

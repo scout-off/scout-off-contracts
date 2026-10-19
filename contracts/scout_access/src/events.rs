@@ -1,5 +1,5 @@
 use crate::types::{FeeConfig, SubscriptionTier};
-use soroban_sdk::{contractevent, Address, Env};
+use soroban_sdk::{contractevent, Address, BytesN, Env, Symbol};
 
 // ── Typed contract events (issue #1370) ──────────────────────────────────────
 
@@ -44,6 +44,7 @@ pub struct SubscriptionRenewed {
 pub struct SubscriptionRefunded {
     #[topic]
     pub scout: Address,
+    pub admin: Address,
     pub amount: i128,
 }
 
@@ -425,9 +426,11 @@ pub fn subscription_renewed(
     .emit(env);
 }
 
-pub fn subscription_refunded(env: &Env, scout: &Address, amount: i128) {
+/// topics: (event_name, scout)  data: (admin, amount)
+pub fn subscription_refunded(env: &Env, scout: &Address, admin: &Address, amount: i128) {
     SubscriptionRefunded {
         scout: scout.clone(),
+        admin: admin.clone(),
         amount,
     }
     .emit(env);
@@ -493,6 +496,30 @@ pub fn fee_config_updated(
     .emit(env);
 }
 
+/// topics: (event_name, admin)  data: ()
+///
+/// Emitted when a pending fee config proposal is cancelled via
+/// `cancel_fee_config_proposal`, or cleared implicitly by `update_fee_config`.
+pub fn fee_config_proposal_cancelled(env: &Env, admin: &Address) {
+    env.events().publish(
+        (
+            Symbol::new(env, "fee_config_proposal_cancelled"),
+            admin.clone(),
+        ),
+        (),
+    );
+}
+
+/// topics: (event_name, admin)  data: (old_config, new_config)
+///
+/// Emitted only by `update_fee_config`, alongside (never instead of)
+/// `fee_config_updated`, so indexers/auditors can tell — purely from the
+/// event stream — that this particular fee change bypassed the 7-day
+/// `propose_fee_config` / `activate_fee_config` delay (see
+/// docs/FEE_CONFIG_PROPOSAL_DESIGN.md). A `fee_config_updated` event that is
+/// *not* accompanied by this event in the same transaction, and is also not
+/// accompanied by a same-transaction `fee_config_proposed`, was activated via
+/// `activate_fee_config` after the full delay elapsed.
 pub fn fee_config_delay_bypassed(
     env: &Env,
     admin: &Address,
@@ -588,4 +615,53 @@ pub fn player_data_purged(
         more,
     }
     .emit(env);
+}
+
+pub const EVIDENCE_ACCESS_REVOKED_BY_PLAYER: &str = "evidence_access_revoked_by_player";
+
+/// topics: (event_name, scout)  data: (player_id, player)
+///
+/// Emitted by `revoke_evidence_access` (player-initiated). Like
+/// `evidence_access_revoked` (admin path), this only instructs the off-chain
+/// key-wrapping service to stop honoring *future* key-wrap requests for
+/// this (player_id, scout) pair — it cannot claw back a wrapped key already
+/// delivered before this event.
+pub fn evidence_access_revoked_by_player(
+    env: &Env,
+    player_id: u64,
+    scout: &Address,
+    player: &Address,
+) {
+    env.events().publish(
+        (
+            Symbol::new(env, EVIDENCE_ACCESS_REVOKED_BY_PLAYER),
+            scout.clone(),
+        ),
+        (player_id, player.clone()),
+    );
+}
+
+/// Emitted before `update_current_contract_wasm` — attributed to the old code version.
+/// topics: (event_name, admin)  data: new_wasm_hash
+pub fn contract_upgraded(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>) {
+    env.events().publish(
+        (Symbol::new(env, CONTRACT_UPGRADED), admin.clone()),
+        new_wasm_hash.clone(),
+    );
+}
+
+/// topics: (event_name, admin)  data: ()
+pub fn migration_window_opened(env: &Env, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, MIGRATION_WINDOW_OPENED), admin.clone()),
+        (),
+    );
+}
+
+/// topics: (event_name, admin)  data: ()
+pub fn migration_window_closed(env: &Env, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, MIGRATION_WINDOW_CLOSED), admin.clone()),
+        (),
+    );
 }

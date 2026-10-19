@@ -17,6 +17,8 @@
 //! `get_validator_milestones_page_v2` and `get_validator_players_page` in
 //! `contracts/verification/tests/pagination_correctness.rs`.
 
+mod common;
+
 use scoutchain_scout_access::{
     FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
 };
@@ -60,6 +62,8 @@ fn setup() -> Harness {
     let id = env.register(ScoutAccessContract, ());
     let client = ScoutAccessContractClient::new(&env, &id);
     client.initialize(&admin, &xlm, &default_fees());
+    common::wire_registration(&env, Some(&client), None);
+    common::wire_progress_level_stub(&env, &client);
 
     Harness { env, xlm, client }
 }
@@ -216,9 +220,10 @@ fn test_first_page_insertion_order() {
     assert_eq!(page.entries.get(2).unwrap(), 30u64);
 }
 
-/// limit=0 returns an empty page but the correct total.
+/// limit=0 is clamped to 1 (the shared 1..=50 pagination convention, #1378)
+/// and the total is unaffected.
 #[test]
-fn test_zero_limit_returns_empty_with_total() {
+fn test_zero_limit_is_clamped_to_one() {
     let h = setup();
     let scout = Address::generate(&h.env);
     subscribe_elite(&h, &scout, 3);
@@ -226,5 +231,5 @@ fn test_zero_limit_returns_empty_with_total() {
 
     let page = h.client.get_scout_contacts_page(&scout, &0u32, &0u32);
     assert_eq!(page.total, 3, "total still reflects 3 contacts");
-    assert_eq!(page.entries.len(), 0, "limit=0 returns zero entries");
+    assert_eq!(page.entries.len(), 1, "limit=0 is treated as limit=1");
 }

@@ -46,10 +46,10 @@ graph TB
     end
 
     subgraph Contract["Smart Contracts (Soroban / Rust)"]
-        REG[registration.rs — Player & scout onboarding]
-        VERIFY[verification.rs — Milestone approvals]
-        PROGRESS[progress.rs — On-chain progress level updates]
-        SCOUT[scout_access.rs — Subscriptions & pay-to-contact]
+        REG[contracts/registration — Player & scout onboarding]
+        VERIFY[contracts/verification — Milestone approvals]
+        PROGRESS[contracts/progress — On-chain progress level updates]
+        SCOUT[contracts/scout_access — Subscriptions & pay-to-contact]
     end
 
     subgraph Storage["Decentralized Storage"]
@@ -83,12 +83,32 @@ graph TB
 
 ### Core Components
 
-- **registration.rs**: Handles player and scout onboarding, stores wallet address, IPFS content hashes, and basic vitals on-chain
-- **verification.rs**: Processes milestone approval requests from authorized validators and emits verification events
-- **progress.rs**: Manages the four-tier progress level system and updates player progress state on-chain
-- **scout_access.rs**: Handles scout subscriptions, pay-to-contact flows, and connection agreement logic
-- **storage.rs**: Persistent storage for player profiles, validator registry, and scout subscription records
-- **events.rs**: Event emission for off-chain indexing (new profiles, milestone approvals, scout contacts)
+Each contract is its own Rust crate under `contracts/` with the source split
+across `src/lib.rs` (contract entry points), `src/types.rs` (data structures),
+`src/errors.rs` (error enums), and `src/events.rs` (event helpers).
+
+- **`contracts/registration/`** — Player & scout onboarding: stores wallet
+  address, IPFS content hashes, basic vitals, and scout profile on-chain.
+  Key file: `src/lib.rs`
+- **`contracts/verification/`** — Validator registry and milestone
+  approval/attestation: authorises coaches and academies, processes milestone
+  evidence, and cross-calls the progress contract to advance player levels.
+  Key file: `src/lib.rs`
+- **`contracts/progress/`** — Four-tier level state machine: enforces valid
+  `Unverified → VerifiedIdentity → PerformanceMilestones → EliteTier`
+  transitions and maintains an immutable on-chain history.
+  Key file: `src/lib.rs`
+- **`contracts/scout_access/`** — Scout subscriptions, pay-to-contact flows,
+  trial offer escrow, and connection agreement logic. Cross-calls the progress
+  contract to advance players to Elite Tier on a confirmed trial offer.
+  Key file: `src/lib.rs`
+- **`contracts/shared-types/`** — Cross-contract types shared by all four
+  crates: `ProgressLevel` enum, admin/wiring helpers, safe-math utilities, and
+  CID validation logic.
+  Key file: `src/lib.rs`
+- **`contracts/chaos-tests/`** — Cross-contract chaos schedules: property-based
+  and adversarial tests exercising the full call graph under random ordering and
+  injected faults.
 
 ### Progress Level Model
 

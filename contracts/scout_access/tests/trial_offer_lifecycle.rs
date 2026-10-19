@@ -23,6 +23,8 @@
 //! Every test asserts both the returned `Result` variant and the on-chain
 //! events emitted, matching the rigor used in the existing integration tests.
 
+mod common;
+
 use scoutchain_progress::{ProgressContract, ProgressContractClient};
 use scoutchain_scout_access::{
     FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
@@ -117,6 +119,7 @@ fn setup() -> Harness {
     let progress_id = env.register(ProgressContract, ());
     let progress = ProgressContractClient::new(&env, &progress_id);
     progress.initialize(&admin);
+    common::wire_registration(&env, None, Some(&progress));
     progress.set_verification_contract(&ver_id);
 
     let xlm = env
@@ -126,6 +129,7 @@ fn setup() -> Harness {
     let sa_id = env.register(ScoutAccessContract, ());
     let scout_access = ScoutAccessContractClient::new(&env, &sa_id);
     scout_access.initialize(&admin, &xlm, &default_fees());
+    common::wire_registration(&env, Some(&scout_access), None);
 
     // Wire cross-contract calls in both directions.
     scout_access.set_progress_contract(&progress_id);
@@ -324,7 +328,7 @@ fn test_confirm_after_expiry_refunds_escrow_and_emits_event() {
 /// A second confirm must return `TrialOfferAlreadyConfirmed` (the contract
 /// looks up the escrow first and errors when it is missing).
 #[test]
-fn test_double_confirm_returns_already_confirmed() {
+fn test_double_confirm_is_idempotent_no_op() {
     let h = setup();
     let player_id: u64 = 3;
     let player_wallet = Address::generate(&h.env);
@@ -338,13 +342,14 @@ fn test_double_confirm_returns_already_confirmed() {
     h.scout_access
         .confirm_trial_offer(&player_wallet, &player_id, &index, &None::<String>);
 
-    // Second confirm — escrow is gone, must return TrialOfferAlreadyConfirmed.
+    // Second confirm — the confirmation marker makes it an idempotent no-op.
     let result =
         h.scout_access
             .try_confirm_trial_offer(&player_wallet, &player_id, &index, &None::<String>);
-    assert!(
-        result.is_err(),
-        "second confirm must return TrialOfferAlreadyConfirmed"
+    assert_eq!(
+        result,
+        Ok(Ok(())),
+        "second confirm must be an idempotent no-op"
     );
 }
 

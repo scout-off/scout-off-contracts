@@ -89,6 +89,7 @@ impl Harness {
         progress.set_registration_contract(&reg_id);
         progress.set_scout_access_contract(&sa_id);
         scout_access.set_progress_contract(&progress_id);
+        scout_access.set_registration_contract(&reg_id);
         registration.set_progress_contract(&progress_id);
 
         let mut players = Vec::new(&env);
@@ -99,9 +100,9 @@ impl Harness {
                 &wallet,
                 &PlayerVitals {
                     age: 20,
-                    position: String::from_str(&env, "Forward"),
-                    region: String::from_str(&env, "West Africa"),
-                    nationality: String::from_str(&env, "Ghana"),
+                    position: String::from_str(&env, "ST"),
+                    region: String::from_str(&env, "NG"),
+                    nationality: String::from_str(&env, "GH"),
                 },
                 &{
                     let mut hashes = Vec::new(&env);
@@ -116,7 +117,9 @@ impl Harness {
         let mut scouts = Vec::new(&env);
         for _ in 0..2 {
             let wallet = Address::generate(&env);
-            let _ = registration.register_scout(&wallet, &String::from_str(&env, "West Africa"));
+            let scout_id = registration.register_scout(&wallet, &String::from_str(&env, "NG"));
+            // Paid tiers require a verified scout (#1417).
+            registration.verify_scout(&scout_id);
             StellarAssetClient::new(&env, &xlm).mint(&wallet, &100_000_000i128);
             scout_access.subscribe(&wallet, &SubscriptionTier::Elite);
             scouts.push_back(wallet);

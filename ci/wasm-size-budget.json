@@ -18,8 +18,8 @@
   ],
   "budgets": {
     "registration": 100000,
-    "verification": 140000,
+    "verification": 176000,
     "progress": 100000,
-    "scout_access": 100000
+    "scout_access": 120000
   }
 }

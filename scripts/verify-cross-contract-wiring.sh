@@ -244,16 +244,10 @@ ver = load(ver_ok, "VER_STATE")
 prog = load(prog_ok, "PROG_STATE")
 sa = load(sa_ok, "SA_STATE")
 
-def flat_link(state, field):
-    # progress's get_wiring_state() keeps flat <field>_contract /
-    # <field>_epoch fields for backward compatibility (see types.rs).
-    if state is None:
-        return (None, None)
-    return (state.get(f"{field}_contract"), state.get(f"{field}_epoch"))
-
 def nested_link(state, field):
-    # verification / registration / scout_access use the shared
-    # scoutchain_shared_types::WiringLink { address, epoch } shape.
+    # All four contracts now use the shared scoutchain_shared_types::WiringLink
+    # { address, epoch } shape. progress was migrated to this shape in issue
+    # #1412 — the old flat_link helper is no longer needed.
     if state is None:
         return (None, None)
     link = state.get(f"{field}_contract") or {}
@@ -268,10 +262,10 @@ LINKS = [
     ("registration", reg_ok, *nested_link(reg, "progress"), "progress", prog_id),
     ("scout_access", sa_ok, *nested_link(sa, "progress"), "progress", prog_id),
     ("verification", ver_ok, *nested_link(ver, "registration"), "registration", reg_id),
-    ("progress", prog_ok, *flat_link(prog, "registration"), "registration", reg_id),
+    ("progress", prog_ok, *nested_link(prog, "registration"), "registration", reg_id),
     ("scout_access", sa_ok, *nested_link(sa, "registration"), "registration", reg_id),
-    ("progress", prog_ok, *flat_link(prog, "verification"), "verification", ver_id),
-    ("progress", prog_ok, *flat_link(prog, "scout_access"), "scout_access", sa_id),
+    ("progress", prog_ok, *nested_link(prog, "verification"), "verification", ver_id),
+    ("progress", prog_ok, *nested_link(prog, "scout_access"), "scout_access", sa_id),
 ]
 
 def classify(address, epoch, expected_id):

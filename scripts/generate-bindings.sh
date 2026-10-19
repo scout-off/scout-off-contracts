@@ -149,8 +149,9 @@ extract_function_list() {
       next;
     }
     in_section && in_functions && /^#### `/ {
-      # Extract function signature
-      match($0, /`([^`]+)`/, sig);
+      # Extract function signature (2-arg match: portable to mawk/POSIX awk)
+      match($0, /`[^`]+`/);
+      sig = substr($0, RSTART + 1, RLENGTH - 2);
       getline; # skip blank line
       getline; # get description line or table start
 
@@ -168,7 +169,7 @@ extract_function_list() {
       }
 
       # Print formatted entry
-      print "- `" sig[1] "` — " desc;
+      print "- `" sig "` — " desc;
     }
   ' "$doc_file"
 }

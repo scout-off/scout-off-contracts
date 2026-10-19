@@ -51,9 +51,42 @@ if [[ $CARGO_EXIT -ne 0 ]]; then
   exit 2
 fi
 
-# Extract only the "missing documentation" warnings from stderr.
-# Rust diagnostic lines start at column 0 with "warning:".
-MISSING_DOCS=$(grep -E '^warning:.*missing documentation' "$STDERR_FILE" 2>/dev/null || true)
+# Extract only the "missing documentation" warnings from stderr, each paired
+# with its source location ("warning: ... @ path:line").
+#
+# soroban-sdk's #[contracttype] / #[contracterror] expansion emits a public
+# spec static and `spec_xdr()` function per type. Those are generated items
+# with no place to attach a doc comment, and rustc reports them at the
+# attribute's line, so warnings whose location is such an attribute are
+# skipped. Every hand-written public item is still checked.
+MISSING_DOCS=$(REPO_ROOT="$REPO_ROOT" python3 - "$STDERR_FILE" <<'PYEOF'
+import os
+import re
+import sys
+
+root = os.environ["REPO_ROOT"]
+lines = open(sys.argv[1]).read().splitlines()
+for i, line in enumerate(lines):
+    if not re.match(r"^warning:.*missing documentation", line):
+        continue
+    loc = None
+    for nxt in lines[i + 1:i + 4]:
+        m = re.match(r"^\s*--> ([^:]+):(\d+):\d+", nxt)
+        if m:
+            loc = (m.group(1), int(m.group(2)))
+            break
+    if loc:
+        try:
+            src = open(os.path.join(root, loc[0])).read().splitlines()[loc[1] - 1]
+        except (OSError, IndexError):
+            src = ""
+        if re.match(r"^\s*#\[(contracttype|contracterror)\b", src):
+            continue
+        print("{} @ {}:{}".format(line, loc[0], loc[1]))
+    else:
+        print(line)
+PYEOF
+)
 
 if [[ -z "$MISSING_DOCS" ]]; then
   echo "PASS: No missing-documentation warnings found on public items."

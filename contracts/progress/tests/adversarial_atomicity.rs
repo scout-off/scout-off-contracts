@@ -69,8 +69,11 @@ fn test_advance_level_rolls_back_when_registration_sync_fails() {
     let result = h.progress.try_advance_level(&h.ver_id, &player_id, &0u32);
 
     assert!(
-        matches!(result, Err(Ok(ProgressError::RegistrationCallFailed))),
-        "advance_level must fail with RegistrationCallFailed when sync fails: {result:?}"
+        // The sync fails because registration has no such player; since #1409
+        // that surfaces as PlayerNotRegistered rather than the generic
+        // RegistrationCallFailed.
+        matches!(result, Err(Ok(ProgressError::PlayerNotRegistered))),
+        "advance_level must fail with PlayerNotRegistered when sync fails: {result:?}"
     );
 
     // Atomicity: nothing from the rolled-back advance may have persisted.

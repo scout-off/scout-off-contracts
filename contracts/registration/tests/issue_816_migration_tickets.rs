@@ -43,9 +43,9 @@ fn wallet_from_signing_key(env: &Env, sk: &SigningKey) -> Address {
 fn vitals(env: &Env) -> PlayerVitals {
     PlayerVitals {
         age: 20,
-        position: String::from_str(env, "Forward"),
-        region: String::from_str(env, "West Africa"),
-        nationality: String::from_str(env, "Ghana"),
+        position: String::from_str(env, "ST"),
+        region: String::from_str(env, "NG"),
+        nationality: String::from_str(env, "GH"),
     }
 }
 

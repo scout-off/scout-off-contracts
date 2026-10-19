@@ -23,6 +23,17 @@ The administrator supplies a `RevocationSeverity` and reason when calling
 
 The severity, reason, and revocation time are retained in a `RevocationRecord`.
 
+### Re-revocation rules (issue #1393)
+
+| Current → Requested | Result |
+|---|---|
+| Routine → Routine | `ValidatorAlreadyRevoked` |
+| ForCause → ForCause | `ValidatorAlreadyRevoked` |
+| ForCause → Routine | `ValidatorAlreadyRevoked` (downgrade rejected) |
+| Routine → ForCause | Escalation allowed: original record is pushed to `RevocationHistory`, current record keeps the original `revoked_at`, and cascade starts. An existing `RevocationCascadeCursor` is **never** reset to 0. |
+
+`batch_revoke_validators` shares the same helper and transition table.
+
 ## Cascade and re-review
 
 Every approval is indexed in the approving validator's history. On a for-cause
@@ -52,11 +63,12 @@ This mirrors the `expire_trial_offers` bounded-sweep pattern in
 
 | Function | Auth | Description |
 |---|---|---|
-| `revoke_validator(wallet, severity, reason)` | Admin | Deactivate a validator with explicit severity; starts cascade for ForCause. |
+| `revoke_validator(wallet, severity, reason)` | Admin | Deactivate a validator with explicit severity; starts cascade for ForCause. Rejects same-severity / downgrade re-revocation; allows Routine → ForCause escalation. |
 | `continue_revocation_cascade(wallet)` | Admin | Resume an in-progress cascade sweep. |
 | `is_milestone_flagged(player_id, milestone_index)` | Public | Returns `true` if the milestone is pending re-review. |
 | `rereview_milestone(reviewer, player_id, milestone_index)` | Active validator | Clear a pending flag after independently confirming the achievement. |
 | `get_revocation_record(wallet)` | Public | Return the stored `RevocationRecord` for a revoked validator. |
+| `get_revocation_history(wallet)` | Public | Prior records preserved across Routine → ForCause escalation. |
 
 ## Events
 

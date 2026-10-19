@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@prisma/client": "5.16.2",
+    "@stellar/stellar-sdk": "13.0.0",
     "express": "4.19.2",
     "jsonwebtoken": "9.0.2",
     "pg": "8.11.0",

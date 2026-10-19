@@ -7,6 +7,8 @@
 /// These tests would silently pass (incorrectly) with the old hand-rolled
 /// mock client in scout_access — they require the real #[contractclient]
 /// implementation that makes genuine cross-contract calls.
+mod common;
+
 use scoutchain_progress::{ProgressContract, ProgressContractClient};
 use scoutchain_scout_access::{
     FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
@@ -61,6 +63,7 @@ fn setup() -> Harness {
     let progress_id = env.register(ProgressContract, ());
     let progress = ProgressContractClient::new(&env, &progress_id);
     progress.initialize(&admin);
+    common::wire_registration(&env, None, Some(&progress));
     progress.set_verification_contract(&ver_id);
 
     // Create the XLM token used by scout_access.
@@ -72,6 +75,7 @@ fn setup() -> Harness {
     let sa_id = env.register(ScoutAccessContract, ());
     let scout_access = ScoutAccessContractClient::new(&env, &sa_id);
     scout_access.initialize(&admin, &xlm, &default_fees());
+    common::wire_registration(&env, Some(&scout_access), None);
 
     // Wire scout_access → progress so log_trial_offer can call advance_level.
     scout_access.set_progress_contract(&progress_id);

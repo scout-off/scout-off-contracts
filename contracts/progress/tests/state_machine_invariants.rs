@@ -13,14 +13,31 @@
 //! proptest over a finite action domain) rather than proptest macros, which
 //! don't work in no_std WASM context.
 
-use scoutchain_progress::{ProgressContract, ProgressContractClient};
+use scoutchain_progress::{ProgressContract, ProgressContractClient, ProgressError};
+use scoutchain_registration::{PlayerVitals, RegistrationContract, RegistrationContractClient};
 use scoutchain_shared_types::ProgressLevel;
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
+
+fn valid_vitals(env: &Env) -> PlayerVitals {
+    PlayerVitals {
+        age: 20,
+        position: String::from_str(env, "ST"),
+        region: String::from_str(env, "EU"),
+        nationality: String::from_str(env, "FR"),
+    }
+}
+
+fn one_hash(env: &Env) -> Vec<String> {
+    let mut v = Vec::new(env);
+    v.push_back(String::from_str(env, "bafytestcid"));
+    v
+}
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 struct Harness {
     client: ProgressContractClient<'static>,
+    registration: RegistrationContractClient<'static>,
     /// Whitelisted caller for `advance_level`, registered as the *primary*
     /// VerificationContract (see `setup`).
     caller: Address,
@@ -30,6 +47,11 @@ fn setup() -> Harness {
     let env = Env::default();
     env.mock_all_auths();
     let admin = Address::generate(&env);
+
+    let reg_id = env.register(RegistrationContract, ());
+    let registration = RegistrationContractClient::new(&env, &reg_id);
+    registration.initialize(&admin);
+
     let id = env.register(ProgressContract, ());
     let client = ProgressContractClient::new(&env, &id);
     client.initialize(&admin);
@@ -45,8 +67,22 @@ fn setup() -> Harness {
     // invariants, which are about the state machine, not milestone lookup.
     let caller = Address::generate(&env);
     client.set_verification_contract(&caller);
+    client.set_registration_contract(&reg_id);
+    registration.set_progress_contract(&id);
 
-    Harness { client, caller }
+    Harness {
+        client,
+        registration,
+        caller,
+    }
+}
+
+/// Register a player and return the assigned player ID.
+fn register_player(h: &Harness) -> u64 {
+    let env = &h.client.env;
+    let wallet = Address::generate(env);
+    h.registration
+        .register_player(&wallet, &valid_vitals(env), &one_hash(env))
 }
 
 /// Convert ProgressLevel to its numeric tier (0–3).
@@ -96,7 +132,7 @@ fn assert_history_invariants(h: &Harness, player_id: u64) {
 #[test]
 fn test_sequential_forward_only() {
     let h = setup();
-    let pid: u64 = 1;
+    let pid = register_player(&h);
 
     let l1 = h.client.advance_level(&h.caller, &pid, &1u32);
     assert_eq!(l1, ProgressLevel::VerifiedIdentity);
@@ -115,7 +151,7 @@ fn test_sequential_forward_only() {
 fn test_cannot_exceed_elite_tier() {
     use scoutchain_progress::ProgressError;
     let h = setup();
-    let pid: u64 = 2;
+    let pid = register_player(&h);
 
     for i in 1..=3u32 {
         h.client.advance_level(&h.caller, &pid, &i);
@@ -137,7 +173,7 @@ fn test_cannot_exceed_elite_tier() {
 #[test]
 fn test_reset_mid_sequence_and_resume() {
     let h = setup();
-    let pid: u64 = 3;
+    let pid = register_player(&h);
 
     h.client.advance_level(&h.caller, &pid, &1u32);
     h.client.advance_level(&h.caller, &pid, &2u32);
@@ -166,7 +202,7 @@ fn test_reset_mid_sequence_and_resume() {
 #[test]
 fn test_reset_to_mid_level() {
     let h = setup();
-    let pid: u64 = 4;
+    let pid = register_player(&h);
 
     for i in 1..=3u32 {
         h.client.advance_level(&h.caller, &pid, &i);
@@ -190,22 +226,29 @@ fn test_reset_to_mid_level() {
 fn test_multiple_players_independent() {
     let h = setup();
 
+    let pid_a = register_player(&h);
+    let pid_b = register_player(&h);
+    let pid_c = register_player(&h);
+
     // Player A: full progression
     for i in 1..=3u32 {
-        h.client.advance_level(&h.caller, &1u64, &i);
+        h.client.advance_level(&h.caller, &pid_a, &i);
     }
     // Player B: only one step
-    h.client.advance_level(&h.caller, &2u64, &1u32);
-    // Player C: reset immediately (starts at 0, stays at 0)
-    h.client
-        .reset_player_level(&3u64, &ProgressLevel::Unverified);
+    h.client.advance_level(&h.caller, &pid_b, &1u32);
+    // Player C: a reset to its current level is a rejected no-op (#1464).
+    assert_eq!(
+        h.client
+            .try_reset_player_level(&pid_c, &ProgressLevel::Unverified),
+        Err(Ok(ProgressError::NoLevelChange))
+    );
 
-    assert_eq!(h.client.get_level(&1u64), ProgressLevel::EliteTier);
-    assert_eq!(h.client.get_level(&2u64), ProgressLevel::VerifiedIdentity);
-    assert_eq!(h.client.get_level(&3u64), ProgressLevel::Unverified);
+    assert_eq!(h.client.get_level(&pid_a), ProgressLevel::EliteTier);
+    assert_eq!(h.client.get_level(&pid_b), ProgressLevel::VerifiedIdentity);
+    assert_eq!(h.client.get_level(&pid_c), ProgressLevel::Unverified);
 
-    assert_history_invariants(&h, 1);
-    assert_history_invariants(&h, 2);
+    assert_history_invariants(&h, pid_a);
+    assert_history_invariants(&h, pid_b);
 }
 
 /// Exhaustive sequence enumeration: all permutations of up to 4 actions from
@@ -246,11 +289,11 @@ fn test_exhaustive_action_sequences() {
         }
     }
 
-    let pid: u64 = 99;
     let mut milestone_counter: u32 = 0;
 
     for seq in &sequences {
         let h = setup();
+        let pid = register_player(&h);
         let mut expected = ProgressLevel::Unverified;
 
         for action in seq {
@@ -272,16 +315,23 @@ fn test_exhaustive_action_sequences() {
                         );
                     }
                 }
-                Action::ResetUnverified => {
-                    h.client
-                        .reset_player_level(&pid, &ProgressLevel::Unverified);
-                    expected = ProgressLevel::Unverified;
-                    assert_eq!(h.client.get_level(&pid), expected);
-                }
-                Action::ResetVerifiedIdentity => {
-                    h.client
-                        .reset_player_level(&pid, &ProgressLevel::VerifiedIdentity);
-                    expected = ProgressLevel::VerifiedIdentity;
+                Action::ResetUnverified | Action::ResetVerifiedIdentity => {
+                    let target = match action {
+                        Action::ResetUnverified => ProgressLevel::Unverified,
+                        _ => ProgressLevel::VerifiedIdentity,
+                    };
+                    let result = h.client.try_reset_player_level(&pid, &target);
+                    if target == expected {
+                        // No-op resets are rejected and change nothing (#1464).
+                        assert_eq!(
+                            result,
+                            Err(Ok(ProgressError::NoLevelChange)),
+                            "no-op reset must be rejected in seq {seq:?}"
+                        );
+                    } else {
+                        assert!(result.is_ok(), "reset failed in seq {seq:?}: {result:?}");
+                        expected = target;
+                    }
                     assert_eq!(h.client.get_level(&pid), expected);
                 }
             }
@@ -295,7 +345,7 @@ fn test_exhaustive_action_sequences() {
 fn test_paused_contract_blocks_all_mutations() {
     use scoutchain_progress::ProgressError;
     let h = setup();
-    let pid: u64 = 50;
+    let pid = register_player(&h);
 
     h.client.advance_level(&h.caller, &pid, &1u32);
     h.client.pause_contract();

@@ -1,21 +1,66 @@
-import express, { Request, Response } from "express";
+import express, { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-import { issueSep10Token } from "./services/sep10";
+import {
+  buildChallengeTx,
+  verifyChallengeTx,
+  deriveRole,
+  issueSep10Token,
+} from "./services/sep10";
 import { requireAuth, requireRole } from "./middleware/auth";
 import { prisma } from "./db";
 
 const app = express();
 app.use(express.json());
 
-// SEP-10 token issuance endpoint
-app.post("/api/sep10/token", (req: Request, res: Response) => {
-  const { sub, role } = req.body;
-  if (!sub || !role) {
-    return res.status(400).json({ error: "sub and role are required" });
+// In-memory token store for demo (replace with DB in production)
+const issuedTokens = new Map<string, string>();
+
+// SEP-10 challenge endpoint — returns a server-signed challenge
+// transaction that the client must sign and return.
+app.get("/auth", (req: Request, res: Response) => {
+  const account = req.query.account as string | undefined;
+  if (!account) {
+    return res.status(400).json({ error: "account query parameter is required" });
   }
 
-  const token = issueSep10Token({ sub, role }, process.env.JWT_SECRET!);
-  return res.json({ token });
+  try {
+    const challenge = buildChallengeTx(account);
+    res.json({ challenge });
+  } catch (error) {
+    return res.status(500).json({
+      error: error instanceof Error ? error.message : "Internal server error",
+    });
+  }
+});
+
+// SEP-10 verification endpoint — client submits the signed challenge
+// transaction; server verifies it and issues a JWT whose role is
+// derived from on-chain / indexer state.
+app.post("/auth", async (req: Request, res: Response) => {
+  const { transaction, account } = req.body as {
+    transaction?: string;
+    account?: string;
+  };
+
+  if (!transaction || !account) {
+    return res
+      .status(400)
+      .json({ error: "transaction and account are required" });
+  }
+
+  try {
+    const verifiedAccount = await verifyChallengeTx(transaction, account);
+    const role = await deriveRole(verifiedAccount);
+    const token = issueSep10Token({ sub: verifiedAccount, role }, process.env.JWT_SECRET!);
+
+    issuedTokens.set(token, "active");
+
+    res.json({ token });
+  } catch (error) {
+    return res.status(401).json({
+      error: error instanceof Error ? error.message : "Authentication failed",
+    });
+  }
 });
 
 // Revoke token endpoint (admin only) — requireAuth must precede requireRole

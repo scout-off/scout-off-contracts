@@ -18,6 +18,10 @@ use soroban_sdk::{testutils::Address as _, vec, Address, Env, String};
 const REGISTER_PLAYER_CPU_BUDGET: u64 = 452_787;
 const UPDATE_PROFILE_CPU_BUDGET: u64 = 193_686;
 const FILTER_PLAYERS_CPU_BUDGET: u64 = 1_714_870;
+// Calibrated from the first measurement (~437k / ~1.11M) plus 20% headroom;
+// the original values were set before this test could compile.
+const SET_PLAYER_LEVEL_CPU_BUDGET: u64 = 525_000;
+const SET_PLAYER_LEVEL_LARGE_BUCKET_CPU_BUDGET: u64 = 1_335_000;
 
 fn setup() -> (Env, RegistrationContractClient<'static>) {
     let env = Env::default();
@@ -32,9 +36,9 @@ fn setup() -> (Env, RegistrationContractClient<'static>) {
 fn dummy_vitals(env: &Env) -> PlayerVitals {
     PlayerVitals {
         age: 20,
-        position: String::from_str(env, "Midfielder"),
-        region: String::from_str(env, "West Africa"),
-        nationality: String::from_str(env, "Nigeria"),
+        position: String::from_str(env, "CM"),
+        region: String::from_str(env, "NG"),
+        nationality: String::from_str(env, "NG"),
     }
 }
 
@@ -83,7 +87,7 @@ fn cost_update_profile() {
 #[test]
 fn cost_filter_players() {
     let (env, client) = setup();
-    let region = String::from_str(&env, "West Africa");
+    let region = String::from_str(&env, "NG");
     for i in 0..10u32 {
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
@@ -103,4 +107,69 @@ fn cost_filter_players() {
         &20u32,
     );
     assert_cpu_budget(&env, "filter_players", FILTER_PLAYERS_CPU_BUDGET);
+}
+
+/// Typical level change: `PlayerLevel` is stored, so only the previous
+/// and new buckets are touched (2 removes + 2 adds instead of 8 removes + 2 adds).
+#[test]
+fn cost_set_player_level() {
+    let (env, client) = setup();
+    let wallet = Address::generate(&env);
+    let vitals = dummy_vitals(&env);
+    let hashes = vec![&env, String::from_str(&env, "QmTestHashSetPlayerLevel1")];
+    let player_id = client.register_player(&wallet, &vitals, &hashes);
+
+    let progress_contract = Address::generate(&env);
+    client.set_progress_contract(&progress_contract);
+
+    env.cost_estimate().budget().reset_default();
+    client.set_player_level(&player_id, &ProgressLevel::VerifiedIdentity);
+    assert_cpu_budget(&env, "set_player_level", SET_PLAYER_LEVEL_CPU_BUDGET);
+}
+
+/// Large-bucket scenario: many players share the same level+region so
+/// the composite index Vec is large. The optimized path still only
+/// touches the previous and new buckets.
+#[test]
+fn cost_set_player_level_large_bucket() {
+    let (env, client) = setup();
+    let region = String::from_str(&env, "NG");
+    let progress_contract = Address::generate(&env);
+    client.set_progress_contract(&progress_contract);
+
+    // Seed 60 players at Unverified in the same region so the
+    // PlayersByLevel(Unverified) composite index is large.
+    for i in 0..60u32 {
+        let wallet = Address::generate(&env);
+        let vitals = PlayerVitals {
+            age: 20,
+            position: String::from_str(&env, "CM"),
+            region: region.clone(),
+            nationality: String::from_str(&env, "NG"),
+        };
+        let hashes = vec![
+            &env,
+            String::from_str(&env, &format!("QmTestHashLargeBucket{i}")),
+        ];
+        client.register_player(&wallet, &vitals, &hashes);
+    }
+
+    // Register one more player in the same region/level to advance.
+    let wallet = Address::generate(&env);
+    let vitals = PlayerVitals {
+        age: 20,
+        position: String::from_str(&env, "GK"),
+        region: region.clone(),
+        nationality: String::from_str(&env, "SN"),
+    };
+    let hashes = vec![&env, String::from_str(&env, "QmTestHashLargeBucketTarget")];
+    let player_id = client.register_player(&wallet, &vitals, &hashes);
+
+    env.cost_estimate().budget().reset_default();
+    client.set_player_level(&player_id, &ProgressLevel::VerifiedIdentity);
+    assert_cpu_budget(
+        &env,
+        "set_player_level_large_bucket",
+        SET_PLAYER_LEVEL_LARGE_BUCKET_CPU_BUDGET,
+    );
 }
