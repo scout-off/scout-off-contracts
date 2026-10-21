@@ -15,7 +15,7 @@ use types::{
 };
 
 pub use errors::ScoutChainError;
-pub use types::{MigrationAuthorization, MigrationRole, ScoutStatus};
+pub use types::{MigrationAuthorization, MigrationRole, PlayerStatus, ScoutStatus};
 // `PlayerVitals` is an *input* type of the public `register_player` function, so
 // it must be nameable by external callers (integration tests, generated
 // clients). Re-export it at the crate root; this also brings it into local
