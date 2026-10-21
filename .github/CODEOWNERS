@@ -1,0 +1,25 @@
+# Validator authorization is a platform trust anchor. Keep this owner in sync
+# with the repository's authorized validator-logic reviewers.
+/contracts/verification/ @Petah1
+
+# Player/scout identity records, registration replay/migration logic, and
+# rate-limited registration are sensitive identity state — changes must get a
+# second review from the identity owner before merge.
+/contracts/registration/ @Petah1
+
+# The on-chain progress-level state machine and the Merkle history commitment
+# (get_progress_root / verify_history_proof) provide tamper-evident history —
+# keep a dedicated owner so history-proof changes are never merged unreviewed.
+/contracts/progress/ @Petah1
+
+# All fee/escrow/payment logic (subscriptions, pay-to-contact, trial-offer
+# escrow) lives here and this is the only contract that moves real XLM —
+# require a dedicated owner for any change touching money movement.
+/contracts/scout_access/ @Petah1
+
+# Default owner for everything else: docs/, scripts/, config/, migrations/,
+# bindings/, and top-level files. Guarantees security-sensitive paths such as
+# scripts/emergency-pause.sh, config/mainnet.json, and SECURITY.md itself
+# cannot merge without an owner sign-off once a repository administrator enables
+# "Require review from Code Owners" branch protection.
+* @Petah1

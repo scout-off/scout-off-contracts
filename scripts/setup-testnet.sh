@@ -12,11 +12,12 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 
+# shellcheck disable=SC1091
 source .env
 
 echo ""
 echo "Step 1/5 — Build contracts"
-cargo build --workspace --target wasm32-unknown-unknown --release
+cargo build --workspace --target wasm32v1-none --release
 
 echo ""
 echo "Step 2/5 — Deploy contracts"
