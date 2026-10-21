@@ -2378,9 +2378,14 @@ impl ScoutAccessContract {
     /// in-flight escrow state instead of replaying only the offer metadata.
     pub fn get_trial_escrow(env: Env, player_id: u64, index: u32) -> Option<TrialEscrow> {
         Self::bump_instance_ttl(&env);
-        env.storage()
-            .persistent()
-            .get(&DataKey::TrialEscrow(player_id, index))
+        let key = DataKey::TrialEscrow(player_id, index);
+        let escrow: Option<TrialEscrow> = env.storage().persistent().get(&key);
+        if escrow.is_some() {
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, TRIAL_TTL_THRESHOLD, TRIAL_TTL_EXTEND_TO);
+        }
+        escrow
     }
 
     pub fn get_trial_count(env: Env, player_id: u64) -> u32 {

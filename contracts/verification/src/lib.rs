@@ -21,7 +21,8 @@ pub use types::{
     GlobalMilestoneIndexPage, JuryConfig, Milestone, MilestoneAttestation, MilestoneDispute,
     MilestoneRef, MilestoneRefPage, MilestoneThresholdStatus, MilestoneWithValidatorStatus,
     PendingMilestoneClaim, PendingVoteRef, RevocationRecord, RevocationSeverity, Validator,
-    ValidatorActivityReport, ValidatorPlayersPage, ValidatorStatus, VerificationWiringState,
+    ValidatorActivityReport, ValidatorPlayersPage, ValidatorStatus, VerificationLimits,
+    VerificationWiringState,
 };
 
 use soroban_sdk::xdr::ToXdr;
@@ -3165,6 +3166,31 @@ impl VerificationContract {
         String::from_str(&env, CONTRACT_VERSION)
     }
 
+    /// Returns the compile-time protocol limits clients need to pre-validate
+    /// input. Configurable values (threshold, voting window, jury config) are
+    /// not included; use their dedicated getters.
+    pub fn get_limits(_env: Env) -> VerificationLimits {
+        VerificationLimits {
+            max_validators: MAX_VALIDATORS,
+            max_milestones_per_player_per_validator: MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR,
+            max_global_milestone_index: MAX_GLOBAL_MILESTONE_INDEX,
+            min_credentials_len: MIN_CREDENTIALS_LEN,
+            max_credentials_len: MAX_CREDENTIALS_LEN,
+            max_description_len: MAX_DESCRIPTION_LEN,
+            max_specializations: MAX_SPECIALIZATIONS,
+            max_specialization_tag_len: MAX_SPECIALIZATION_TAG_LEN,
+            max_pending_votes_per_validator: MAX_PENDING_VOTES_PER_VALIDATOR,
+            max_dispute_rounds: MAX_DISPUTE_ROUNDS,
+            dispute_reopen_cooldown_secs: DISPUTE_REOPEN_COOLDOWN_SECS,
+            max_open_disputes_per_player: MAX_OPEN_DISPUTES_PER_PLAYER,
+            min_voting_window_secs: MIN_VOTING_WINDOW_SECS,
+            max_voting_window_secs: MAX_VOTING_WINDOW_SECS,
+            min_jury_window_secs: MIN_JURY_WINDOW_SECS,
+            max_jury_window_secs: MAX_JURY_WINDOW_SECS,
+            max_attestation_future_tolerance_secs: MAX_ATTESTATION_FUTURE_TOLERANCE_SECS,
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Milestone dispute (issue #471)
     // -------------------------------------------------------------------------
@@ -4996,6 +5022,33 @@ mod tests {
         testutils::{Address as _, Events, Ledger, MockAuth, MockAuthInvoke},
         Env, IntoVal, String, Symbol,
     };
+
+    #[test]
+    fn get_limits_returns_protocol_constants() {
+        let (_env, client) = setup();
+        assert_eq!(
+            client.get_limits(),
+            VerificationLimits {
+                max_validators: MAX_VALIDATORS,
+                max_milestones_per_player_per_validator: MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR,
+                max_global_milestone_index: MAX_GLOBAL_MILESTONE_INDEX,
+                min_credentials_len: MIN_CREDENTIALS_LEN,
+                max_credentials_len: MAX_CREDENTIALS_LEN,
+                max_description_len: MAX_DESCRIPTION_LEN,
+                max_specializations: MAX_SPECIALIZATIONS,
+                max_specialization_tag_len: MAX_SPECIALIZATION_TAG_LEN,
+                max_pending_votes_per_validator: MAX_PENDING_VOTES_PER_VALIDATOR,
+                max_dispute_rounds: MAX_DISPUTE_ROUNDS,
+                dispute_reopen_cooldown_secs: DISPUTE_REOPEN_COOLDOWN_SECS,
+                max_open_disputes_per_player: MAX_OPEN_DISPUTES_PER_PLAYER,
+                min_voting_window_secs: MIN_VOTING_WINDOW_SECS,
+                max_voting_window_secs: MAX_VOTING_WINDOW_SECS,
+                min_jury_window_secs: MIN_JURY_WINDOW_SECS,
+                max_jury_window_secs: MAX_JURY_WINDOW_SECS,
+                max_attestation_future_tolerance_secs: MAX_ATTESTATION_FUTURE_TOLERANCE_SECS,
+            }
+        );
+    }
 
     fn setup() -> (Env, VerificationContractClient<'static>) {
         let env = Env::default();

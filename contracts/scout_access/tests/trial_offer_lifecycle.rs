@@ -628,3 +628,44 @@ fn test_admin_refund_trial_escrow_rejects_non_outstanding_targets() {
         "a second admin_refund_trial_escrow on the same entry must fail, not double-pay"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 7. get_trial_escrow keeps the escrow record alive (issue #1715)
+// ---------------------------------------------------------------------------
+
+const TRIAL_TTL_THRESHOLD: u32 = 259_200;
+const TRIAL_TTL_EXTEND_TO: u32 = 518_400;
+
+fn escrow_ttl(h: &Harness, player_id: u64, index: u32) -> u32 {
+    h.env.as_contract(&h.scout_access.address, || {
+        h.env
+            .storage()
+            .persistent()
+            .get_ttl(&scoutchain_scout_access::DataKey::TrialEscrow(player_id, index))
+    })
+}
+
+#[test]
+fn test_get_trial_escrow_extends_escrow_ttl() {
+    let h = setup();
+    let player_id: u64 = 1;
+    advance_player(&h, player_id, 2);
+    let scout = setup_elite_scout(&h, player_id);
+    let index = log_offer(&h, &scout, player_id, CID_1, CID_2);
+
+    // Keep the contract instance alive across the jump; only the escrow
+    // entry's TTL is under test.
+    h.env.as_contract(&h.scout_access.address, || {
+        h.env.storage().instance().extend_ttl(1, 1_000_000);
+    });
+
+    let jump = TRIAL_TTL_EXTEND_TO - TRIAL_TTL_THRESHOLD + 1_000;
+    h.env.ledger().with_mut(|l| l.sequence_number += jump);
+    assert!(escrow_ttl(&h, player_id, index) < TRIAL_TTL_THRESHOLD);
+
+    assert!(h.scout_access.get_trial_escrow(&player_id, &index).is_some());
+    assert_eq!(escrow_ttl(&h, player_id, index), TRIAL_TTL_EXTEND_TO);
+
+    // Absent key: returns None without trapping on extend_ttl.
+    assert_eq!(h.scout_access.get_trial_escrow(&player_id, &99u32), None);
+}

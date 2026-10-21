@@ -2567,6 +2567,40 @@ stellar contract invoke --id $VERIFICATION_CONTRACT_ID -- version
 
 ---
 
+#### `get_limits() -> VerificationLimits`
+
+Return the compile-time protocol limits clients need to build UIs and
+pre-validate input. Strictly compile-time constants; configurable values
+(milestone threshold, voting window, jury config) have their own getters.
+
+| | |
+|---|---|
+| **Auth** | None |
+| **Errors** | None |
+
+| Field | Type | Value |
+|---|---|---|
+| `max_validators` | u32 | 100 |
+| `max_milestones_per_player_per_validator` | u32 | 5 |
+| `max_global_milestone_index` | u32 | 500 |
+| `min_credentials_len` / `max_credentials_len` | u32 | 10 / 256 |
+| `max_description_len` | u32 | 256 |
+| `max_specializations` | u32 | 10 |
+| `max_specialization_tag_len` | u32 | 64 |
+| `max_pending_votes_per_validator` | u32 | 25 |
+| `max_dispute_rounds` | u32 | 3 |
+| `dispute_reopen_cooldown_secs` | u64 | 604800 |
+| `max_open_disputes_per_player` | u32 | 5 |
+| `min_voting_window_secs` / `max_voting_window_secs` | u64 | 3600 / 7776000 |
+| `min_jury_window_secs` / `max_jury_window_secs` | u64 | 86400 / 2592000 |
+| `max_attestation_future_tolerance_secs` | u64 | 3600 |
+
+```bash
+stellar contract invoke --id $VERIFICATION_CONTRACT_ID -- get_limits
+```
+
+---
+
 ### Additional Functions (attestation, batch, quorum, pausing, migration & recovery)
 
 | Function | Auth | Description |
@@ -5690,7 +5724,7 @@ All events follow the unified `(Symbol, actor)` topic schema introduced in #246.
 | Event | Topics | Data | Description |
 |-------|--------|------|-------------|
 | `contract_initialized` | event_name, admin (Address) | admin (Address) | Contract initialized |
-| `scout_subscribed` | event_name, scout (Address) | tier (SubscriptionTier), fee_paid (i128) | Scout purchases a subscription (legacy; emitted alongside `subscription_created` or `subscription_renewed`) |
+| `scout_subscribed` | event_name, scout (Address) | tier (SubscriptionTier), fee_paid (i128) | Scout purchases a subscription (**deprecated**, removed in v3.0.0; emitted alongside `subscription_created` or `subscription_renewed`) |
 | `subscription_created` | event_name, scout (Address) | tier, subscribed_at (u64), expires_at (u64) | First-ever subscription for this scout (emitted alongside `scout_subscribed`) |
 | `subscription_renewed` | event_name, scout (Address) | tier, subscribed_at (u64), expires_at (u64) | Existing subscription renewed or upgraded (emitted alongside `scout_subscribed`) |
 | `player_contacted` | event_name, scout (Address) | player_id (u64), fee_paid (i128) | Scout unlocks player contact details |
