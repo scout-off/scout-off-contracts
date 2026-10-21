@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from "uuid";
 import jwt from "jsonwebtoken";
 import { WebAuth, Keypair, Networks, TimeBounds } from "@stellar/stellar-sdk";
 import { prisma } from "../db";
+import { config } from "../config";
 
 interface Sep10TokenPayload {
   sub: string;
@@ -23,13 +24,10 @@ export function issueSep10Token(payload: Sep10TokenPayload, secret: string) {
  * signing keypair; the client must later sign it with their account key.
  */
 export function buildChallengeTx(account: string): string {
-  const serverKeypair = Keypair.fromSecret(
-    process.env.SEP10_SIGNING_SECRET!
-  );
-  const homeDomain = process.env.HOME_DOMAIN!;
-  const webAuthDomain = process.env.WEB_AUTH_DOMAIN!;
+  const serverKeypair = Keypair.fromSecret(config.sep10SigningSecret);
+  const { homeDomain, webAuthDomain } = config;
   const networkPassphrase =
-    process.env.STELLAR_NETWORK === "mainnet"
+    config.stellarNetwork === "mainnet"
       ? Networks.PUBLIC_NETWORK_PASSPHRASE
       : Networks.TESTNET_PASSPHRASE;
 
@@ -61,13 +59,10 @@ export async function verifyChallengeTx(
   challengeTx: string,
   clientAccount: string
 ): Promise<string> {
-  const serverKeypair = Keypair.fromSecret(
-    process.env.SEP10_SIGNING_SECRET!
-  );
-  const homeDomain = process.env.HOME_DOMAIN!;
-  const webAuthDomain = process.env.WEB_AUTH_DOMAIN!;
+  const serverKeypair = Keypair.fromSecret(config.sep10SigningSecret);
+  const { homeDomain, webAuthDomain } = config;
   const networkPassphrase =
-    process.env.STELLAR_NETWORK === "mainnet"
+    config.stellarNetwork === "mainnet"
       ? Networks.PUBLIC_NETWORK_PASSPHRASE
       : Networks.TESTNET_PASSPHRASE;
 
@@ -115,7 +110,7 @@ export async function verifyChallengeTx(
  */
 export async function deriveRole(wallet: string): Promise<string> {
   // Check admin addresses first (from env and on-chain admin registry).
-  const adminAddress = process.env.ADMIN_ADDRESS;
+  const { adminAddress } = config;
   if (adminAddress && wallet === adminAddress) {
     return "admin";
   }
