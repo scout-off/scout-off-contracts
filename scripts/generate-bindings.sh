@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # ScoutChain — generate TypeScript bindings for all contracts
-# Usage: ./scripts/generate-bindings.sh [testnet|mainnet]
+# Usage: ./scripts/generate-bindings.sh [testnet|mainnet|local]
 # Requires .env.contracts to exist (written by deploy.sh)
 set -euo pipefail
 
-NETWORK="${1:-testnet}"
+source "$(dirname "$0")/network.sh" "${1:-}"
 source .env.contracts
 
 CONTRACTS=(registration verification progress scout_access)

@@ -1,11 +1,16 @@
 # Rust / Cargo
 target/
-Cargo.lock
+# Cargo.lock is tracked for reproducible WASM builds; CI builds with --locked
 
 # Environment secrets — never commit these
 .env
 .env.contracts
 .env.local
+.env.contracts.json
+.env.contracts.snapshot
+
+# Migration state exports (may contain player PII) -- never commit these
+migration-export/
 
 # Optimized WASM outputs
 *.optimized.wasm

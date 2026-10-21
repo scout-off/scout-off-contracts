@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ScoutChain — deploy all contracts to Stellar testnet or mainnet
-# Usage: ./scripts/deploy.sh [testnet|mainnet]
+# Usage: ./scripts/deploy.sh [testnet|mainnet|local]
 set -euo pipefail
 
-NETWORK="${1:-testnet}"
+source "$(dirname "$0")/network.sh" "${1:-}"
 DEPLOYER="${DEPLOYER_SECRET:-}"
 
 if [[ -z "$DEPLOYER" ]]; then

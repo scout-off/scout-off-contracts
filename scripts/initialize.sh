@@ -3,7 +3,7 @@
 # Run after deploy.sh. Requires .env.contracts to exist.
 set -euo pipefail
 
-NETWORK="${1:-testnet}"
+source "$(dirname "$0")/network.sh" "${1:-}"
 source .env.contracts
 
 ADMIN="${ADMIN_ADDRESS:?Set ADMIN_ADDRESS}"

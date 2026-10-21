@@ -12,7 +12,7 @@ cp .env.example .env
 
 ```bash
 cargo test --workspace          # all tests must pass
-cargo clippy --workspace        # zero warnings
+cargo clippy --workspace --all-targets -- -D warnings  # zero warnings, tests included
 cargo fmt --all -- --check      # formatting must be clean
 ```
 
