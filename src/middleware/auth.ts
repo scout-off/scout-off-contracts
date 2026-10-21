@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import { prisma } from "../db";
+import { config } from "../config";
 import type { Request } from "express";
 
 export async function isTokenRevoked(jti: string): Promise<boolean> {
@@ -28,7 +29,7 @@ export async function requireAuth(
   const token = authHeader.split(" ")[1];
 
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET!) as {
+    const payload = jwt.verify(token, config.jwtSecret) as {
       sub: string;
       role: string;
       jti?: string;
