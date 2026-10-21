@@ -11,7 +11,7 @@ Ensure the following tools are installed at the specified minimum versions befor
 | **cargo** | ships with Rust stable | Verify: `cargo --version` |
 | **clippy** | ships with Rust stable | `rustup component add clippy` |
 | **rustfmt** | ships with Rust stable | `rustup component add rustfmt` |
-| **stellar-cli** | **28.0.0** (reference) <!-- Keep in sync with: scripts/generate-bindings.sh and .github/workflows/contract-ci.yml --> | See install note below |
+| **stellar-cli** | **28.0.0** (reference) <!-- Keep in sync with: ci/stellar-cli-version (read by CI, generate-bindings.sh, deploy.sh, upgrade.sh) --> | See install note below |
 | **Node.js** | 20 LTS | Required only for TypeScript bindings generation — `./scripts/generate-bindings.sh` |
 | **npm** | 10+ (ships with Node 20) | Required only for building/testing bindings packages |
 
@@ -30,7 +30,7 @@ always installs the latest release regardless of the tag it is fetched from. Set
 curl -sSL https://raw.githubusercontent.com/stellar/stellar-cli/main/install.sh | bash
 ```
 
-Reference version: `28.0.0` (`stellar --version`).
+Reference version: `28.0.0` (`stellar --version`), pinned in `ci/stellar-cli-version`.
 
 The `wasm32v1-none` target (not the older `wasm32-unknown-unknown`) is required for building Soroban contracts with `soroban-sdk 25.x`. Using the wrong target produces an ABI-incompatible WASM binary.
 
