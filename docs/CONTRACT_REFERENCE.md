@@ -42,13 +42,36 @@ That keeps the command copy-paste-runnable in a standard `bash`/`zsh` shell.
 
 ---
 
-## Pagination convention
+## Pagination conventions
 
-All paginated getter functions across the four contracts follow a
-consistent convention:
+One rule applies to every function that takes a `limit` across all four
+contracts (issue #1720):
 
 | Parameter | Convention |
 |-----------|-----------|
+| `limit` on **read-only views** | Clamped to **1..=N** (N is the function's page cap, usually 50). `limit = 0` is treated as `1` — never an error, never an empty page. |
+| `limit` on **state-changing batch operations** | `limit = 0` is rejected with `InvalidInput`; larger values are capped. |
+| `offset`  | Zero-based item offset into the result set. |
+| `next_cursor` / `total` | Returned so callers know when paging is complete. |
+
+| Function | Kind | `limit = 0` |
+|----------|------|-------------|
+| `registration::filter_players` | view | clamped to 1 (was `InvalidInput`) |
+| `progress::get_progress_history_page` | view | clamped to 1 |
+| `progress::get_history_page_with_cursor` | view | clamped to 1 |
+| `progress::get_history_since` | view | clamped to 1 |
+| `scout_access::get_expiring_subscriptions` | view | clamped to 1 |
+| `scout_access::get_scout_contacts_page` | view | clamped to 1 |
+| `scout_access::get_player_access_grants` | view | clamped to 1 |
+| `scout_access::expire_trial_offers` | state-changing batch | `InvalidInput` (was `Ok(0)`) |
+| `verification::list_disputes_page` | view | clamped to 1 |
+| `verification::get_global_milestone_index` | view | clamped to 1 |
+| `verification::get_validator_milestones_page` / `_v2` | view | clamped to 1 |
+| `verification::get_validator_players_page` | view | clamped to 1 |
+| `verification::get_milestones_by_validator_page` | view | clamped to 1 |
+| `verification::get_player_disputes` / `get_player_disputes_by_status` | view | clamped to 1 (was empty page) |
+
+-----------|-----------|
 | `limit`   | Clamped to **1..=50**. A `limit` of `0` is treated as `1` (or returns `InvalidInput` for functions that return `Result`). |
 | `offset`  | Zero-based item offset into the result set. |
 | `next_cursor` / `total` | Returned so callers know when paging is complete. |
@@ -1720,9 +1743,9 @@ Batch-fetch the status of up to 20 validator wallets in a single call.
 Returns one `ValidatorStatus` entry per input wallet **in the same order as the input**,
 including `NotRegistered` for wallets that have never been registered.
 
-**Batch-size cap**: the first 20 entries are processed; wallets beyond that are silently
-ignored. Call again with the remainder for larger sets. This is consistent with the 20-item
-cap used by `registration.get_players`.
+**Batch-size cap**: at most 20 wallets are accepted; passing more returns `InvalidInput`
+(no silent truncation). Split larger sets into chunks of 20. This is consistent with the
+20-item cap used by `registration.get_players`.
 
 **Semantics**: unlike `registration.get_players` (which silently skips missing IDs), this
 function always returns one entry per input wallet — including `NotRegistered` — because

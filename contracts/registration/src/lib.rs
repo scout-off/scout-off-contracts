@@ -292,6 +292,9 @@ impl RegistrationContract {
 
     pub fn pause_contract(env: Env) -> Result<(), ScoutChainError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        if env.storage().instance().get::<_, bool>(&DataKey::Paused).unwrap_or(false) == true {
+            return Ok(());
+        }
         env.storage().instance().set(&DataKey::Paused, &true);
         events::contract_paused(&env, &admin);
         Ok(())
@@ -299,6 +302,9 @@ impl RegistrationContract {
 
     pub fn unpause_contract(env: Env) -> Result<(), ScoutChainError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        if env.storage().instance().get::<_, bool>(&DataKey::Paused).unwrap_or(false) == false {
+            return Ok(());
+        }
         env.storage().instance().set(&DataKey::Paused, &false);
         events::contract_unpaused(&env, &admin);
         Ok(())
@@ -1637,14 +1643,13 @@ impl RegistrationContract {
     ) -> Result<FilterResult, ScoutChainError> {
         Self::require_initialized(&env)?;
 
-        if limit == 0 {
-            return Err(ScoutChainError::InvalidInput);
-        }
         // Normalize filter inputs to match canonical stored values
         let canon_region = normalize_filter_region(&env, &region)?;
         let canon_position = normalize_filter_position(&env, &position)?;
 
-        let max_results = limit.min(50);
+        // `limit == 0` is clamped to 1 (pagination convention, #1720), so the
+        // cursor always advances.
+        let max_results = limit.clamp(1, 50);
         let region_filter = !canon_region.is_empty();
         let position_filter = !canon_position.is_empty();
 

@@ -18,6 +18,10 @@ The initial v0.1.0 entry below retains the year-only date because no exact histo
 
 ## Unreleased
 
+- Contracts affected: `progress`, `registration`, `scout_access`, `verification`
+- Summary: Pause/unpause entrypoints (`pause_contract`, `unpause_contract`, `pause_pay_to_contact`, `unpause_pay_to_contact`, `pause_approve_milestone`, `unpause_approve_milestone`) are now idempotent and emit no event when the flag already has the target value (#1718). Unified `limit = 0` handling (#1720): views clamp to 1, state-changing batches reject with `InvalidInput` — `registration::filter_players(limit = 0)` now returns one item instead of `InvalidInput`, `verification::get_player_disputes*` return one item instead of an empty page, and `scout_access::expire_trial_offers(0)` now returns `InvalidInput` instead of `Ok(0)`. `verification::get_validator_statuses` now returns `Result` and rejects more than 20 wallets with `InvalidInput` instead of silently truncating (#1721).
+- Classification: `Breaking (MAJOR)` — `get_validator_statuses` return type changes and `limit = 0` behaviour changes for `filter_players` and `expire_trial_offers`.
+
 - Version: `v1.1.1`
 - Release date: `2026-08-21`
 - Contracts affected: `progress`

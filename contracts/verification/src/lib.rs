@@ -47,6 +47,8 @@ const MAX_GLOBAL_MILESTONE_INDEX: u32 = 500;
 /// Increase requires a contract upgrade because the ValidatorVector entry
 /// is bounded by Soroban's 64 KB per-entry limit.
 const MAX_VALIDATORS: u32 = 100;
+/// Maximum number of wallets accepted by `get_validator_statuses`.
+const VALIDATOR_STATUS_BATCH_CAP: u32 = 20;
 
 /// Maximum milestones a single validator may approve for one player.
 const MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR: u32 = 5;
@@ -1470,6 +1472,9 @@ impl VerificationContract {
 
     pub fn pause_contract(env: Env) -> Result<(), VerificationError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        if env.storage().instance().get::<_, bool>(&DataKey::Paused).unwrap_or(false) == true {
+            return Ok(());
+        }
         env.storage().instance().set(&DataKey::Paused, &true);
         events::contract_paused(&env, &admin);
         Ok(())
@@ -1477,6 +1482,9 @@ impl VerificationContract {
 
     pub fn unpause_contract(env: Env) -> Result<(), VerificationError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        if env.storage().instance().get::<_, bool>(&DataKey::Paused).unwrap_or(false) == false {
+            return Ok(());
+        }
         env.storage().instance().set(&DataKey::Paused, &false);
         events::contract_unpaused(&env, &admin);
         Ok(())
@@ -1495,6 +1503,9 @@ impl VerificationContract {
             .get(&DataKey::Admin)
             .ok_or(VerificationError::NotInitialized)?;
 
+        if env.storage().instance().get::<_, bool>(&DataKey::PausedApproveMilestone).unwrap_or(false) == true {
+            return Ok(());
+        }
         env.storage()
             .instance()
             .set(&DataKey::PausedApproveMilestone, &true);
@@ -1512,6 +1523,9 @@ impl VerificationContract {
             .get(&DataKey::Admin)
             .ok_or(VerificationError::NotInitialized)?;
 
+        if env.storage().instance().get::<_, bool>(&DataKey::PausedApproveMilestone).unwrap_or(false) == false {
+            return Ok(());
+        }
         env.storage()
             .instance()
             .set(&DataKey::PausedApproveMilestone, &false);
@@ -2716,18 +2730,20 @@ impl VerificationContract {
     /// "skipped".
     ///
     /// **Batch-size cap**: `wallets` is capped at 20 entries, consistent with
-    /// `registration.get_players`. If more than 20 wallets are supplied the
-    /// first 20 are processed and the rest are silently ignored — call again
-    /// with the remainder if needed.
-    pub fn get_validator_statuses(env: Env, wallets: Vec<Address>) -> Vec<ValidatorStatus> {
-        const BATCH_CAP: u32 = 20;
-        let count = wallets.len().min(BATCH_CAP);
+    /// `registration.get_players`. Supplying more than 20 wallets returns
+    /// `InvalidInput` instead of silently truncating.
+    pub fn get_validator_statuses(
+        env: Env,
+        wallets: Vec<Address>,
+    ) -> Result<Vec<ValidatorStatus>, VerificationError> {
+        if wallets.len() > VALIDATOR_STATUS_BATCH_CAP {
+            return Err(VerificationError::InvalidInput);
+        }
         let mut result = Vec::new(&env);
-        for i in 0..count {
-            let wallet = wallets.get(i).unwrap();
+        for wallet in wallets.iter() {
             result.push_back(Self::get_validator_status(env.clone(), wallet));
         }
-        result
+        Ok(result)
     }
 
     /// Deprecated: use `get_validator_status` instead.
@@ -4090,11 +4106,8 @@ impl VerificationContract {
         offset: u32,
         limit: u32,
     ) -> Vec<MilestoneDispute> {
-        let cap = limit.min(50);
+        let cap = limit.clamp(1, 50);
         let mut results = Vec::new(env);
-        if cap == 0 {
-            return results;
-        }
 
         let disputes_key = DataKey::PlayerDisputes(player_id);
         let indices: Vec<u32> = if let Some(stored) = env
@@ -7781,8 +7794,7 @@ mod tests {
         );
     }
 
-    /// Batch is capped at 20 entries; wallets beyond the cap are silently
-    /// ignored and the result length equals 20, not the input length.
+    /// More than 20 wallets is rejected with `InvalidInput` (#1721).
     #[test]
     fn test_get_validator_statuses_batch_cap_at_20() {
         let (env, client) = setup();
@@ -7795,17 +7807,11 @@ mod tests {
             wallets.push_back(Address::generate(&env));
         }
 
-        let statuses = client.get_validator_statuses(&wallets);
-
-        // Result must be capped at 20.
-        assert_eq!(statuses.len(), 20);
-        // All entries must be NotRegistered.
-        for i in 0..20 {
-            assert_eq!(
-                statuses.get(i).unwrap(),
-                types::ValidatorStatus::NotRegistered
-            );
-        }
+        // More than 20 wallets must be rejected, not truncated (#1721).
+        assert_eq!(
+            client.try_get_validator_statuses(&wallets),
+            Err(Ok(VerificationError::InvalidInput))
+        );
     }
 
     /// An empty input returns an empty result without error.
