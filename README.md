@@ -781,7 +781,7 @@ Comprehensive event reference is available in [`ai.md`](ai.md#events-reference).
 | `validator_transferred` | Validator wallet address is transferred to a new address |
 | `progress_updated` | Player advances to a new level |
 | `player_level_reset` | Admin resets player progress level (dispute resolution only) |
-| `scout_subscribed` | Scout purchases a talent access subscription (legacy event, emitted alongside `subscription_created` or `subscription_renewed`) |
+| `scout_subscribed` | Scout purchases a talent access subscription (**deprecated**, removed in v3.0.0; emitted alongside `subscription_created` or `subscription_renewed`) |
 | `subscription_created` | Scout purchases their very first subscription |
 | `subscription_renewed` | Scout renews or upgrades an existing subscription |
 | `subscription_refunded` | Scout subscription refunded (e.g., downgrade or expiry) |

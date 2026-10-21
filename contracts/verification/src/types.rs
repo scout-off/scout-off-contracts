@@ -620,3 +620,32 @@ impl VerificationWiringState {
         self.progress_contract.is_configured() && self.registration_contract.is_configured()
     }
 }
+
+/// Compile-time protocol limits exposed to clients by
+/// [`VerificationContract::get_limits`] so UIs can pre-validate input
+/// instead of copying constants from source.
+///
+/// Strictly compile-time constants: configurable values (milestone
+/// threshold, voting window, jury config) have their own getters and are
+/// deliberately not included here.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct VerificationLimits {
+    pub max_validators: u32,
+    pub max_milestones_per_player_per_validator: u32,
+    pub max_global_milestone_index: u32,
+    pub min_credentials_len: u32,
+    pub max_credentials_len: u32,
+    pub max_description_len: u32,
+    pub max_specializations: u32,
+    pub max_specialization_tag_len: u32,
+    pub max_pending_votes_per_validator: u32,
+    pub max_dispute_rounds: u32,
+    pub dispute_reopen_cooldown_secs: u64,
+    pub max_open_disputes_per_player: u32,
+    pub min_voting_window_secs: u64,
+    pub max_voting_window_secs: u64,
+    pub min_jury_window_secs: u64,
+    pub max_jury_window_secs: u64,
+    pub max_attestation_future_tolerance_secs: u64,
+}

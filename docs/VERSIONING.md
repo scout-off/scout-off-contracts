@@ -207,3 +207,34 @@ the already-correct `DataKey::HistoryEntry(player, index)` keys. It is a copy,
 not a recomputation, so history values are preserved exactly.
 
 `scripts/upgrade.sh` drives the loop and then verifies through `schema_version`.
+
+---
+
+## Deprecations
+
+| Item | Contract | Deprecated in | Removal target | Replacement |
+|------|----------|---------------|----------------|-------------|
+| `scout_subscribed` event | scout_access | v2.0.0 | **v3.0.0** | `subscription_created`, `subscription_renewed`, `subscription_auto_renewed` |
+
+### `scout_subscribed` (legacy subscription event)
+
+Every `subscribe` and `renew_if_due` currently emits two events: one of the
+new `subscription_created` / `subscription_renewed` / `subscription_auto_renewed`
+events and the legacy `scout_subscribed` event. The duplicate costs every
+subscriber extra fees and doubles indexer work, so it is on a fixed timeline:
+
+1. **v2.x (now)** — `scout_subscribed` is deprecated but still emitted.
+   Consumers should migrate to the new events. The new events carry
+   `(tier, subscribed_at, expires_at)`; the paid amount previously in
+   `scout_subscribed.fee_paid` can be derived from `get_fee_config()` for the tier.
+2. **v3.0.0** — `scout_subscribed` stops being emitted. Removing an event is a
+   breaking change under this policy, so it ships only with a MAJOR bump.
+
+In-repo consumer status:
+
+| Consumer | Status |
+|----------|--------|
+| `docs/INDEXER.md` (`scout_subscriptions` table) | Migrated to the new events |
+| `scripts/audit-event-history.js` | Does not consume `scout_subscribed` |
+| `scripts/reconcile-indexer.js` | Reads `get_subscription` / `get_subscribers_by_tier`, not events |
+| `bindings/` examples | Do not reference `scout_subscribed` |
