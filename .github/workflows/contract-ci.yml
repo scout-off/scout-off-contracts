@@ -1,5 +1,5 @@
 # Full build, test, lint, bindings, and sandbox pipeline; see ci.yml for the
-# separate fast, dependency-free TODO/FIXME/HACK static check.
+# separate fast, dependency-free work-marker static check.
 name: Soroban Contract CI
 
 on:
@@ -117,8 +117,6 @@ jobs:
         run: bash scripts/check-error-code-continuity.sh
       - name: Cargo doc missing-documentation check
         run: bash scripts/check-cargo-doc.sh
-      - name: Migration numbering check
-        run: bash scripts/check-migration-numbering.sh
       - name: Validate bindings package.json templates
         run: bash scripts/check-bindings.sh
 

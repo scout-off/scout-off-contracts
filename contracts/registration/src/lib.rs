@@ -315,10 +315,12 @@ impl RegistrationContract {
         let old = env
             .storage()
             .instance()
+            // Dummy `0` discriminator is part of the stored key; see `DataKey::RegCooldownSecs`.
             .get(&DataKey::RegCooldownSecs(0))
             .unwrap_or(DEFAULT_REG_COOLDOWN_SECS);
         env.storage()
             .instance()
+            // Dummy `0` discriminator is part of the stored key; see `DataKey::RegCooldownSecs`.
             .set(&DataKey::RegCooldownSecs(0), &cooldown_secs);
         events::reg_cooldown_updated(&env, &admin, old, cooldown_secs);
         Ok(())
@@ -329,6 +331,7 @@ impl RegistrationContract {
     pub fn get_reg_cooldown(env: Env) -> u64 {
         env.storage()
             .instance()
+            // Dummy `0` discriminator is part of the stored key; see `DataKey::RegCooldownSecs`.
             .get(&DataKey::RegCooldownSecs(0))
             .unwrap_or(DEFAULT_REG_COOLDOWN_SECS)
     }
@@ -1789,6 +1792,7 @@ impl RegistrationContract {
         let cooldown_secs: u64 = env
             .storage()
             .instance()
+            // Dummy `0` discriminator is part of the stored key; see `DataKey::RegCooldownSecs`.
             .get(&DataKey::RegCooldownSecs(0))
             .unwrap_or(DEFAULT_REG_COOLDOWN_SECS);
 

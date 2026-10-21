@@ -13,14 +13,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Block TODO/FIXME/HACK markers in contract source
+      - name: Block TODO/FIXME/HACK markers in contract, script and backend source
         run: |
           # The pattern uses grouping `(...)` and alternation `|`, which are
           # extended-regex constructs. grep treats them as literal characters
           # in basic mode, so without `-E` this gate would silently never match
           # a TODO/FIXME/HACK/XXX marker and let them merge to main undetected.
-          if grep -rInE '\b(TODO|FIXME|HACK|XXX)\b' contracts/ --include='*.rs'; then
-            echo "ERROR: TODO/FIXME/HACK/XXX markers found in contract source."
+          # Scripts, backend sources and workflows are scanned too: several are
+          # deployment-critical (deploy, upgrade, rollback). This workflow file is
+          # excluded because it necessarily names the markers it searches for.
+          if grep -rInE '\b(TODO|FIXME|HACK|XXX)\b' contracts/ --include='*.rs' \
+            || grep -rInE '\b(TODO|FIXME|HACK|XXX)\b' scripts/ src/ testnet/ .github/ \
+              --include='*.sh' --include='*.py' --include='*.js' --include='*.mjs' \
+              --include='*.ts' --include='*.yml' --include='*.yaml' \
+              --exclude='ci.yml' --exclude-dir=node_modules; then
+            echo "ERROR: TODO/FIXME/HACK/XXX markers found in source."
             echo "Resolve them or remove them before merging."
             exit 1
           fi

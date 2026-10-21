@@ -3124,6 +3124,8 @@ stellar contract invoke --id $PROGRESS_CONTRACT_ID \
 
 ### Merkle history commitment
 
+> Storage layout of the history keys (`HistoryEntry`, `HistoryPage`, `HistoryFrontier`, `HistoryRoot`, legacy `HistoryVec`), per-getter read paths and migration requirements: see [PROGRESS_HISTORY_STORAGE.md](PROGRESS_HISTORY_STORAGE.md).
+
 `get_progress_history` and friends are only as trustworthy as the RPC node
 that answers the query — nothing lets a caller independently check that a
 returned `ProgressEntry` is genuinely part of the on-chain record without
