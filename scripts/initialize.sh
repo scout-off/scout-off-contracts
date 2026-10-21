@@ -3,6 +3,7 @@
 # Run after deploy.sh. Requires .env.contracts to exist.
 set -euo pipefail
 
+source "$(dirname "$0")/network.sh" "${1:-}"
 NETWORK="${1:-testnet}"
 # shellcheck source=/dev/null
 source .env.contracts

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # ScoutChain — generate TypeScript bindings for all contracts
-# Usage: ./scripts/generate-bindings.sh [testnet|mainnet]
+# Usage: ./scripts/generate-bindings.sh [testnet|mainnet|local]
 # Requires .env.contracts to exist (written by deploy.sh)
 set -euo pipefail
 
+source "$(dirname "$0")/network.sh" "${1:-}"
 # Reference stellar-cli version the generated bindings were last validated
 # against. Keep in sync with: docs/CONTRIBUTING.md and
 # .github/workflows/contract-ci.yml.
