@@ -207,3 +207,21 @@ fn test_batch_register_records_cooldown_blocking_reregister_after_revoke() {
         Err(Ok(VerificationError::ValidatorAlreadyRegistered))
     );
 }
+
+/// Pins the storage key of the cooldown (#1725). `DataKey::RegCooldownSecs`
+/// serializes as `[Symbol("RegCooldownSecs"), U64(0)]`; a refactor that drops
+/// or changes the dummy `0` discriminator would orphan the value stored on
+/// deployed contracts, so this test must fail loudly if the key moves.
+#[test]
+fn reg_cooldown_storage_key_is_pinned() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VerificationContract, ());
+    let client = VerificationContractClient::new(&env, &contract_id);
+    client.initialize(&Address::generate(&env));
+    client.set_reg_cooldown(&1_234);
+    let key = (soroban_sdk::Symbol::new(&env, "RegCooldownSecs"), 0u64);
+    let stored: Option<u64> =
+        env.as_contract(&contract_id, || env.storage().instance().get(&key));
+    assert_eq!(stored, Some(1_234));
+}

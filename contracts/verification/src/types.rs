@@ -478,7 +478,14 @@ pub enum DataKey {
     ValidatorRegLastSent(Address),
     /// Platform-wide validator registration cooldown in seconds.
     /// 0 disables the cooldown. Configurable by admin via `set_reg_cooldown`.
-    /// The `u64` payload is unused (always written as `RegCooldownSecs(0)`).
+    ///
+    /// The `u64` payload is a dummy discriminator: it is always `0` and carries
+    /// no meaning. Do NOT "clean it up" into a unit variant or change the `0`.
+    /// The serialized storage key is the variant tuple
+    /// `[Symbol("RegCooldownSecs"), U64(0)]`, so any change to the shape or
+    /// value produces a different key and orphans the cooldown already stored
+    /// on deployed contracts (reads would silently fall back to the default).
+    /// Pinned by the `reg_cooldown_storage_key_is_pinned` test.
     RegCooldownSecs(u64),
     /// Minimum distinct validator regions required for Level-2/3 advances.
     MinRegionQuorum,
