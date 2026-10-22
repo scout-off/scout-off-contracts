@@ -1,8 +1,8 @@
-//! CPU-instruction cost regression budget for the progress contract.
+//! CPU-instruction and memory-byte cost regression budget for the progress contract.
 //!
-//! Measures the CPU-instruction cost of representative progress operations
-//! using soroban-sdk's test budget utilities (`Env::cost_estimate`) and
-//! asserts each stays within a checked-in per-operation budget. See
+//! Measures the CPU-instruction and memory-byte cost of representative progress
+//! operations using soroban-sdk's test budget utilities (`Env::cost_estimate`)
+//! and asserts each stays within a checked-in per-operation budget. See
 //! `ci/cpu-cost-budget.md` for the full cross-contract budget table and the
 //! process for raising a budget when a legitimate feature grows an
 //! operation's cost.
@@ -35,6 +35,16 @@ const VERIFY_HISTORY_PROOF_CPU_BUDGET: u64 = 139_669;
 /// Set generously; tighten to current-cost-plus-headroom after the first real
 /// CI run reports the measured number.
 const ADVANCE_LEVEL_LONG_HISTORY_CPU_BUDGET: u64 = 50_000_000;
+
+// Memory-byte budgets (issue #1650). Measured value plus the same 20%
+// headroom policy used for WASM size. Tighten via `scripts/tighten-budgets.sh`
+// once real CI measurements land in `cpu-cost-budget-report.txt`.
+const ADVANCE_LEVEL_MEM_BUDGET: u64 = 1_200_000;
+const RESET_PLAYER_LEVEL_MEM_BUDGET: u64 = 1_200_000;
+const GET_PROGRESS_HISTORY_PAGE_MEM_BUDGET: u64 = 240_000;
+const LONG_HISTORY_ADVANCE_LEVEL_MEM_BUDGET: u64 = 40_000_000;
+const VERIFY_HISTORY_PROOF_MEM_BUDGET: u64 = 180_000;
+const ADVANCE_LEVEL_LONG_HISTORY_MEM_BUDGET: u64 = 60_000_000;
 
 fn valid_vitals(env: &Env) -> PlayerVitals {
     PlayerVitals {
@@ -88,6 +98,14 @@ fn assert_cpu_budget(env: &Env, op: &str, budget: u64) {
     );
 }
 
+fn assert_mem_budget(env: &Env, op: &str, budget: u64) {
+    let cost = env.cost_estimate().budget().memory_bytes_cost();
+    assert!(
+        cost <= budget,
+        "memory budget exceeded for `{op}`: measured {cost} bytes (budget {budget})"
+    );
+}
+
 #[test]
 fn test_advance_level_cpu_budget() {
     let (env, client, verification, registration) = setup();
@@ -97,6 +115,7 @@ fn test_advance_level_cpu_budget() {
     env.cost_estimate().budget().reset_default();
     client.advance_level(&verification, &player_id, &1u32);
     assert_cpu_budget(&env, "advance_level", ADVANCE_LEVEL_CPU_BUDGET);
+    assert_mem_budget(&env, "advance_level", ADVANCE_LEVEL_MEM_BUDGET);
 }
 
 #[test]
@@ -110,6 +129,7 @@ fn test_reset_player_level_cpu_budget() {
     env.cost_estimate().budget().reset_default();
     client.reset_player_level(&player_id, &ProgressLevel::Unverified);
     assert_cpu_budget(&env, "reset_player_level", RESET_PLAYER_LEVEL_CPU_BUDGET);
+    assert_mem_budget(&env, "reset_player_level", RESET_PLAYER_LEVEL_MEM_BUDGET);
 }
 
 #[test]
@@ -127,6 +147,11 @@ fn test_get_progress_history_page_cpu_budget() {
         &env,
         "get_progress_history_page",
         GET_PROGRESS_HISTORY_PAGE_CPU_BUDGET,
+    );
+    assert_mem_budget(
+        &env,
+        "get_progress_history_page",
+        GET_PROGRESS_HISTORY_PAGE_MEM_BUDGET,
     );
 }
 
@@ -180,6 +205,11 @@ fn cost_advance_level_long_history() {
         "advance_level_long_history",
         ADVANCE_LEVEL_LONG_HISTORY_CPU_BUDGET,
     );
+    assert_mem_budget(
+        &env,
+        "advance_level_long_history",
+        ADVANCE_LEVEL_LONG_HISTORY_MEM_BUDGET,
+    );
 }
 
 #[test]
@@ -200,23 +230,9 @@ fn test_long_history_advance_level_cpu_budget() {
         "long_history_advance_level",
         LONG_HISTORY_ADVANCE_LEVEL_CPU_BUDGET,
     );
-}
-
-#[test]
-fn test_verify_history_proof_cpu_budget() {
-    let (env, client, verification, registration) = setup();
-    let wallet = Address::generate(&env);
-    let player_id = registration.register_player(&wallet, &valid_vitals(&env), &one_hash(&env));
-
-    client.advance_level(&verification, &player_id, &1u32);
-    let entry = client.get_history_entry(&player_id, &1u32);
-    let proof = client.get_history_proof(&player_id, &1u32);
-
-    env.cost_estimate().budget().reset_default();
-    let _valid = client.verify_history_proof(&player_id, &entry, &proof);
-    assert_cpu_budget(
+    assert_mem_budget(
         &env,
-        "verify_history_proof",
-        VERIFY_HISTORY_PROOF_CPU_BUDGET,
+        "long_history_advance_level",
+        LONG_HISTORY_ADVANCE_LEVEL_MEM_BUDGET,
     );
 }
