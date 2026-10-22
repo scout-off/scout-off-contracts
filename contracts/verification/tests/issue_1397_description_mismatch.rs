@@ -1,5 +1,13 @@
 //! Issue #1397: subsequent attest_milestone votes must match the round's
 //! description hash or be rejected with DescriptionMismatch.
+//!
+//! Issue #1643: claims are now keyed by `(player_id, evidence_hash,
+//! description_hash)`, so competing descriptions form independent tallies
+//! instead of one locked description per evidence. A validator can no longer
+//! grief honest attestors by voting first with a bogus description: honest
+//! validators simply build their own tally and commit the correct description.
+//! Only the first tally to reach the k-of-n threshold commits; once the
+//! evidence is used, competing tallies can no longer commit (no double-commit).
 
 use scoutchain_verification::{
     AttestationStatus, VerificationContract, VerificationContractClient, VerificationError,
@@ -53,47 +61,80 @@ fn attest(
     client.attest_milestone(v, &player, desc, evidence)
 }
 
+/// Issue #1643: a bogus first attestation no longer blocks honest attestors.
+/// Validator A votes with a wrong description; B and C vote with the correct
+/// description and commit it, while A's tally stays dead.
 #[test]
-fn mismatched_description_is_rejected() {
+fn bogus_first_attestor_does_not_block_honest_commit() {
     let (env, client) = setup();
     let v1 = register(&env, &client);
     let v2 = register(&env, &client);
-    register(&env, &client); // a threshold of 3 needs 3 active validators (#1395)
-    client.set_milestone_threshold(&3u32);
+    let v3 = register(&env, &client);
+    client.set_milestone_threshold(&2u32);
     let player = 1u64;
     let evidence = cid(&env);
-    let d1 = String::from_str(&env, "U17 national team selection");
-    let d2 = String::from_str(&env, "completely different narrative");
+    let bogus = String::from_str(&env, "completely different narrative");
+    let correct = String::from_str(&env, "U17 national team selection");
 
+    // A attests first with a bogus description.
     assert_eq!(
-        attest(&env, &client, &v1, player, &d1, &evidence),
+        attest(&env, &client, &v1, player, &bogus, &evidence),
         AttestationStatus::Pending(1)
     );
 
-    env.mock_auths(&[MockAuth {
-        address: &v2,
-        invoke: &MockAuthInvoke {
-            contract: &client.address,
-            fn_name: "attest_milestone",
-            args: (v2.clone(), player, d2.clone(), evidence.clone()).into_val(&env),
-            sub_invokes: &[],
-        },
-    }]);
-    let result = client.try_attest_milestone(&v2, &player, &d2, &evidence);
-    assert_eq!(result, Err(Ok(VerificationError::DescriptionMismatch)));
+    // B votes on the correct description: independent tally, not rejected.
+    assert_eq!(
+        attest(&env, &client, &v2, player, &correct, &evidence),
+        AttestationStatus::Pending(1)
+    );
+
+    // C completes the correct tally and commits the correct description.
+    match attest(&env, &client, &v3, player, &correct, &evidence) {
+        AttestationStatus::Committed(1) => {}
+        other => panic!("expected commit, got {other:?}"),
+    }
 
     let claim = client.get_pending_claim(&player, &evidence).unwrap();
-    assert_eq!(claim.vote_count, 1);
-    assert_eq!(claim.description, d1);
+    assert_eq!(claim.description, correct);
 }
 
+/// Issue #1643: once the evidence is committed, a competing tally cannot
+/// commit it again (no double-commit).
+#[test]
+fn competing_tally_cannot_double_commit() {
+    let (env, client) = setup();
+    let v1 = register(&env, &client);
+    let v2 = register(&env, &client);
+    let v3 = register(&env, &client);
+    client.set_milestone_threshold(&2u32);
+    let player = 2u64;
+    let evidence = cid(&env);
+    let correct = String::from_str(&env, "hat-trick in cup final");
+    let bogus = String::from_str(&env, "fabricated milestone");
+
+    // Honest tally commits first.
+    assert_eq!(
+        attest(&env, &client, &v1, player, &correct, &evidence),
+        AttestationStatus::Pending(1)
+    );
+    match attest(&env, &client, &v2, player, &correct, &evidence) {
+        AttestationStatus::Committed(1) => {}
+        other => panic!("expected commit, got {other:?}"),
+    }
+
+    // A competing tally on the same evidence can no longer commit.
+    let result = client.try_attest_milestone(&v3, &player, &bogus, &evidence);
+    assert_eq!(result, Err(Ok(VerificationError::EvidenceAlreadyUsed)));
+}
+
+/// Issue #1397 regression: matching descriptions still commit normally.
 #[test]
 fn matching_description_still_commits() {
     let (env, client) = setup();
     let v1 = register(&env, &client);
     let v2 = register(&env, &client);
     client.set_milestone_threshold(&2u32);
-    let player = 2u64;
+    let player = 3u64;
     let evidence = cid(&env);
     let desc = String::from_str(&env, "hat-trick in cup final");
 
