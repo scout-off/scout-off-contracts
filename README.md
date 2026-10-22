@@ -835,3 +835,8 @@ Quick checklist:
 - Formatting clean: `cargo fmt --all -- --check`
 - New functions have tests and are documented in [docs/CONTRACT_REFERENCE.md](docs/CONTRACT_REFERENCE.md)
 - Validator authorization logic changes require explicit review from a second team member
+
+## Handsoff notes
+
+<!-- handsoff-issue-1666 -->
+- #1666: registration: add direct unit tests for canonicalize_region / canonicalize_position / canonicalize_nationality
