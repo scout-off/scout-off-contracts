@@ -835,3 +835,11 @@ Quick checklist:
 - Formatting clean: `cargo fmt --all -- --check`
 - New functions have tests and are documented in [docs/CONTRACT_REFERENCE.md](docs/CONTRACT_REFERENCE.md)
 - Validator authorization logic changes require explicit review from a second team member
+
+## Handsoff notes
+
+<!-- handsoff-issue-1654 -->
+- #1654: scout_access: evidence-access grants are valid for 90 days but their storage TTL covers only ~30 days and is never extended on read
+
+<!-- handsoff-issue-1656 -->
+- #1656: registration: get_player_count's doc comment is attached to get_scout_verification

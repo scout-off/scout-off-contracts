@@ -89,3 +89,20 @@ fn reg_cooldown_event_emitted() {
     let (old, new): (u64, u64) = data.into_val(&env);
     assert_eq!((old, new), (86_400, COOLDOWN_SECS));
 }
+
+#[test]
+fn get_scout_verification_extends_scout_ttl() {
+    let (env, client) = setup();
+    let scout = Address::generate(&env);
+    client.register_scout(&scout);
+
+    // Read only via `get_scout_verification` to exercise its TTL extension.
+    let _ = client.get_scout_verification(&scout);
+
+    // Advance the ledger well past the default entry TTL.
+    env.ledger().with_mut(|l| l.sequence_number += 100_000);
+
+    // The scout record must still be readable thanks to the extension.
+    let profile = client.get_scout(&scout);
+    assert_eq!(profile.address, scout);
+}
