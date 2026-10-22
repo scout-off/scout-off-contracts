@@ -835,3 +835,8 @@ Quick checklist:
 - Formatting clean: `cargo fmt --all -- --check`
 - New functions have tests and are documented in [docs/CONTRACT_REFERENCE.md](docs/CONTRACT_REFERENCE.md)
 - Validator authorization logic changes require explicit review from a second team member
+
+## Handsoff notes
+
+<!-- handsoff-issue-1668 -->
+- #1668: progress: set_registration_contract has a merged/misplaced doc comment and skips the instance-TTL bump its siblings perform
