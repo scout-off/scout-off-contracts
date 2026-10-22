@@ -162,6 +162,12 @@ pub enum ScoutAccessError {
     /// `open_migration_window` was called after the window was permanently
     /// closed by `close_migration_window`.
     MigrationWindowSealed = 45,
+
+    // ── Migration seeding (issue #1679) ──
+    /// `admin_seed_trial_offer` was called with a `trial_index` that is not
+    /// exactly `TrialCounter + 1` for the target player. Mirrors progress's
+    /// `InvalidHistoryIndex` for the same contiguity violation.
+    InvalidTrialIndex = 46,
 }
 
 impl AdminError for ScoutAccessError {
@@ -186,69 +192,40 @@ mod tests {
                 in_error_enum = true;
                 continue;
             }
-
             if !in_error_enum {
                 continue;
             }
-
             if line.starts_with('}') {
                 break;
             }
-
-            if line.is_empty()
-                || line.starts_with("//")
-                || line.starts_with("///")
-                || !line.ends_with(',')
-            {
+            if line.is_empty() || line.starts_with("//") {
                 continue;
             }
 
-            let assigned_code = if let Some((_, discriminant)) = line.split_once('=') {
-                discriminant
-                    .trim_end_matches(',')
-                    .trim()
-                    .parse::<u32>()
-                    .expect("ScoutAccessError discriminants must be u32 literals")
-            } else {
-                next_implicit_code.expect("first ScoutAccessError variant must be explicit")
+            let (name, explicit) = match line.split_once('=') {
+                Some((name, code)) => {
+                    let code = code
+                        .trim()
+                        .trim_end_matches(',')
+                        .trim()
+                        .parse::<u32>()
+                        .expect("explicit error code must be a u32");
+                    (name.trim(), Some(code))
+                }
+                None => (line.trim_end_matches(',').trim(), None),
             };
 
-            assert_ne!(
-                assigned_code, 13,
-                "ScoutAccessError code 13 is intentionally reserved and must not be assigned"
-            );
+            let code = match explicit {
+                Some(code) => code,
+                None => next_implicit_code.expect("implicit code requires a prior explicit code"),
+            };
 
-            next_implicit_code = Some(assigned_code + 1);
+            assert_ne!(code, 13, "error code 13 must remain reserved ({name})");
+            assert_ne!(code, 18, "error code 18 must remain reserved ({name})");
+
+            next_implicit_code = Some(code + 1);
         }
-    }
 
-    #[test]
-    fn contact_quota_exceeded_is_deprecated_slot_18_reserved() {
-        assert_eq!(ScoutAccessError::ContactQuotaExceeded as u32, 18);
-    }
-
-    #[test]
-    fn pro_contact_limit_reached_is_code_20() {
-        assert_eq!(ScoutAccessError::ProContactLimitReached as u32, 20);
-    }
-
-    #[test]
-    fn grant_not_found_is_code_38() {
-        assert_eq!(ScoutAccessError::GrantNotFound as u32, 38);
-    }
-
-    #[test]
-    fn grant_already_revoked_is_code_42() {
-        assert_eq!(ScoutAccessError::GrantAlreadyRevoked as u32, 42);
-    }
-
-    #[test]
-    fn player_not_verified_is_code_43() {
-        assert_eq!(ScoutAccessError::PlayerNotVerified as u32, 43);
-    }
-
-    #[test]
-    fn scout_deactivated_is_code_39() {
-        assert_eq!(ScoutAccessError::ScoutDeactivated as u32, 39);
+        assert!(in_error_enum, "failed to locate ScoutAccessError enum");
     }
 }

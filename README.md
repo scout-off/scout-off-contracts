@@ -835,3 +835,11 @@ Quick checklist:
 - Formatting clean: `cargo fmt --all -- --check`
 - New functions have tests and are documented in [docs/CONTRACT_REFERENCE.md](docs/CONTRACT_REFERENCE.md)
 - Validator authorization logic changes require explicit review from a second team member
+
+## Handsoff notes
+
+<!-- handsoff-issue-1678 -->
+- #1678: scout_access: renew_if_due's doc claims all subscribe() protections apply, but several are skipped
+
+<!-- handsoff-issue-1681 -->
+- #1681: verification: remove the redundant `has(ProgressContract)` check inside its own else-branch in commit_approved_milestone
