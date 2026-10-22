@@ -835,3 +835,14 @@ Quick checklist:
 - Formatting clean: `cargo fmt --all -- --check`
 - New functions have tests and are documented in [docs/CONTRACT_REFERENCE.md](docs/CONTRACT_REFERENCE.md)
 - Validator authorization logic changes require explicit review from a second team member
+
+## Handsoff notes
+
+<!-- handsoff-issue-1671 -->
+- #1671: progress: extract the duplicated registration-sync block from advance_level and reset_player_level
+
+<!-- handsoff-issue-1672 -->
+- #1672: scout_access: add_to_tier_index is marked #[allow(dead_code)] but is used
+
+<!-- handsoff-issue-1673 -->
+- #1673: scout_access: admin_seed_fee_config / admin_seed_fee_config_history redefine the history cap locally

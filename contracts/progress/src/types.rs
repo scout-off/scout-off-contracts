@@ -10,11 +10,11 @@ pub const CODE_SCHEMA_VERSION: u32 = 1;
 /// One step of a Merkle inclusion proof for [`ProgressEntry`] history
 /// commitments (see [`DataKey::HistoryRoot`]).
 ///
-/// `sibling` is the hash this step combines with the accumulated hash so
-/// far; `sibling_is_right` records which side of the combination it sits
-/// on (`H(current, sibling)` vs `H(sibling, current)`), since the RFC
-/// 6962-style tree used here is not always evenly balanced and the
-/// combination order is therefore not inferable from position alone.
+/// `sibling` is the hash this step combines with the accumulated hash so far;
+/// `sibling_is_right` records which side of the combination it sits on
+/// (`H(current, sibling)` vs `H(sibling, current)`), since the RFC 6962-style
+/// tree used here is not always evenly balanced and the combination order is
+/// therefore not inferable from position alone.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct HistoryProofStep {
@@ -40,6 +40,25 @@ pub struct ProgressEntry {
     pub milestone_ref: u32,
     /// Ledger sequence number at the time of the level change
     pub ledger_sequence: u32,
+}
+
+/// Named result of a cursor-based history page read (issue #1670).
+///
+/// Replaces the anonymous `(Vec<ProgressEntry>, u32, u32)` tuple previously
+/// returned by `get_history_page_with_cursor`, which generated an untyped
+/// positional array in the TypeScript bindings and made it easy to swap
+/// `next_index` and `snapshot_count` by mistake.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct HistoryCursorPage {
+    /// The history entries in this page, in chronological order.
+    pub entries: soroban_sdk::Vec<ProgressEntry>,
+    /// Index to pass as `cursor` on the next call. Equal to the number of
+    /// entries returned when the page is exhausted.
+    pub next_index: u32,
+    /// Total number of history entries recorded for the player at the time
+    /// of the read (the snapshot the page was taken against).
+    pub snapshot_count: u32,
 }
 
 /// One peak of a player's incremental Merkle frontier (issue #1368).
@@ -161,47 +180,6 @@ pub enum DataKey {
     /// it lets an operator confirm progress across several `migrate` calls
     /// without reading the cursor's implied position.
     MigrationProcessed,
-    /// The current Merkle commitment root over a player's full
-    /// [`ProgressEntry`] history (an RFC 6962-style Merkle Tree Hash — see
-    /// `record_progress_entry`'s doc comment for the construction). Updated
-    /// on every history append alongside [`HistoryVec`]. Independently
-    /// verifiable via `verify_history_proof` without trusting the RPC node
-    /// that served the query — see `get_progress_root`.
-    HistoryRoot(u64),
-    /// Incremental Merkle commitment state for a player's history (issue
-    /// #1368): the ordered list of [`FrontierPeak`]s whose levels are the set
-    /// bits of the current entry count.
-    ///
-    /// This is the accumulator `record_progress_entry` now maintains instead
-    /// of re-reading every `HistoryPage` shard and re-hashing the whole
-    /// history on each append. The RFC 6962 root in [`DataKey::HistoryRoot`]
-    /// remains byte-identical — it is now derived by folding these peaks
-    /// instead of by recursing over the full leaf list.
-    ///
-    /// Absent for players whose history predates this key; the first append
-    /// after an upgrade rebuilds it lazily from the existing history.
-    HistoryFrontier(u64),
+    /// The
 
-    /// Boolean flag (`true`) written by `open_migration_window`; absent or
-    /// `false` means the migration window is closed. All `admin_seed_*`
-    /// functions on this contract check this flag before writing any state.
-    /// Cleared by `close_migration_window`. Stored in instance storage so it
-    /// is immediately visible and requires no TTL management.
-    MigrationActive,
-    /// Irreversible flag set by `close_migration_window` after the window
-    /// has been closed once. If present (true), `open_migration_window`
-    /// will return `MigrationWindowSealed` error. This ensures the
-    /// migration window can only be opened once per contract deployment.
-    MigrationWindowSealed,
-    /// Re-wiring epoch for [`DataKey::RegistrationContract`], bumped by
-    /// every `set_registration_contract` call. See
-    /// `scoutchain_shared_types::WiringLink` and
-    /// `docs/WIRING_REGISTRY_DESIGN.md` (issue #1041).
-    RegistrationContractEpoch,
-    /// Re-wiring epoch for [`DataKey::VerificationContract`], bumped by
-    /// every `set_verification_contract` call.
-    VerificationContractEpoch,
-    /// Re-wiring epoch for [`DataKey::ScoutAccessContract`], bumped by
-    /// every `set_scout_access_contract` call.
-    ScoutAccessContractEpoch,
-}
+/* … truncated 2449 chars — edit only what you need near the top … */
