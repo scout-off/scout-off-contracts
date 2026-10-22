@@ -3421,6 +3421,180 @@ mod tests {
         (env, admin, xlm, contract_id, client)
     }
 
+    // #1690 — trial-offer listing regressions. Use the existing setup and the
+    // public migration entrypoint to seed large indices without creating 21
+    // subscriptions/escrows solely for a read-only listing test.
+    fn seed_trial_offers_for_listing(
+        env: &Env,
+        client: &ScoutAccessContractClient<'static>,
+        player_id: u64,
+        count: u32,
+    ) {
+        client.open_migration_window();
+        for i in 1..=count {
+            let offer = TrialOffer {
+                player_id,
+                scout: Address::generate(env),
+                details_hash: String::from_str(
+                    env,
+                    "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB",
+                ),
+                logged_at: 1_000 + u64::from(i),
+            };
+            client.admin_seed_trial_offer(&player_id, &i, &offer, &None);
+        }
+        client.close_migration_window();
+    }
+
+    #[test]
+    fn test_trial_offer_lists_empty_for_player_without_offers() {
+        let (_env, _, _, _, client) = setup();
+        assert_eq!(client.get_all_trial_offers(&42u64).len(), 0);
+        assert_eq!(client.get_player_trial_offers(&42u64).len(), 0);
+    }
+
+    #[test]
+    fn test_trial_offer_lists_three_in_index_order() {
+        let (env, _, _, _, client) = setup();
+        seed_trial_offers_for_listing(&env, &client, 7, 3);
+        let all = client.get_all_trial_offers(&7u64);
+        let player = client.get_player_trial_offers(&7u64);
+        assert_eq!(all.len(), 3);
+        assert_eq!(player.len(), 3);
+        for i in 1..=3u32 {
+            let expected = client.get_trial_offer(&7u64, &i);
+            assert_eq!(all.get(i - 1).unwrap().scout, expected.scout);
+            assert_eq!(player.get(i - 1).unwrap().logged_at, expected.logged_at);
+        }
+    }
+
+    #[test]
+    fn test_trial_offer_lists_cap_only_global_result_at_twenty() {
+        let (env, _, _, _, client) = setup();
+        seed_trial_offers_for_listing(&env, &client, 7, 21);
+        let all = client.get_all_trial_offers(&7u64);
+        let player = client.get_player_trial_offers(&7u64);
+        assert_eq!(all.len(), 20);
+        assert_eq!(player.len(), 21);
+        assert_eq!(client.get_trial_count(&7u64), 21);
+        for i in 1..=20u32 {
+            assert_eq!(all.get(i - 1).unwrap().logged_at, 1_000 + u64::from(i));
+            assert_eq!(all.get(i - 1).unwrap().scout, player.get(i - 1).unwrap().scout);
+        }
+        assert_eq!(player.get(20).unwrap().logged_at, 1_021);
+    }
+
+    #[test]
+    fn test_trial_offer_logged_fields_match_both_lists_and_event() {
+        let (env, admin, token, contract_id, client) = setup();
+        let scout = Address::generate(&env);
+        mint_token(&env, &token, &admin, &scout, 100_000_000);
+        client.subscribe(&scout, &SubscriptionTier::Elite);
+        client.pay_to_contact(&scout, &1u64);
+        let details = String::from_str(
+            &env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB",
+        );
+        let timestamp = env.ledger().timestamp();
+        assert_eq!(client.log_trial_offer(&scout, &1u64, &details), 1);
+        for offers in [
+            client.get_player_trial_offers(&1u64),
+            client.get_all_trial_offers(&1u64),
+        ] {
+            assert_eq!(offers.len(), 1);
+            let offer = offers.get(0).unwrap();
+            assert_eq!(offer.scout, scout);
+            assert_eq!(offer.details_hash, details);
+            assert_eq!(offer.logged_at, timestamp);
+            assert_eq!(offer.player_id, 1);
+        }
+        let latest = env.events().all().filter_by_contract(&contract_id).last().unwrap();
+        assert_eq!(
+            latest.1,
+            (Symbol::new(&env, crate::events::TRIAL_OFFER_LOGGED), scout.clone()).into_val(&env)
+        );
+        assert_eq!(latest.2, 1u64.into_val(&env));
+    }
+
+    #[test]
+    fn test_trial_offer_lists_include_different_scouts_for_same_player() {
+        let (env, _, _, _, client) = setup();
+        seed_trial_offers_for_listing(&env, &client, 7, 3);
+        let offers = client.get_player_trial_offers(&7u64);
+        assert_ne!(offers.get(0).unwrap().scout, offers.get(1).unwrap().scout);
+        assert_ne!(offers.get(1).unwrap().scout, offers.get(2).unwrap().scout);
+        assert_eq!(client.get_all_trial_offers(&7u64).len(), 3);
+    }
+
+    #[test]
+    fn test_trial_offer_list_preserves_logged_fields_and_public_getter() {
+        let (env, _, _, _, client) = setup();
+        seed_trial_offers_for_listing(&env, &client, 7, 3);
+        let offers = client.get_player_trial_offers(&7u64);
+        for i in 1..=3u32 {
+            let offer = offers.get(i - 1).unwrap();
+            let stored = client.get_trial_offer(&7u64, &i);
+            assert_eq!(offer.player_id, 7);
+            assert_eq!(offer.scout, stored.scout);
+            assert_eq!(offer.details_hash, stored.details_hash);
+            assert_eq!(offer.logged_at, stored.logged_at);
+            assert_eq!(offer.logged_at, 1_000 + u64::from(i));
+        }
+    }
+
+    // #1694 — admin-only recovery and read-back remain metadata-preserving.
+    #[test]
+    fn test_restore_subscription_record_succeeds_and_emits_event() {
+        let (env, admin, token, contract_id, client) = setup();
+        let scout = Address::generate(&env);
+        mint_token(&env, &token, &admin, &scout, 20_000_000);
+        client.subscribe(&scout, &SubscriptionTier::Basic);
+        let prior = env.events().all().filter_by_contract(&contract_id).len();
+        client.restore_subscription_record(&scout);
+        let events = env.events().all().filter_by_contract(&contract_id);
+        assert_eq!(events.len(), prior + 1);
+        let restored = events.last().unwrap();
+        assert_eq!(
+            restored.1,
+            (Symbol::new(&env, "subscription_record_restored"), admin.clone()).into_val(&env)
+        );
+        assert_eq!(restored.2, scout.clone().into_val(&env));
+        assert_eq!(client.get_subscription(&scout).scout, scout);
+    }
+
+    #[test]
+    fn test_restore_subscription_record_rejects_absent_wallet() {
+        let (env, _, _, _, client) = setup();
+        let stranger = Address::generate(&env);
+        assert_eq!(
+            client.try_restore_subscription_record(&stranger),
+            Err(Ok(ScoutAccessError::SubscriptionRecordEvicted))
+        );
+    }
+
+    #[test]
+    fn test_restore_subscription_record_requires_admin_auth() {
+        let (env, admin, token, _, client) = setup();
+        let scout = Address::generate(&env);
+        mint_token(&env, &token, &admin, &scout, 20_000_000);
+        client.subscribe(&scout, &SubscriptionTier::Basic);
+        env.mock_auths(&[]);
+        assert!(client.try_restore_subscription_record(&scout).is_err());
+    }
+
+    #[test]
+    fn test_restore_subscription_record_preserves_tier_and_expiry() {
+        let (env, admin, token, _, client) = setup();
+        let scout = Address::generate(&env);
+        mint_token(&env, &token, &admin, &scout, 20_000_000);
+        client.subscribe(&scout, &SubscriptionTier::Basic);
+        let before = client.get_subscription(&scout);
+        client.restore_subscription_record(&scout);
+        let after = client.get_subscription(&scout);
+        assert_eq!(after.tier, before.tier);
+        assert_eq!(after.expires_at, before.expires_at);
+        assert_eq!(after.subscribed_at, before.subscribed_at);
+    }
+
     #[test]
     fn test_initialize_event() {
         let env = Env::default();
