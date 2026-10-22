@@ -188,6 +188,20 @@ pub enum RegPlayerStatus {
 #[contract]
 pub struct VerificationContract;
 
+/// Emit `diversity_gate_unreachable` when `required` exceeds the number of
+/// active validators — no set of distinct regions/affiliations among them can
+/// reach it, so advancement past the gate would be blocked (issue #1632).
+fn warn_if_gate_unreachable(env: &Env, admin: &Address, gate: &str, required: u32) {
+    let active_count: u32 = env
+        .storage()
+        .instance()
+        .get(&DataKey::ActiveValidatorCount)
+        .unwrap_or(0u32);
+    if required > active_count {
+        events::diversity_gate_unreachable(env, admin, gate, required, active_count);
+    }
+}
+
 #[contractimpl]
 impl VerificationContract {
     // -------------------------------------------------------------------------
@@ -269,8 +283,19 @@ impl VerificationContract {
         Self::propose_admin(env, new_admin)
     }
 
+    /// Read the diversity gate. Extends the entry's TTL on every successful
+    /// read so the gate cannot silently archive during idle periods (#1632).
     pub fn get_diversity_config(env: Env) -> Option<DiversityConfig> {
-        env.storage().persistent().get(&DataKey::DiversityConfig)
+        let config: Option<DiversityConfig> =
+            env.storage().persistent().get(&DataKey::DiversityConfig);
+        if config.is_some() {
+            env.storage().persistent().extend_ttl(
+                &DataKey::DiversityConfig,
+                PERSISTENT_TTL_MIN,
+                PERSISTENT_TTL_MAX,
+            );
+        }
+        config
     }
 
     pub fn get_player_affiliation_count(env: Env, player_id: u64) -> u32 {
@@ -281,12 +306,25 @@ impl VerificationContract {
             .len()
     }
 
+    /// Configure the affiliation-diversity gate (admin only).
+    ///
+    /// Bounds (issue #1632): `required_distinct_affiliations` must be in
+    /// `[1, MAX_VALIDATORS]` and `starting_milestone_index` must be `>= 1`
+    /// (milestone indices start at 1). Otherwise `InvalidDiversityConfig`.
+    /// If `required_distinct_affiliations` exceeds the current
+    /// `ActiveValidatorCount`, the config is still stored and a
+    /// `diversity_gate_unreachable` warning event is emitted.
     pub fn set_diversity_config(
         env: Env,
         required_distinct_affiliations: u32,
         starting_milestone_index: u32,
     ) -> Result<(), VerificationError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        if !(1..=MAX_VALIDATORS).contains(&required_distinct_affiliations)
+            || starting_milestone_index == 0
+        {
+            return Err(VerificationError::InvalidDiversityConfig);
+        }
         let old = Self::get_diversity_config(env.clone());
         let config = DiversityConfig {
             required_distinct_affiliations,
@@ -295,7 +333,18 @@ impl VerificationContract {
         env.storage()
             .persistent()
             .set(&DataKey::DiversityConfig, &config);
+        env.storage().persistent().extend_ttl(
+            &DataKey::DiversityConfig,
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
         events::diversity_config_updated(&env, &admin, &old, &config);
+        warn_if_gate_unreachable(
+            &env,
+            &admin,
+            "diversity_config",
+            required_distinct_affiliations,
+        );
         Ok(())
     }
 
@@ -426,13 +475,23 @@ impl VerificationContract {
     ///
     /// The check applies only to Level-2 and Level-3 advances; Level-0 → 1
     /// (identity verification) is not gated by region diversity.
+    ///
+    /// Bounds (issue #1632): must be `<= MAX_VALIDATORS`, otherwise
+    /// `InvalidRegionQuorum`. A non-zero value above the current
+    /// `ActiveValidatorCount` is stored but emits `diversity_gate_unreachable`.
     pub fn set_min_region_quorum(env: Env, min_regions: u32) -> Result<(), VerificationError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        if min_regions > MAX_VALIDATORS {
+            return Err(VerificationError::InvalidRegionQuorum);
+        }
         let old = Self::get_min_region_quorum(env.clone());
         env.storage()
             .instance()
             .set(&DataKey::MinRegionQuorum, &min_regions);
         events::min_region_quorum_updated(&env, &admin, old, min_regions);
+        if min_regions > 0 {
+            warn_if_gate_unreachable(&env, &admin, "min_region_quorum", min_regions);
+        }
         Ok(())
     }
 

@@ -206,6 +206,13 @@ pub enum VerificationError {
     /// `open_migration_window` was called after the window was permanently
     /// closed by `close_migration_window`.
     MigrationWindowSealed = 58,
+
+    // ── Diversity / region gate bounds (issue #1632) ──
+    /// `set_min_region_quorum` was given a value above `MAX_VALIDATORS`.
+    InvalidRegionQuorum = 59,
+    /// `set_diversity_config` was given `required_distinct_affiliations`
+    /// outside `[1, MAX_VALIDATORS]` or `starting_milestone_index == 0`.
+    InvalidDiversityConfig = 60,
 }
 
 impl AdminError for VerificationError {

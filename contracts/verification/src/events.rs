@@ -34,6 +34,7 @@ pub const DIVERSITY_CONFIG_UPDATED: &str = "diversity_config_updated";
 pub const MIN_REGION_QUORUM_UPDATED: &str = "min_region_quorum_updated";
 pub const VOTING_WINDOW_SECS_UPDATED: &str = "voting_window_secs_updated";
 pub const REG_COOLDOWN_UPDATED: &str = "reg_cooldown_updated";
+pub const DIVERSITY_GATE_UNREACHABLE: &str = "diversity_gate_unreachable";
 
 /// topics: (event_name, old_admin)  data: new_admin
 pub fn admin_transfer_proposed(env: &Env, old_admin: &Address, new_admin: &Address) {
@@ -576,5 +577,24 @@ pub fn reg_cooldown_updated(env: &Env, admin: &Address, old: u64, new: u64) {
     env.events().publish(
         (Symbol::new(env, REG_COOLDOWN_UPDATED), admin.clone()),
         (old, new),
+    );
+}
+
+/// Warning emitted when an admin configures a diversity gate that the current
+/// active validator set cannot satisfy (issue #1632). The setting is still
+/// stored — the gate is reachable again once enough validators are active.
+///
+/// topics: (event_name, admin)  data: (gate, required, active_validator_count)
+/// `gate` is `"min_region_quorum"` or `"diversity_config"`.
+pub fn diversity_gate_unreachable(
+    env: &Env,
+    admin: &Address,
+    gate: &str,
+    required: u32,
+    active_count: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, DIVERSITY_GATE_UNREACHABLE), admin.clone()),
+        (Symbol::new(env, gate), required, active_count),
     );
 }

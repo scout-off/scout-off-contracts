@@ -162,6 +162,10 @@ pub enum ScoutAccessError {
     /// `open_migration_window` was called after the window was permanently
     /// closed by `close_migration_window`.
     MigrationWindowSealed = 45,
+    /// The registration contract is wired but has no scout profile for this
+    /// wallet (never registered, or erased via `deregister_scout`). Fails
+    /// closed so a deregistered scout cannot keep acting (issue #1641).
+    ScoutNotRegistered = 46,
 }
 
 impl AdminError for ScoutAccessError {

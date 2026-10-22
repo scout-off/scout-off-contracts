@@ -358,6 +358,68 @@ impl ProgressContract {
             return Err(ProgressError::NotInitialized);
         }
 
+        Self::advance_level_authorized(
+            env,
+            caller,
+            caller_is_secondary,
+            verification_contract,
+            player_id,
+            milestone_ref,
+        )
+    }
+
+    /// Trial-offer Level-3 advance with scout attribution (issue #1640).
+    ///
+    /// Only the whitelisted `ScoutAccessContract` may call this — its auth is
+    /// required independently of `scout`, so a scout invoking it directly is
+    /// rejected. `scout` is recorded as `ProgressEntry.updated_by` and emitted
+    /// as the `progress_updated` topic, so history attributes the EliteTier
+    /// step to the scout who made the offer rather than the contract.
+    pub fn advance_level_for_scout(
+        env: Env,
+        scout: Address,
+        player_id: u64,
+        milestone_ref: u32,
+    ) -> Result<ProgressLevel, ProgressError> {
+        Self::bump_instance_ttl(&env);
+        Self::require_not_paused(&env)?;
+        Self::require_initialized(&env)?;
+
+        let secondary: Address = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::ScoutAccessContract)
+            .ok_or(ProgressError::NotInitialized)?;
+        secondary.require_auth();
+
+        let verification_contract: Option<Address> = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::VerificationContract);
+
+        Self::advance_level_authorized(
+            env,
+            scout,
+            true,
+            verification_contract,
+            player_id,
+            milestone_ref,
+        )
+    }
+
+    /// Shared body of `advance_level` / `advance_level_for_scout`, run after
+    /// the whitelisted invoking contract has been authenticated. `updated_by`
+    /// is the attribution recorded in history and the `progress_updated` event.
+    fn advance_level_authorized(
+        env: Env,
+        updated_by: Address,
+        caller_is_secondary: bool,
+        verification_contract: Option<Address>,
+        player_id: u64,
+        milestone_ref: u32,
+    ) -> Result<ProgressLevel, ProgressError> {
+        let caller = updated_by;
+
         // #457: When called via the secondary (ScoutAccessContract) path,
         // validate that milestone_ref actually exists on-chain for this
         // player. A milestone_ref of 0 or one beyond the known count is

@@ -164,3 +164,25 @@ private by adding an on-chain flag. Treat them as legacy public evidence. To
 migrate, encrypt the original media, upload the ciphertext under a new CID,
 and publish the replacement through an application-level evidence-versioning
 workflow; do not overwrite historical approval records.
+
+## Scout erasure (GDPR, issue #1641)
+
+`registration.deregister_scout(scout_id)` (admin only) is the scout
+counterpart of `deregister_player`. It removes `Scout(id)`,
+`ScoutByWallet(wallet)` and `ScoutDeactivated(id)`, decrements
+`LiveScoutCount`, and emits `scout_deregistered`. `ScoutRegLastSent` is kept so
+the per-wallet registration cooldown still applies.
+
+Cross-contract consequences:
+
+- **scout_access fails closed.** Once the registration contract is wired,
+  a wallet with no scout profile (never registered, or erased) is rejected
+  with `ScoutNotRegistered` by `subscribe`, `pay_to_contact`,
+  `batch_contact_players`, `log_trial_offer` and the other paths that
+  previously degraded gracefully on "scout not found".
+- **Retained in scout_access:** `Subscription(wallet)`, `ContactRecord`s and
+  `EvidenceAccessGrant`s are keyed by wallet and are part of the append-only
+  payment / access audit trail; they are not erased. They contain no profile
+  data beyond the wallet address.
+- **Indexer:** on `scout_deregistered` delete the `scouts` row
+  (see `migrations/013_scout_deregistration.sql`).

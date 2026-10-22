@@ -40,9 +40,9 @@ mod progress_contract {
     #[contractclient(name = "Client")]
     #[allow(dead_code)]
     pub trait ProgressContractClient {
-        fn advance_level(
+        fn advance_level_for_scout(
             env: Env,
-            caller: Address,
+            scout: Address,
             player_id: u64,
             milestone_ref: u32,
         ) -> Result<ProgressLevel, ProgClientError>;
@@ -181,10 +181,12 @@ pub struct ScoutAccessContract;
 #[contractimpl]
 impl ScoutAccessContract {
     #[inline(always)]
-    /// Check that the scout (identified by wallet) has not been deactivated
-    /// in the registration contract. This is a best-effort cross-contract call:
-    /// if the registration contract is not wired, the check is skipped (graceful
-    /// degradation, matching the Pro-tier verification pattern).
+    /// Check that the scout (identified by wallet) is registered and has not
+    /// been deactivated in the registration contract. If the registration
+    /// contract is not wired, the check is skipped (graceful degradation,
+    /// matching the Pro-tier verification pattern). Once wired, a missing
+    /// profile — never registered, or erased by `deregister_scout` — fails
+    /// closed with `ScoutNotRegistered` (issue #1641).
     fn require_scout_not_deactivated(env: &Env, scout: &Address) -> Result<(), ScoutAccessError> {
         if let Some(reg_contract_addr) = env
             .storage()
@@ -193,13 +195,12 @@ impl ScoutAccessContract {
         {
             let reg_client = registration_contract::Client::new(env, &reg_contract_addr);
             match reg_client.try_get_scout_by_wallet(scout) {
-                Ok(Ok(profile)) if reg_client.is_scout_deactivated(&profile.scout_id) => {
-                    return Err(ScoutAccessError::ScoutDeactivated);
+                Ok(Ok(profile)) => {
+                    if reg_client.is_scout_deactivated(&profile.scout_id) {
+                        return Err(ScoutAccessError::ScoutDeactivated);
+                    }
                 }
-                _ => {
-                    // Scout not found in registration contract — allow the
-                    // operation (graceful degradation).
-                }
+                _ => return Err(ScoutAccessError::ScoutNotRegistered),
             }
         }
         Ok(())
@@ -1615,8 +1616,9 @@ impl ScoutAccessContract {
             }
         };
         let progress_client = progress_contract::Client::new(&env, &progress_addr);
-        match progress_client.try_advance_level(&env.current_contract_address(), &player_id, &index)
-        {
+        // #1640: attribute the EliteTier step to the scout; progress authenticates
+        // this contract separately as the whitelisted secondary caller.
+        match progress_client.try_advance_level_for_scout(&offer.scout, &player_id, &index) {
             Ok(_) => {}
             Err(Ok(progress_contract::ProgClientError::AlreadyAtMaxLevel)) => {
                 // #1419: Player is already at the maximum level — treat this as

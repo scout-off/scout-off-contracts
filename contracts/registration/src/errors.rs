@@ -64,6 +64,10 @@ pub enum ScoutChainError {
     // ── Cooldown config ──
     /// Cooldown value exceeds the maximum allowed (7 days).
     InvalidCooldown = 19,
+
+    // ── Scout cap (issue #1641) ──
+    /// `register_scout` / `admin_seed_scout` would exceed `MAX_SCOUTS` live scouts.
+    ScoutCapReached = 20,
 }
 
 impl AdminError for ScoutChainError {
@@ -96,6 +100,7 @@ mod tests {
         ("PlayerRecordEvicted", 17),
         ("ScoutRecordEvicted", 18),
         ("InvalidCooldown", 19),
+        ("ScoutCapReached", 20),
     ];
 
     #[test]
@@ -118,6 +123,7 @@ mod tests {
         assert_eq!(ScoutChainError::RegistrationCooldown as u32, 16);
         assert_eq!(ScoutChainError::PlayerRecordEvicted as u32, 17);
         assert_eq!(ScoutChainError::ScoutRecordEvicted as u32, 18);
+        assert_eq!(ScoutChainError::ScoutCapReached as u32, 20);
     }
 
     /// The two variants this file previously conflated.

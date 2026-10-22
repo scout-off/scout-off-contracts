@@ -193,6 +193,30 @@ stellar contract invoke --id $REGISTRATION_CONTRACT_ID \
 
 ---
 
+#### `deregister_scout(scout_id: u64) -> Result<(), ScoutChainError>`
+
+Erase a scout profile (GDPR right-to-erasure, issue #1641). Removes
+`Scout(id)`, `ScoutByWallet(wallet)` and `ScoutDeactivated(id)`, decrements
+`LiveScoutCount` and emits `scout_deregistered`. `ScoutRegLastSent` is kept so
+the registration cooldown still applies. scout_access then rejects the wallet
+with `ScoutNotRegistered` (fails closed). See `docs/EVIDENCE_PRIVACY.md`.
+
+| | |
+|---|---|
+| **Auth** | Admin must sign |
+| **Errors** | `ScoutNotFound` · `NotInitialized` · `Unauthorized` |
+
+```bash
+stellar contract invoke --id $REGISTRATION_CONTRACT_ID \
+  -- deregister_scout --scout_id 1
+```
+
+`register_scout` and `admin_seed_scout` reject new scouts with
+`ScoutCapReached` (code 20) once `LiveScoutCount` reaches `MAX_SCOUTS`
+(10,000).
+
+---
+
 #### `deactivate_player(player_id: u64) -> Result<(), ScoutChainError>`
 
 Hide a player from `filter_players` results without erasing their profile
@@ -821,6 +845,7 @@ registration is permitted; duplicate prevention is enforced per role only.
 | `scout_registered` | event_name, admin (Address) | scout_id (u64) | New scout profile created |
 | `profile_updated` | event_name, wallet (Address) | player_id (u64) | Player profile updated |
 | `player_deregistered` | event_name, admin (Address) | player_id (u64) | Player profile removed |
+| `scout_deregistered` | event_name, admin (Address) | (scout_id (u64), wallet (Address)) | Scout profile erased |
 | `player_deactivated` | event_name, admin (Address) | player_id (u64) | Player hidden from discovery |
 | `player_reactivated` | event_name, admin (Address) | player_id (u64) | Player restored to discovery |
 | `player_level_synced` | event_name, caller (Address) | player_id (u64) | Player level updated by progress contract |
@@ -2782,6 +2807,20 @@ otherwise the call fails with `InvalidProgressTransition` (#457).
 | **Errors** | `NotInitialized` · `ContractPaused` · `InvalidProgressTransition` · `AlreadyAtMaxLevel` · `Overflow` · `RegistrationCallFailed` |
 
 _Called atomically by `verification.approve_milestone`. Prefer that path in production._
+
+#### `advance_level_for_scout(scout: Address, player_id: u64, milestone_ref: u32) -> Result<ProgressLevel, ProgressError>`
+
+Trial-offer variant of `advance_level` used by `scout_access.confirm_trial_offer`
+(issue #1640). Auth is required from the stored `ScoutAccessContract` —
+independently of `scout`, so a scout calling directly is rejected. `scout` is
+recorded as `updated_by` in the history entry and as the `progress_updated`
+topic, attributing the EliteTier step to the scout who made the offer. The same
+`milestone_ref` validation (#457) and errors as the secondary path of
+`advance_level` apply; `NotInitialized` if no scout_access contract is wired.
+
+**Attribution semantics:** on the verification path `updated_by` is the
+validator wallet; on the scout_access path it is the offering scout. Indexer
+`player_level_history.updated_by` follows the same rule.
 
 > **Not idempotent — do not retry this call directly (Issue #811 follow-up).**
 > `advance_level` is a monotonic state-machine step, not a keyed mutation: it
@@ -5446,6 +5485,7 @@ pub struct TrialOffer {
 | 17 | `PlayerRecordEvicted` | `restore_player_record` targeted a fully evicted, unrecoverable player entry |
 | 18 | `ScoutRecordEvicted` | `restore_scout_record` targeted a fully evicted, unrecoverable scout entry |
 | 19 | `InvalidCooldown` | Cooldown value exceeds the maximum allowed (7 days) |
+| 20 | `ScoutCapReached` | `register_scout` / `admin_seed_scout` would exceed `MAX_SCOUTS` (10,000) live scouts — a hard stop (#1641) |
 
 ### `VerificationError` (verification contract)
 
@@ -5509,6 +5549,8 @@ pub struct TrialOffer {
 | 56 | `PlayerNotRegistered` | The registration contract has no player with this ID |
 | 57 | `PlayerDeactivated` | The player has been deactivated in the registration contract |
 | 58 | `MigrationWindowSealed` | `open_migration_window` was called after the window was permanently closed by `close_migration_window` |
+| 59 | `InvalidRegionQuorum` | `set_min_region_quorum` value above `MAX_VALIDATORS` (#1632) |
+| 60 | `InvalidDiversityConfig` | `set_diversity_config` affiliations outside `[1, MAX_VALIDATORS]` or `starting_milestone_index == 0` (#1632) |
 
 ### `ProgressError` (progress contract)
 
@@ -5586,6 +5628,7 @@ pub struct TrialOffer {
 | 43 | `PlayerNotVerified` | `revoke_evidence_access` caller's wallet does not own the `player_id` passed, or the registration contract is not wired |
 | 44 | `RegistrationContractNotSet` | Registration contract is not wired; Pro/Elite subscriptions require it |
 | 45 | `MigrationWindowSealed` | `open_migration_window` was called after the window was permanently closed by `close_migration_window` |
+| 46 | `ScoutNotRegistered` | Registration is wired but has no profile for the scout wallet (never registered, or erased via `deregister_scout`) — fails closed (#1641) |
 
 ---
 
@@ -5603,6 +5646,7 @@ All events follow the unified `(Symbol, actor)` topic schema introduced in #246.
 | `scout_registered` | event_name, wallet (Address) | scout_id (u64) | New scout profile created |
 | `profile_updated` | event_name, wallet (Address) | player_id (u64) | Player updates IPFS content hashes |
 | `player_deregistered` | event_name, admin (Address) | player_id (u64) | Admin removes a player profile |
+| `scout_deregistered` | event_name, admin (Address) | (scout_id (u64), wallet (Address)) | Admin erases a scout profile |
 | `player_deactivated` | event_name, admin (Address) | player_id (u64) | Admin soft-hides a player from filter results |
 | `player_reactivated` | event_name, admin (Address) | player_id (u64) | Admin restores a soft-hidden player to filter results |
 | `scout_verified` | event_name, wallet (Address) | scout_id (u64) | Admin verifies a scout |
@@ -5665,6 +5709,7 @@ All events follow the unified `(Symbol, actor)` topic schema introduced in #246.
 | `migration_window_closed` | event_name, admin (Address) | () | `close_migration_window` closed and permanently sealed the seeding window |
 | `diversity_config_updated` | event_name, admin (Address) | (old (Option<DiversityConfig>), new (DiversityConfig)) | `set_diversity_config` changed the affiliation-diversity rule (#1453) |
 | `min_region_quorum_updated` | event_name, admin (Address) | (old (u32), new (u32)) | `set_min_region_quorum` changed the region quorum (#1453) |
+| `diversity_gate_unreachable` | event_name, admin (Address) | (gate (Symbol), required (u32), active_validator_count (u32)) | Warning: a configured region/affiliation gate exceeds the active validator count (#1632) |
 | `voting_window_secs_updated` | event_name, admin (Address) | (old (u64), new (u64)) | `set_voting_window_secs` changed the attestation voting window (#1453) |
 | `reg_cooldown_updated` | event_name, admin (Address) | (old (u64), new (u64)) | `set_reg_cooldown` changed the validator registration cooldown (#1453) |
 

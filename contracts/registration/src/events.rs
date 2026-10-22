@@ -87,6 +87,14 @@ pub fn profile_updated(env: &Env, player_id: u64, wallet: &Address) {
 }
 
 /// topics: (event_name, admin)  data: (player_id, level, region)
+/// topics: (event_name, admin)  data: (scout_id, wallet)
+pub fn scout_deregistered(env: &Env, scout_id: u64, wallet: &Address, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "scout_deregistered"), admin.clone()),
+        (scout_id, wallet.clone()),
+    );
+}
+
 pub fn player_deregistered(
     env: &Env,
     player_id: u64,

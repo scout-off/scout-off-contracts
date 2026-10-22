@@ -74,6 +74,12 @@ for how to verify the event after running `scripts/upgrade.sh`.
 | Topics | `("player_deregistered", admin: Address)` |
 | Data   | `player_id: u64` |
 
+### `scout_deregistered`
+| Field  | Value |
+|--------|-------|
+| Topics | `("scout_deregistered", admin: Address)` |
+| Data   | `(scout_id: u64, wallet: Address)` |
+
 ### `player_deactivated`
 | Field  | Value |
 |--------|-------|
@@ -135,6 +141,10 @@ for how to verify the event after running `scripts/upgrade.sh`.
 |--------|-------|
 | Topics | `("progress_updated", updated_by: Address)` |
 | Data   | `(player_id: u64, old_level: ProgressLevel, new_level: ProgressLevel)` |
+
+`updated_by` always equals the stored `ProgressEntry.updated_by` (issue #1640):
+- **Verification path** (`advance_level`, Level 1–2 via `approve_milestone`): the validator wallet that approved the milestone.
+- **Scout-access path** (`advance_level_for_scout`, EliteTier via `confirm_trial_offer`): the scout who made the trial offer. The scout_access contract is the authorising party but is not recorded.
 
 ### `player_level_reset`
 | Field  | Value |

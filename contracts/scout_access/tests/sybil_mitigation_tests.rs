@@ -388,3 +388,31 @@ fn test_attacker_cannot_pay_for_elite_instead() {
         .try_subscribe(&attacker, &SubscriptionTier::Elite);
     assert_eq!(result, Err(Ok(ScoutAccessError::ScoutNotVerified)));
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests: deregistered scouts fail closed (issue #1641)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_deregistered_scout_is_rejected() {
+    use scoutchain_scout_access::ScoutAccessError;
+
+    let h = setup();
+    let scout_id = h
+        .registration_client
+        .get_scout_by_wallet(&h.scout1)
+        .scout_id;
+    h.registration_client.deregister_scout(&scout_id);
+
+    // A missing profile must not fall through to "allowed".
+    assert_eq!(
+        h.scout_access_client
+            .try_subscribe(&h.scout1, &SubscriptionTier::Basic),
+        Err(Ok(ScoutAccessError::ScoutNotRegistered))
+    );
+    // Other, still-registered scouts are unaffected.
+    assert!(h
+        .scout_access_client
+        .try_subscribe(&h.scout2, &SubscriptionTier::Basic)
+        .is_ok());
+}

@@ -179,3 +179,26 @@ Before running `./scripts/deploy.sh mainnet`:
 3. Commit changes — CI will pick up new values on next deploy
 
 > **Never** hardcode these values in scripts. Always read from the config files or `.env.contracts` (which `deploy.sh` generates from these configs).
+
+---
+
+## On-chain gate configuration — verification contract (issue #1632)
+
+| Setter | Parameter | Valid range | Error on violation | Unreachable value |
+|--------|-----------|-------------|--------------------|-------------------|
+| `set_min_region_quorum` | `min_regions` | `0..=MAX_VALIDATORS` (100); `0` disables the check | `InvalidRegionQuorum` (59) | stored; emits `diversity_gate_unreachable` |
+| `set_diversity_config` | `required_distinct_affiliations` | `1..=MAX_VALIDATORS` (100) | `InvalidDiversityConfig` (60) | stored; emits `diversity_gate_unreachable` |
+| `set_diversity_config` | `starting_milestone_index` | `>= 1` (milestone indices start at 1) | `InvalidDiversityConfig` (60) | — |
+
+**Unreachable gates warn, they do not reject.** When the required count
+exceeds the current `ActiveValidatorCount`, no combination of active
+validators can satisfy the gate, so the setter emits
+`diversity_gate_unreachable` (topics: `admin`; data: `(gate, required,
+active_validator_count)`, `gate` ∈ `min_region_quorum` / `diversity_config`).
+The value is still stored so an admin can configure the gate ahead of
+onboarding validators; monitoring should alert on the event.
+
+**TTL.** `DiversityConfig` stays in persistent storage and its TTL is extended
+to `PERSISTENT_TTL_MAX` on every write and every read (`get_diversity_config`,
+including reads during milestone approval), so the gate cannot silently
+archive during idle periods. No migration is required.

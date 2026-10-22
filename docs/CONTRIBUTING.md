@@ -11,7 +11,7 @@ Ensure the following tools are installed at the specified minimum versions befor
 | **cargo** | ships with Rust stable | Verify: `cargo --version` |
 | **clippy** | ships with Rust stable | `rustup component add clippy` |
 | **rustfmt** | ships with Rust stable | `rustup component add rustfmt` |
-| **stellar-cli** | **28.0.0** (reference) <!-- Keep in sync with: scripts/generate-bindings.sh and .github/workflows/contract-ci.yml --> | See install note below |
+| **stellar-cli** | **28.0.0** (pinned in `.stellar-cli-version`) | See install note below |
 | **Node.js** | 20 LTS | Required only for TypeScript bindings generation — `./scripts/generate-bindings.sh` |
 | **npm** | 10+ (ships with Node 20) | Required only for building/testing bindings packages |
 
@@ -19,18 +19,21 @@ Ensure the following tools are installed at the specified minimum versions befor
 
 ### Installing stellar-cli
 
-`scripts/generate-bindings.sh` records a *reference* `stellar-cli` version (the one
-the generated bindings were last validated against) and prints a warning — not a
-hard error — when the installed version differs, since the upstream `install.sh`
-always installs the latest release regardless of the tag it is fetched from. Set
-`STRICT_STELLAR_CLI_VERSION=1` to make a mismatch fatal.
+The pinned `stellar-cli` version lives in `.stellar-cli-version` — the single
+source of truth read by CI, `scripts/install-stellar-cli.sh`, and
+`scripts/generate-bindings.sh`. The install script downloads the official
+release tarball and verifies its SHA-256 before installing (Linux x86_64 /
+aarch64). `generate-bindings.sh` warns — not a hard error — when the installed
+version differs; set `STRICT_STELLAR_CLI_VERSION=1` to make a mismatch fatal.
 
 ```bash
-# Keep in sync with: scripts/generate-bindings.sh and .github/workflows/contract-ci.yml
-curl -sSL https://raw.githubusercontent.com/stellar/stellar-cli/main/install.sh | bash
+./scripts/install-stellar-cli.sh            # installs to ~/.stellar/bin
+export PATH="$HOME/.stellar/bin:$PATH"
+stellar --version                           # should match .stellar-cli-version
 ```
 
-Reference version: `28.0.0` (`stellar --version`).
+When bumping the version, update `.stellar-cli-version` and the per-platform
+checksums in `scripts/install-stellar-cli.sh` together.
 
 The `wasm32v1-none` target (not the older `wasm32-unknown-unknown`) is required for building Soroban contracts with `soroban-sdk 25.x`. Using the wrong target produces an ABI-incompatible WASM binary.
 
