@@ -835,3 +835,14 @@ Quick checklist:
 - Formatting clean: `cargo fmt --all -- --check`
 - New functions have tests and are documented in [docs/CONTRACT_REFERENCE.md](docs/CONTRACT_REFERENCE.md)
 - Validator authorization logic changes require explicit review from a second team member
+
+## Handsoff notes
+
+<!-- handsoff-issue-1663 -->
+- #1663: shared-types: AdminError docs describe shared propose_admin/accept_admin helpers that don't exist
+
+<!-- handsoff-issue-1664 -->
+- #1664: shared-types: validate_cid docs claim dag-json ('bagu…') CIDs are accepted, but the code requires a 'baf' prefix
+
+<!-- handsoff-issue-1665 -->
+- #1665: shared-types: add exact length-boundary tests for validate_cid
