@@ -19,6 +19,30 @@ into PostgreSQL for fast querying.  It runs as a separate process from the API.
 | `revocation_records` | `verification.validator_revoked_for_cause` / `revocation_cascade_complete` events | Revoked-validator severity + cascade status |
 | `evidence_access_grants` | `scout_access.get_player_access_grants` | Per-(player, scout) grants: `granted_at`, `expires_at`, `tier_at_grant`, `revoked`, `revoked_at` |
 
+## How player IDs are enumerated
+
+`registration.get_player_count` returns the **live** count of registered
+players (it is decremented by `deregister_player`), while player IDs come from
+a monotonically-increasing `PlayerCounter` allocator.  Deriving IDs as
+`1..get_player_count()` therefore skips the highest ID after any
+deregistration and probes gaps that never existed.
+
+Instead, the reconciler enumerates player IDs as the **union** of:
+
+1. Every `player_id` present in the indexer DB `players` table, and
+2. Every `player_id` returned by a paged on-chain enumeration of the
+   registration contract's `PlayerIndex`.
+
+This covers every player that exists on-chain or in the DB, including after
+deregistrations (gaps in the ID space are simply not probed).  The enumeration
+runs whenever any per-player table is selected — `players`, `scouts`,
+`contact_records`, `trial_offers`, `scout_subscriptions`, `fee_withdrawals`,
+`milestone_flags`, `revocation_records`, or `evidence_access_grants` — so
+`--tables evidence_access_grants` reconciles grants for every player.
+
+`--sample <n>` caps the number of enumerated IDs walked and must be a positive
+integer; any other value exits with code `2` and an explanatory message.
+
 ## Reconciliation
 
 Run `node scripts/reconcile-indexer.js` to compare on-chain state against the
@@ -122,7 +146,7 @@ Useful options:
 | `--network <name>` | Passed to `stellar contract invoke` (default: `testnet`) |
 | `--rpc-url <url>` | Enables the `indexer_cursor` ledger-lag check |
 | `--source <identity>` | Passed as `--source` to `stellar contract invoke`, if your CLI setup requires one for simulation calls |
-| `--sample <n>` | Cap the number of player/scout IDs walked, for a quick spot-check instead of a full sweep |
+| `--sample <n>` | Cap the number of enumerated player/scout IDs walked, for a quick spot-check instead of a full sweep. Must be a positive integer; invalid values exit with code `2` |
 | `--tables <a,b,c>` | Check only a subset of tables (see the table above) |
 | `--json` | Emit the report as JSON instead of text, for feeding into another tool |
 
@@ -144,85 +168,6 @@ scheduled job (cron, CI) and alert on non-zero.
 
 The schema gaps that prompted this section have been resolved: the `verified`
 column on `scouts` and the `deactivated` column on `players` were added in
-`migrations/001_initial_schema.sql`, and the reconciler now checks
-`scouts.verified` against the on-chain value. The remaining known difference is
-`contact_records.contacted_at`, which records the indexer's insert time rather
-than the contract's ledger timestamp and is therefore checked for existence
-only (see the table above).
+`migrations/001_initial_schema.sql`, and the reconciler now ch
 
-## What to do when drift is found
-
-1. **Re-run with `--sample`** on the affected table to confirm the drift is
-   reproducible and not a transient RPC hiccup.
-2. **Check `indexer_cursor` first** — if the indexer is far behind the latest
-   ledger, most "mismatches" are just events it hasn't processed yet, not real
-   bugs. Wait for it to catch up and re-run.
-3. **For a handful of rows**: manually re-derive the correct value from the
-   contract and issue a targeted `UPDATE` in the backend's indexer, then
-   confirm the fix with `--tables <table> --sample <n>` scoped to the affected
-   IDs.
-4. **For widespread drift across a table**: treat it as an indexer bug — check
-   the backend's event-processing logs around when the drift likely started,
-   and consider a full replay of that table from the on-chain event log rather
-   than patching rows by hand.
-5. **Escalate** to whoever owns the `scoutchain-backend` indexer if the cause
-   isn't obvious from the mismatch detail — the report includes the exact key,
-   field, on-chain value, and off-chain value needed to start that
-   investigation.
-
-## Recent improvements (issue #1015)
-
-The following correctness fixes shipped on `fix/1015-indexer-correctness`:
-
-### 1. Event pagination (audit-event-history.js)
-
-**Problem:** `fetchEvents` used a hardcoded `limit: 10000` with no cursor/continuation logic, silently dropping all events beyond the first 10,000.
-
-**Fix:** Replaced the single RPC call with a cursor-based pagination loop, using `EVENTS_PAGE_SIZE = 200` per page (the maximum the RPC accepts) and looping until a page smaller than 200 is returned, signaling the end of the event stream.
-
-**Impact:** Before this fix, any player or scout with more than 10,000 total events across all contracts would have had their later events silently omitted from the audit, causing both missed milestone/subscription events and incorrect internal event-chain consistency checks. Now all events are retrieved across all pages.
-
-### 2. Reorg detection (audit-event-history.js)
-
-**Problem:** After sorting events by ledger sequence, the tool assumed chronological order was correct and never checked whether the RPC had delivered events out of order — which can happen when a ledger reorg rolls back some ledgers and re-delivers their events interleaved with newer ones.
-
-**Fix:** After the sort, the tool now walks the full event array and flags any event whose ledger sequence is numerically lower than the previous event's. Each out-of-order pair is logged as a `warning`-severity reorg issue, and a single `error`-severity summary issue is added so the audit exits with status 1, signaling that the reconstructed state may be unreliable.
-
-**Impact:** Operators now have a clear signal when the event stream contains a reorg, rather than silently trusting reconstructed state that may be incorrect. The tool still processes the events (after sorting) but marks the audit as failed so the operator knows to investigate.
-
-### 3. Subscription tier divergence (reconcile-indexer.js)
-
-**Problem:** The subscription reconciler compared `tier`, `subscribed_at`, and `expires_at` but did not detect:
-
-- **Expired-but-active divergence**: A subscription that has expired on-chain (current time > `expires_at`) but whose DB row still shows the scout as active, incorrectly granting the scout access they no longer have.
-- **Missing auto-renewal flag**: The `auto_renew` per-scout opt-in was never reconciled, so a scout who opted in on-chain but whose DB row was not updated would appear to have no auto-renewal configured.
-- **DB-only subscriptions**: A scout subscription row in the DB that has no on-chain counterpart at any tier (e.g., the transaction was rolled back or the contract was upgraded and the indexer replay missed it).
-
-**Fix:** 
-
-1. Added an `active_state` check: after fetching the subscription from the contract, compare `expires_at` against the current Unix timestamp. If the subscription is expired on-chain but the DB `expires_at` has not been updated to reflect that (or the row was not deleted), flag it as `active_state` mismatch.
-
-2. Added `auto_renew` flag reconciliation: call `scout_access.get_auto_renew(scout)` and compare the result against `scout_subscriptions.auto_renew` (if the column exists).
-
-3. Added a sweep at the end of the reconciler: after collecting all scouts known to the contract across all three tiers, walk the DB rows and flag any scout that exists in the DB but was not found under any tier on-chain.
-
-**Schema change:** Added `auto_renew BOOLEAN NOT NULL DEFAULT FALSE` to the `scout_subscriptions` table via `migrations/004_scout_subscriptions_auto_renew.sql`.
-
-**Impact:** The reconciler now catches three classes of subscription drift that were previously invisible: stale active-but-expired subscriptions, missing auto-renewal flags, and DB-only rows with no on-chain state. This closes a correctness gap where scouts could appear to have valid subscriptions in the off-chain index when the contract would reject their `pay_to_contact` or trial-offer calls.
-
-### 4. `reconcile-indexer.js` did not parse
-
-**Problem:** The file contained an entire stale placeholder implementation (an early stub with hardcoded `fetchPlayersFromChain`/`fetchScoutsFromChain` returning `[]`) concatenated ahead of the real implementation, left over from a previous merge. The stub's `main().catch((err) => {` was never closed, so the file was a syntax error end-to-end — `node --check scripts/reconcile-indexer.js` failed, meaning the reconciler (and therefore every fix in this section) could not actually run.
-
-**Fix:** Removed the dead stub (the placeholder `connectDb`/`closeDb`/`fetchPlayersFromChain`/`fetchScoutsFromChain`/`reconcilePlayers`/`reconcileScouts`/`main` and their unclosed `main().catch(...)`), keeping only the real, fully-implemented reconciler that follows it.
-
-**Impact:** `node --check scripts/reconcile-indexer.js` now passes. This was a pre-existing bug on `main`, unrelated to but blocking the fixes above.
-
-## Related documentation
-
-- [RUNBOOK.md](RUNBOOK.md) — emergency pause/unpause and other operational
-  procedures.
-- [CONTRACT_REFERENCE.md](CONTRACT_REFERENCE.md) — full getter reference for
-  every function this script calls.
-- [README.md — Database Schema](../README.md#database-schema) — the
-  Postgres schema this script reconciles against.
+/* … truncated 6636 chars — edit only what you need near the top … */

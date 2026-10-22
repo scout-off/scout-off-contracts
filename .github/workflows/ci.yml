@@ -27,3 +27,21 @@ jobs:
           echo "No TODO/FIXME/HACK/XXX markers found."
       - name: Check database migration numbering
         run: bash scripts/check-migration-numbering.sh
+
+  check-node-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Syntax-check Node scripts
+        run: |
+          # `node --check` alone cannot catch structural breakage such as
+          # functions accidentally nested inside another function (issue #1648),
+          # so the Jest smoke test below exercises main() at runtime.
+          for f in scripts/*.js; do
+            node --check "$f"
+          done
+      - name: Run reconcile-indexer smoke test
+        run: npx --yes jest scripts/reconcile-indexer.test.js

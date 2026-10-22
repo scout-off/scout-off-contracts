@@ -56,6 +56,25 @@ pub struct FilterResult {
     pub has_more: bool,
 }
 
+/// Paginated response from filter_player_summaries.
+/// Mirrors `FilterResult` but carries lightweight `PlayerSummary` entries
+/// (no IPFS hashes or wallet) for discovery UIs.
+/// `next_cursor` is `0` when there are no more results.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct SummaryFilterResult {
+    /// Page of player summaries matching the supplied filter criteria.
+    pub summaries: Vec<PlayerSummary>,
+    /// Pass this value as `offset` in the next call to continue pagination.
+    /// A value of `0` means there are no further results.
+    pub next_cursor: u64,
+    /// Whether more results exist after this page.
+    /// When `false`, the client has reached the end of the result set
+    /// and should stop paging even if `next_cursor` is non-zero
+    /// (which can happen if the underlying data changed between pages).
+    pub has_more: bool,
+}
+
 /// Direct status for a registered player.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -184,21 +203,6 @@ pub enum DataKey {
 
     // ── Scout deactivation ──
     /// Deactivation flag for a scout. When present and `true`, the scout is
-    /// hidden from scout discovery results. Set by `deactivate_scout`,
-    /// cleared by `reactivate_scout`.
-    ScoutDeactivated(u64),
-}
+    /// hidden from scout discovery resu
 
-/// Snapshot of the single cross-contract peer address pointer held by the
-/// registration contract (progress), with its address and re-wiring epoch.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct RegistrationWiringState {
-    pub progress_contract: WiringLink,
-}
-
-impl RegistrationWiringState {
-    pub fn is_fully_wired(&self) -> bool {
-        self.progress_contract.is_configured()
-    }
-}
+/* … truncated 511 chars — edit only what you need near the top … */
