@@ -108,6 +108,14 @@ for how to verify the event after running `scripts/upgrade.sh`.
 | Topics | `("milestone_approved", validator: Address)` |
 | Data   | `(player_id: u64, milestone_index: u32, description: String, evidence_hash: String)` |
 
+### `validator_specialization_updated`
+| Field | Value |
+|-------|-------|
+| Topics | `("validator_specialization_updated", admin: Address)` |
+| Data | `(wallet: Address, old: Vec<String>, new: Vec<String>)` |
+
+**Indexer guidance:** Update the specialization tags associated with `wallet` to the full `new` list, and retain `old` for audit history. This event is emitted only when `set_validator_specializations` succeeds; registration still emits `validator_registered`. Historic events do not provide retroactive tag history.
+
 ### `validator_registered`
 | Field  | Value |
 |--------|-------|

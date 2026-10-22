@@ -247,3 +247,7 @@ echo "✓ Audit passed"
 - [CONTRACT_REFERENCE.md](CONTRACT_REFERENCE.md) — Full reference for contract getters
 - [RUNBOOK.md](RUNBOOK.md) — Emergency procedures and operational tasks
 
+
+## Validator specialization indexer note (#1686)
+
+`verification` emits `validator_specialization_updated` with topics `(event_name, admin)` and data `(validator_wallet, old_specializations, new_specializations)`. Indexers should replace the validator's current specialization list with `new_specializations` and may retain both lists for auditing. The event is not a player milestone or a historical snapshot for validators registered before this event was added.

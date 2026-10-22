@@ -8,6 +8,7 @@ pub const VALIDATOR_REVOKED: &str = "validator_revoked";
 pub const VALIDATOR_REVOKED_FOR_CAUSE: &str = "validator_revoked_for_cause";
 pub const VALIDATOR_RESTORED: &str = "validator_restored";
 pub const VALIDATOR_TRANSFERRED: &str = "validator_transferred";
+pub const VALIDATOR_SPECIALIZATIONS_UPDATED: &str = "validator_specialization_updated";
 pub const CONTRACT_PAUSED: &str = "contract_paused";
 pub const CONTRACT_UNPAUSED: &str = "contract_unpaused";
 pub const APPROVE_MILESTONE_PAUSED: &str = "approve_milestone_paused";
@@ -132,6 +133,19 @@ pub fn validator_transferred(
     );
 }
 
+/// topics: (event_name, admin)  data: (validator_wallet, old_tags, new_tags)
+pub fn validator_specialization_updated(
+    env: &Env,
+    admin: &Address,
+    wallet: &Address,
+    old: &soroban_sdk::Vec<String>,
+    new: &soroban_sdk::Vec<String>,
+) {
+    env.events().publish(
+        (Symbol::new(env, VALIDATOR_SPECIALIZATIONS_UPDATED), admin.clone()),
+        (wallet.clone(), old.clone(), new.clone()),
+    );
+}
 /// topics: (event_name, admin)  data: ()
 pub fn contract_paused(env: &Env, admin: &Address) {
     env.events()

@@ -1918,6 +1918,67 @@ impl ProgressContract {
 // =============================================================================
 #[cfg(test)]
 mod tests {
+
+    // #1692: the absence of PlayerLevel is distinct from the Unverified view.
+    #[test]
+    fn test_restore_player_level_record_missing_returns_evicted() {
+        let (env, client, _) = setup_for_storage_tests();
+        assert_eq!(client.get_level(&999u64), ProgressLevel::Unverified);
+        assert_eq!(
+            client.try_restore_player_level_record(&999u64),
+            Err(Ok(ProgressError::PlayerLevelRecordEvicted))
+        );
+        // Reading an Unverified default must not create the persistent key.
+        assert_eq!(client.get_level(&999u64), ProgressLevel::Unverified);
+        let absent = env.as_contract(&client.address, || {
+            env.storage().persistent().has(&DataKey::PlayerLevel(999u64))
+        });
+        assert!(!absent);
+    }
+
+    #[test]
+    fn test_restore_player_level_record_success_emits_event_and_extends_ttl() {
+        use soroban_sdk::testutils::{storage::Persistent as _, Ledger};
+        let (env, client, _) = setup_for_storage_tests();
+        env.ledger().with_mut(|l| {
+            l.sequence_number = 100;
+            l.max_entry_ttl = PERSISTENT_TTL_MAX + 1;
+        });
+        let player = 42u64;
+        client.reset_player_level(&player, &ProgressLevel::VerifiedIdentity);
+        env.ledger().with_mut(|l| l.sequence_number = 4_100);
+        let key = DataKey::PlayerLevel(player);
+        let before = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&key));
+        let admin: Address = env.as_contract(&client.address, || {
+            env.storage().persistent().get(&DataKey::Admin).unwrap()
+        });
+        client.restore_player_level_record(&player);
+        assert_eq!(
+            env.events().all(),
+            soroban_sdk::vec![
+                &env,
+                (
+                    client.address.clone(),
+                    (Symbol::new(&env, "player_level_record_restored"), admin).into_val(&env),
+                    player.into_val(&env),
+                )
+            ]
+        );
+        let after = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&key));
+        assert!(after > before);
+        env.ledger().with_mut(|l| l.sequence_number = 4_250);
+        assert_eq!(client.get_level(&player), ProgressLevel::VerifiedIdentity);
+    }
+
+    #[test]
+    fn test_restore_player_level_record_rejects_non_admin() {
+        let (env, client, _) = setup_for_storage_tests();
+        let player = 10u64;
+        client.reset_player_level(&player, &ProgressLevel::VerifiedIdentity);
+        env.mock_auths(&[]);
+        assert!(client.try_restore_player_level_record(&player).is_err());
+    }
+
     use super::*;
     use soroban_sdk::{
         testutils::{Address as _, Events as _, MockAuth, MockAuthInvoke},

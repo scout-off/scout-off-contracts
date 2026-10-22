@@ -1989,6 +1989,63 @@ impl RegistrationContract {
 // =============================================================================
 #[cfg(test)]
 mod tests {
+
+    // #1691: admin scout-profile TTL restoration; getters auto-refresh TTL, so
+    // inspect TTL directly before exercising the public record getter.
+    #[test]
+    fn test_restore_scout_record_success_emits_event_and_preserves_profile() {
+        use soroban_sdk::testutils::{storage::Persistent as _, Ledger};
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        env.ledger().with_mut(|l| {
+            l.sequence_number = 100;
+            l.max_entry_ttl = PERSISTENT_TTL_MAX + 1;
+        });
+        let wallet = Address::generate(&env);
+        let scout_id = client.register_scout(&wallet, &String::from_str(&env, "FR"));
+        env.ledger().with_mut(|l| l.sequence_number = 4_100);
+        let key = DataKey::Scout(scout_id);
+        let before = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&key));
+        client.restore_scout_record(&scout_id);
+        assert_eq!(
+            env.events().all(),
+            soroban_sdk::vec![
+                &env,
+                (
+                    client.address.clone(),
+                    (Symbol::new(&env, "scout_record_restored"), admin).into_val(&env),
+                    scout_id.into_val(&env),
+                )
+            ]
+        );
+        let after = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&key));
+        assert!(after > before);
+        env.ledger().with_mut(|l| l.sequence_number = 4_250);
+        let restored = client.get_scout(&scout_id);
+        assert_eq!(restored.wallet, wallet);
+        assert_eq!(restored.region, String::from_str(&env, "FR"));
+    }
+
+    #[test]
+    fn test_restore_scout_record_missing_returns_evicted() {
+        let (env, client) = setup();
+        client.initialize(&Address::generate(&env));
+        assert_eq!(
+            client.try_restore_scout_record(&999u64),
+            Err(Ok(ScoutChainError::ScoutRecordEvicted))
+        );
+    }
+
+    #[test]
+    fn test_restore_scout_record_rejects_non_admin() {
+        let (env, client) = setup();
+        client.initialize(&Address::generate(&env));
+        let id = client.register_scout(&Address::generate(&env), &String::from_str(&env, "FR"));
+        env.mock_auths(&[]);
+        assert!(client.try_restore_scout_record(&id).is_err());
+    }
+
     use super::*;
     use scoutchain_shared_types::testutils::count_events;
     use soroban_sdk::{

@@ -75,6 +75,8 @@ const ADMIN_BUMP_LEDGERS: u32 = 518_400;
 
 /// Maximum length for milestone description in bytes.
 const MAX_DESCRIPTION_LEN: u32 = 256;
+/// Minimum description length in bytes for every milestone approval path.
+const MIN_DESCRIPTION_LEN: u32 = 3;
 
 /// Maximum number of specialization tags per validator.
 const MAX_SPECIALIZATIONS: u32 = 10;
@@ -1343,20 +1345,11 @@ impl VerificationContract {
         wallet: Address,
         specializations: Vec<String>,
     ) -> Result<(), VerificationError> {
-        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
 
-        // Validate specializations
-        if specializations.len() > MAX_SPECIALIZATIONS {
-            return Err(VerificationError::InvalidInput);
-        }
-        for i in 0..specializations.len() {
-            let tag = specializations.get(i).unwrap();
-            if tag.is_empty() || tag.len() > MAX_SPECIALIZATION_TAG_LEN {
-                return Err(VerificationError::InvalidInput);
-            }
-        }
+        Self::validate_specializations(&specializations)?;
 
         let mut validator: Validator = env
             .storage()
@@ -1364,7 +1357,8 @@ impl VerificationContract {
             .get(&DataKey::Validator(wallet.clone()))
             .ok_or(VerificationError::ValidatorNotFound)?;
 
-        validator.specializations = specializations;
+        let old = validator.specializations.clone();
+        validator.specializations = specializations.clone();
         env.storage()
             .persistent()
             .set(&DataKey::Validator(wallet.clone()), &validator);
@@ -1374,6 +1368,7 @@ impl VerificationContract {
             PERSISTENT_TTL_MAX,
         );
 
+        events::validator_specialization_updated(&env, &admin, &wallet, &old, &specializations);
         Ok(())
     }
 
@@ -1568,7 +1563,7 @@ impl VerificationContract {
             return Err(VerificationError::ThresholdModeRequiresAttestation);
         }
 
-        if description.len() > MAX_DESCRIPTION_LEN {
+        if description.len() < MIN_DESCRIPTION_LEN || description.len() > MAX_DESCRIPTION_LEN {
             return Err(VerificationError::InvalidInput);
         }
 
@@ -1649,7 +1644,7 @@ impl VerificationContract {
         Self::require_approve_milestone_not_paused(&env)?;
         validator_wallet.require_auth();
 
-        if description.len() > MAX_DESCRIPTION_LEN {
+        if description.len() < MIN_DESCRIPTION_LEN || description.len() > MAX_DESCRIPTION_LEN {
             return Err(VerificationError::InvalidInput);
         }
         validate_cid(&evidence_hash).map_err(|_| VerificationError::InvalidInput)?;
@@ -2054,7 +2049,7 @@ impl VerificationContract {
             return Err(VerificationError::InvalidAttestation);
         }
 
-        if attestation.description.len() > MAX_DESCRIPTION_LEN {
+        if attestation.description.len() < MIN_DESCRIPTION_LEN || attestation.description.len() > MAX_DESCRIPTION_LEN {
             return Err(VerificationError::InvalidInput);
         }
         validate_cid(&attestation.evidence_hash).map_err(|_| VerificationError::InvalidInput)?;
@@ -4304,6 +4299,24 @@ impl VerificationContract {
     }
 
     /// Shared input validation for `register_validator` / `batch_register_validators`.
+    /// Validate both tag bounds and pairwise uniqueness (bounded at 10 tags).
+    fn validate_specializations(tags: &Vec<String>) -> Result<(), VerificationError> {
+        if tags.len() > MAX_SPECIALIZATIONS {
+            return Err(VerificationError::InvalidInput);
+        }
+        for i in 0..tags.len() {
+            let tag = tags.get(i).unwrap();
+            if tag.is_empty() || tag.len() > MAX_SPECIALIZATION_TAG_LEN {
+                return Err(VerificationError::InvalidInput);
+            }
+            for j in 0..i {
+                if tags.get(j).unwrap() == tag {
+                    return Err(VerificationError::InvalidInput);
+                }
+            }
+        }
+        Ok(())
+    }
     fn validate_validator_input(
         env: &Env,
         wallet: &Address,
@@ -4319,15 +4332,7 @@ impl VerificationContract {
         if affiliation.len() > MAX_CREDENTIALS_LEN {
             return Err(VerificationError::InvalidInput);
         }
-        if specializations.len() > MAX_SPECIALIZATIONS {
-            return Err(VerificationError::InvalidInput);
-        }
-        for i in 0..specializations.len() {
-            let tag = specializations.get(i).unwrap();
-            if tag.is_empty() || tag.len() > MAX_SPECIALIZATION_TAG_LEN {
-                return Err(VerificationError::InvalidInput);
-            }
-        }
+        Self::validate_specializations(specializations)?;
         if env
             .storage()
             .persistent()
@@ -4990,6 +4995,177 @@ impl VerificationContract {
 // =============================================================================
 #[cfg(test)]
 mod tests {
+
+    // #1686: validator specialization changes must be indexable and deduplicated.
+    #[test]
+    fn test_specialization_update_emits_old_and_new_lists() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        let validator = Address::generate(&env);
+        let old = soroban_sdk::vec![&env, String::from_str(&env, "physical-stats")];
+        let new = soroban_sdk::vec![&env, String::from_str(&env, "identity-kyc")];
+        client.register_validator(
+            &validator,
+            &String::from_str(&env, "UEFA-B-License"),
+            &String::from_str(&env, "Default Academy"),
+            &old,
+        );
+        client.set_validator_specializations(&validator, &new);
+        assert_eq!(
+            env.events().all(),
+            soroban_sdk::vec![
+                &env,
+                (
+                    client.address.clone(),
+                    (Symbol::new(&env, events::VALIDATOR_SPECIALIZATIONS_UPDATED), admin,).into_val(&env),
+                    (validator.clone(), old, new.clone()).into_val(&env),
+                )
+            ]
+        );
+        assert_eq!(client.get_validator(&validator).specializations, new);
+    }
+
+    #[test]
+    fn test_set_specializations_rejects_duplicate_tags_and_keeps_original() {
+        let (env, client) = setup();
+        client.initialize(&Address::generate(&env));
+        let validator = Address::generate(&env);
+        client.register_validator(
+            &validator,
+            &String::from_str(&env, "UEFA-B-License"),
+            &String::from_str(&env, "Default Academy"),
+            &Vec::new(&env),
+        );
+        let tag = String::from_str(&env, "physical-stats");
+        let duplicate = soroban_sdk::vec![&env, tag.clone(), tag];
+        assert_eq!(
+            client.try_set_validator_specializations(&validator, &duplicate),
+            Err(Ok(VerificationError::InvalidInput))
+        );
+        assert_eq!(client.get_validator(&validator).specializations.len(), 0);
+    }
+
+    #[test]
+    fn test_register_validator_rejects_duplicate_specializations() {
+        let (env, client) = setup();
+        client.initialize(&Address::generate(&env));
+        let wallet = Address::generate(&env);
+        let tag = String::from_str(&env, "physical-stats");
+        let duplicate = soroban_sdk::vec![&env, tag.clone(), tag];
+        assert_eq!(
+            client.try_register_validator(
+                &wallet,
+                &String::from_str(&env, "UEFA-B-License"),
+                &String::from_str(&env, "Default Academy"),
+                &duplicate,
+            ),
+            Err(Ok(VerificationError::InvalidInput))
+        );
+        assert!(client.try_get_validator(&wallet).is_err());
+    }
+
+    #[test]
+    fn test_batch_register_validators_rejects_duplicate_specializations() {
+        let (env, client) = setup();
+        client.initialize(&Address::generate(&env));
+        let wallet = Address::generate(&env);
+        let tag = String::from_str(&env, "physical-stats");
+        let entries = soroban_sdk::vec![
+            &env,
+            (
+                wallet.clone(),
+                String::from_str(&env, "UEFA-B-License"),
+                String::from_str(&env, "Default Academy"),
+                soroban_sdk::vec![&env, tag.clone(), tag],
+            )
+        ];
+        assert_eq!(
+            client.try_batch_register_validators(&entries),
+            Err(Ok(VerificationError::InvalidInput))
+        );
+        assert!(client.try_get_validator(&wallet).is_err());
+    }
+
+    // #1687: reject empty and 1/2-byte descriptions in all three entrypoints.
+    #[test]
+    fn test_approve_milestone_rejects_short_descriptions() {
+        let (env, client) = setup();
+        client.initialize(&Address::generate(&env));
+        let validator = Address::generate(&env);
+        client.register_validator(
+            &validator,
+            &String::from_str(&env, "UEFA-B-License"),
+            &String::from_str(&env, "Default Academy"),
+            &Vec::new(&env),
+        );
+        for short in ["", "x", "xy"] {
+            assert_eq!(
+                client.try_approve_milestone(
+                    &validator,
+                    &1u64,
+                    &String::from_str(&env, short),
+                    &String::from_str(&env, VALID_CID_V0),
+                    &None,
+                ),
+                Err(Ok(VerificationError::InvalidInput))
+            );
+        }
+        assert_eq!(client.get_milestone_count(&1u64), 0);
+    }
+
+    #[test]
+    fn test_attest_milestone_rejects_short_descriptions() {
+        let (env, client) = setup();
+        client.initialize(&Address::generate(&env));
+        let validator = Address::generate(&env);
+        client.register_validator(
+            &validator,
+            &String::from_str(&env, "UEFA-B-License"),
+            &String::from_str(&env, "Default Academy"),
+            &Vec::new(&env),
+        );
+        for short in ["", "x", "xy"] {
+            assert_eq!(
+                client.try_attest_milestone(
+                    &validator,
+                    &1u64,
+                    &String::from_str(&env, short),
+                    &String::from_str(&env, VALID_CID_V0),
+                ),
+                Err(Ok(VerificationError::InvalidInput))
+            );
+        }
+    }
+
+    #[test]
+    fn test_submit_attested_milestone_rejects_short_descriptions() {
+        let (env, client) = setup();
+        client.initialize(&Address::generate(&env));
+        let validator = Address::generate(&env);
+        let relayer = Address::generate(&env);
+        for short in ["", "x", "xy"] {
+            let attestation = MilestoneAttestation {
+                validator_wallet: validator.clone(),
+                player_id: 1,
+                description: String::from_str(&env, short),
+                evidence_hash: String::from_str(&env, VALID_CID_V0),
+                nonce: 1,
+                expires_at: env.ledger().timestamp() + 100,
+                contract_id: client.address.clone(),
+                network_id: env.ledger().network_id(),
+            };
+            assert_eq!(
+                client.try_submit_attested_milestone(
+                    &relayer,
+                    &attestation,
+                    &BytesN::<64>::from_array(&env, &[0u8; 64]),
+                ),
+                Err(Ok(VerificationError::InvalidInput))
+            );
+        }
+    }
+
     use super::*;
     use scoutchain_shared_types::ProgressLevel;
     use soroban_sdk::{
