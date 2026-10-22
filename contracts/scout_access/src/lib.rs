@@ -6732,4 +6732,81 @@ mod tests {
             );
         });
     }
+
+    // -------------------------------------------------------------------------
+    // #1689: fee-configuration proposal cancellation regression coverage
+    // -------------------------------------------------------------------------
+    fn increased_fee_proposal() -> FeeConfig {
+        let mut proposed = default_fees();
+        proposed.contact_fee_stroops += 100_000;
+        proposed
+    }
+
+    #[test]
+    fn cancel_fee_config_existing_proposal_clears_pending_and_blocks_activation() {
+        let (env, _admin, _xlm, _contract_id, client) = setup();
+        client.propose_fee_config(&increased_fee_proposal());
+        env.as_contract(&client.address, || {
+            assert!(env.storage().persistent().has(&DataKey::PendingFeeConfig));
+        });
+        client.cancel_fee_config_proposal();
+        env.as_contract(&client.address, || {
+            assert!(!env.storage().persistent().has(&DataKey::PendingFeeConfig));
+        });
+        assert_eq!(client.try_activate_fee_config(), Err(Ok(ScoutAccessError::NoPendingFeeConfig)));
+    }
+
+    #[test]
+    fn cancel_fee_config_without_proposal_returns_no_pending() {
+        let (_env, _admin, _xlm, _contract_id, client) = setup();
+        assert_eq!(client.try_cancel_fee_config_proposal(), Err(Ok(ScoutAccessError::NoPendingFeeConfig)));
+    }
+
+    #[test]
+    #[should_panic]
+    fn cancel_fee_config_non_admin_cannot_authorize() {
+        let (env, _admin, _xlm, _contract_id, client) = setup();
+        client.propose_fee_config(&increased_fee_proposal());
+        // No matching admin authorization is available for this invocation.
+        env.mock_auths(&[]);
+        client.cancel_fee_config_proposal();
+    }
+
+    #[test]
+    fn cancel_fee_config_emits_admin_attributed_event() {
+        let (env, admin, _xlm, contract_id, client) = setup();
+        client.propose_fee_config(&increased_fee_proposal());
+        client.cancel_fee_config_proposal();
+        assert_eq!(
+            env.events().all().filter_by_contract(&contract_id),
+            soroban_sdk::vec![&env, (
+                contract_id,
+                (Symbol::new(&env, events::FEE_CONFIG_PROPOSAL_CANCELLED), admin).into_val(&env),
+                ().into_val(&env),
+            )]
+        );
+    }
+
+    #[test]
+    fn cancel_fee_config_allows_a_new_proposal() {
+        let (env, _admin, _xlm, _contract_id, client) = setup();
+        client.propose_fee_config(&increased_fee_proposal());
+        client.cancel_fee_config_proposal();
+        client.propose_fee_config(&increased_fee_proposal());
+        env.as_contract(&client.address, || {
+            assert!(env.storage().persistent().has(&DataKey::PendingFeeConfig));
+        });
+    }
+
+    #[test]
+    fn cancel_fee_config_does_not_change_active_fees() {
+        let (_env, _admin, _xlm, _contract_id, client) = setup();
+        let original = client.get_fee_config();
+        client.propose_fee_config(&increased_fee_proposal());
+        client.cancel_fee_config_proposal();
+        assert_eq!(client.get_fee_config().contact_fee_stroops, original.contact_fee_stroops);
+        assert_eq!(client.get_fee_config().basic_sub_stroops, original.basic_sub_stroops);
+        assert_eq!(client.get_fee_config().pro_sub_stroops, original.pro_sub_stroops);
+        assert_eq!(client.get_fee_config().elite_sub_stroops, original.elite_sub_stroops);
+    }
 }

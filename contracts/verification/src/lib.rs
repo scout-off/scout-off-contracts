@@ -8502,4 +8502,203 @@ mod tests {
         client.set_jury_config(&50u32, &3u32, &(3 * 24 * 60 * 60u64));
         assert!(last_event_data(&env, "jury_config_updated").is_some());
     }
+
+    // -------------------------------------------------------------------------
+    // #1696: severity-aware validator revocation history regression coverage
+    // -------------------------------------------------------------------------
+    #[test]
+    fn revocation_history_never_revoked_wallet_is_empty() {
+        let (_env, client) = setup();
+        // This is a public, read-only getter and accepts unknown wallets.
+        let wallet = Address::generate(&_env);
+        assert_eq!(client.get_revocation_history(&wallet).len(), 0);
+        assert!(client.get_revocation_record(&wallet).is_none());
+    }
+
+    #[test]
+    fn revocation_history_routine_only_has_current_record_not_history() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        let wallet = Address::generate(&env);
+        client.initialize(&admin);
+        client.register_validator(&wallet, &String::from_str(&env, "UEFA B Licence"),
+            &String::from_str(&env, "Example Academy"), &Vec::new(&env));
+        client.revoke_validator(&wallet, &RevocationSeverity::Routine,
+            &Some(String::from_str(&env, "Routine review")));
+        assert_eq!(client.get_revocation_history(&wallet).len(), 0);
+        let record = client.get_revocation_record(&wallet).unwrap();
+        assert_eq!(record.severity, RevocationSeverity::Routine);
+        assert_eq!(record.reason, String::from_str(&env, "Routine review"));
+        assert_eq!(record.admin, admin);
+    }
+
+    #[test]
+    fn revocation_history_escalation_preserves_original_routine_timestamp() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        let wallet = Address::generate(&env);
+        client.initialize(&admin);
+        client.register_validator(&wallet, &String::from_str(&env, "UEFA B Licence"),
+            &String::from_str(&env, "Example Academy"), &Vec::new(&env));
+        env.ledger().with_mut(|l| l.timestamp = 1_000);
+        client.revoke_validator(&wallet, &RevocationSeverity::Routine,
+            &Some(String::from_str(&env, "Initial routine reason")));
+        let original = client.get_revocation_record(&wallet).unwrap();
+        env.ledger().with_mut(|l| l.timestamp = 2_000);
+        client.revoke_validator(&wallet, &RevocationSeverity::ForCause,
+            &Some(String::from_str(&env, "Escalated cause")));
+        let history = client.get_revocation_history(&wallet);
+        assert_eq!(history.len(), 1);
+        assert_eq!(history.get(0).unwrap(), original);
+        let current = client.get_revocation_record(&wallet).unwrap();
+        assert_eq!(current.severity, RevocationSeverity::ForCause);
+        assert_eq!(current.reason, String::from_str(&env, "Escalated cause"));
+        assert_eq!(current.revoked_at, 2_000);
+    }
+
+    #[test]
+    fn revocation_history_for_cause_downgrade_is_rejected_without_mutation() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        let wallet = Address::generate(&env);
+        client.initialize(&admin);
+        client.register_validator(&wallet, &String::from_str(&env, "UEFA B Licence"),
+            &String::from_str(&env, "Example Academy"), &Vec::new(&env));
+        client.revoke_validator(&wallet, &RevocationSeverity::ForCause,
+            &Some(String::from_str(&env, "Cause")));
+        let before = client.get_revocation_record(&wallet);
+        let history_before = client.get_revocation_history(&wallet);
+        assert_eq!(client.try_revoke_validator(&wallet, &RevocationSeverity::Routine, &None),
+            Err(Ok(VerificationError::ValidatorAlreadyRevoked)));
+        assert_eq!(client.get_revocation_history(&wallet), history_before);
+        assert_eq!(client.get_revocation_record(&wallet), before);
+    }
+
+    // -------------------------------------------------------------------------
+    // #1693: administrator-only persistent record restoration and TTL
+    // -------------------------------------------------------------------------
+    #[test]
+    fn restore_milestone_existing_record_emits_event_and_preserves_data() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        let validator = Address::generate(&env);
+        client.initialize(&admin);
+        client.register_validator(&validator, &String::from_str(&env, "UEFA B Licence"),
+            &String::from_str(&env, "Example Academy"), &Vec::new(&env));
+        client.approve_milestone(&validator, &7u64, &String::from_str(&env, "Training"),
+            &String::from_str(&env, VALID_CID_V0), &None);
+        let original = client.get_milestone(&7, &1);
+        client.restore_milestone_record(&7, &1);
+        assert_eq!(env.events().all().filter_by_contract(&client.address),
+            soroban_sdk::vec![&env, (
+                client.address.clone(),
+                (Symbol::new(&env, "milestone_record_restored"), admin).into_val(&env),
+                (7u64, 1u32).into_val(&env),
+            )]);
+        assert_eq!(client.get_milestone(&7, &1), original);
+    }
+
+    #[test]
+    fn restore_milestone_missing_returns_evicted_error() {
+        let (env, client) = setup();
+        client.initialize(&Address::generate(&env));
+        assert_eq!(client.try_restore_milestone_record(&999, &1),
+            Err(Ok(VerificationError::MilestoneRecordEvicted)));
+    }
+
+    #[test]
+    fn restore_validator_existing_record_emits_event_and_preserves_data() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        let wallet = Address::generate(&env);
+        client.initialize(&admin);
+        client.register_validator(&wallet, &String::from_str(&env, "UEFA B Licence"),
+            &String::from_str(&env, "Example Academy"), &Vec::new(&env));
+        let original = client.get_validator(&wallet);
+        client.restore_validator_record(&wallet);
+        assert_eq!(env.events().all().filter_by_contract(&client.address),
+            soroban_sdk::vec![&env, (
+                client.address.clone(),
+                (Symbol::new(&env, "validator_record_restored"), admin).into_val(&env),
+                wallet.clone().into_val(&env),
+            )]);
+        let restored = client.get_validator(&wallet);
+        assert_eq!(restored.wallet, original.wallet);
+        assert_eq!(restored.credentials, original.credentials);
+        assert_eq!(restored.active, original.active);
+    }
+
+    #[test]
+    fn restore_validator_missing_returns_evicted_error() {
+        let (env, client) = setup();
+        client.initialize(&Address::generate(&env));
+        assert_eq!(client.try_restore_validator_record(&Address::generate(&env)),
+            Err(Ok(VerificationError::ValidatorRecordEvicted)));
+    }
+
+    #[test]
+    #[should_panic]
+    fn restore_milestone_requires_admin_authorization() {
+        let (env, client) = setup();
+        client.initialize(&Address::generate(&env));
+        let validator = Address::generate(&env);
+        client.register_validator(&validator, &String::from_str(&env, "UEFA B Licence"),
+            &String::from_str(&env, "Example Academy"), &Vec::new(&env));
+        client.approve_milestone(&validator, &1, &String::from_str(&env, "Training"),
+            &String::from_str(&env, VALID_CID_V0), &None);
+        env.mock_auths(&[]);
+        client.restore_milestone_record(&1, &1);
+    }
+
+    #[test]
+    #[should_panic]
+    fn restore_validator_requires_admin_authorization() {
+        let (env, client) = setup();
+        client.initialize(&Address::generate(&env));
+        let wallet = Address::generate(&env);
+        client.register_validator(&wallet, &String::from_str(&env, "UEFA B Licence"),
+            &String::from_str(&env, "Example Academy"), &Vec::new(&env));
+        env.mock_auths(&[]);
+        client.restore_validator_record(&wallet);
+    }
+
+    #[test]
+    fn restore_milestone_renews_remaining_ledger_ttl() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        let validator = Address::generate(&env);
+        client.initialize(&admin);
+        client.register_validator(&validator, &String::from_str(&env, "UEFA B Licence"),
+            &String::from_str(&env, "Example Academy"), &Vec::new(&env));
+        client.approve_milestone(&validator, &7, &String::from_str(&env, "Training"),
+            &String::from_str(&env, VALID_CID_V0), &None);
+        // Keep the contract instance executable near the record's TTL threshold.
+        env.as_contract(&client.address, || {
+            env.storage().instance().extend_ttl(0, PERSISTENT_TTL_MAX);
+        });
+        env.ledger().with_mut(|l| l.sequence_number += PERSISTENT_TTL_MAX - 100);
+        let before = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&DataKey::Milestone(7, 1)));
+        client.restore_milestone_record(&7, &1);
+        let after = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&DataKey::Milestone(7, 1)));
+        assert!(after > before, "restoration must extend ledger TTL");
+    }
+
+    #[test]
+    fn restore_validator_renews_remaining_ledger_ttl() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        let wallet = Address::generate(&env);
+        client.initialize(&admin);
+        client.register_validator(&wallet, &String::from_str(&env, "UEFA B Licence"),
+            &String::from_str(&env, "Example Academy"), &Vec::new(&env));
+        // Keep the contract instance executable near the record's TTL threshold.
+        env.as_contract(&client.address, || {
+            env.storage().instance().extend_ttl(0, PERSISTENT_TTL_MAX);
+        });
+        env.ledger().with_mut(|l| l.sequence_number += PERSISTENT_TTL_MAX - 100);
+        let before = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&DataKey::Validator(wallet.clone())));
+        client.restore_validator_record(&wallet);
+        let after = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&DataKey::Validator(wallet)));
+        assert!(after > before, "restoration must extend ledger TTL");
+    }
 }

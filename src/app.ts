@@ -74,7 +74,7 @@ app.post("/api/admin/tokens/revoke", requireRole(["admin"]), async (req: Request
   let jti: string;
 
   try {
-    const payload: any = jwt.verify(token, process.env.JWT_SECRET!);
+    const payload: any = jwt.verify(token, process.env.JWT_SECRET!, { algorithms: ["HS256"] });
     jti = payload.jti;
   } catch {
     return res.status(400).json({ error: "Invalid token" });

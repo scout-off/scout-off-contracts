@@ -10,6 +10,7 @@ interface Sep10TokenPayload {
 
 export function issueSep10Token(payload: Sep10TokenPayload, secret: string) {
   return jwt.sign(payload, secret, {
+    algorithm: "HS256",
     expiresIn: "7d",
     jwtid: uuidv4(),
   });
