@@ -1116,7 +1116,7 @@ Deactivate a validator. Revoked validators cannot approve milestones.
 - `RevocationSeverity::Routine` — deactivates the validator only; no milestone flags are changed.
 - `RevocationSeverity::ForCause` — deactivates the validator **and** starts a bounded cascade sweep that flags every milestone the validator previously approved as `MilestonePendingReReview` (see below). If the validator has more than 50 prior approvals, `continue_revocation_cascade` must be called to finish the sweep.
 
-`reason` is optional and capped at 128 bytes. A `RevocationRecord` (severity, reason, timestamp, admin) is persisted under `DataKey::RevocationRecord(wallet)`.
+`reason` is optional and capped at `MAX_REVOCATION_REASON_LEN` (128 UTF-8 bytes). A `RevocationRecord` (severity, reason, timestamp, admin) is persisted under `DataKey::RevocationRecord(wallet)`.
 
 **Re-revocation (issue #1393):** same-severity and ForCause→Routine calls return `ValidatorAlreadyRevoked`. Routine→ForCause escalation is allowed: the prior record is pushed to `RevocationHistory`, the original `revoked_at` is preserved, and any in-progress cascade cursor is not reset to 0. If the revocation drops `ActiveValidatorCount` below the configured milestone threshold, `milestone_threshold_unreachable` is emitted.
 
@@ -1125,7 +1125,7 @@ Deactivate a validator. Revoked validators cannot approve milestones.
 | | |
 |---|---|
 | **Auth** | Admin must sign |
-| **Errors** | `ValidatorNotFound` · `ValidatorAlreadyRevoked` · `ReasonTooLong` (reason > 128 bytes) · `Unauthorized` |
+| **Errors** | `ValidatorNotFound` · `ValidatorAlreadyRevoked` · `ReasonTooLong` (reason > `MAX_REVOCATION_REASON_LEN` = 128 bytes) · `Unauthorized` |
 
 ```bash
 stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
@@ -1223,7 +1223,7 @@ For `ForCause`, each validator's cascade sweep is started inline. Use `continue_
 | | |
 |---|---|
 | **Auth** | Admin must sign |
-| **Errors** | `ValidatorNotFound` · `ValidatorAlreadyRevoked` · `ReasonTooLong` (reason > 128 bytes) · `Unauthorized` |
+| **Errors** | `ValidatorNotFound` · `ValidatorAlreadyRevoked` · `ReasonTooLong` (reason > `MAX_REVOCATION_REASON_LEN` = 128 bytes) · `Unauthorized` |
 
 ```bash
 stellar contract invoke --id $VERIFICATION_CONTRACT_ID \

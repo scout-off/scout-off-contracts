@@ -37,6 +37,8 @@ use scoutchain_shared_types::{
 };
 
 const MAX_CREDENTIALS_LEN: u32 = 256;
+/// Maximum UTF-8 byte length of an optional validator revocation reason.
+const MAX_REVOCATION_REASON_LEN: u32 = 128;
 /// Minimum credentials length for validator registration.
 /// Credentials must contain at least a short certification identifier
 /// (e.g. "UEFA B Licence" = 14 chars) to prevent empty or trivially short strings.
@@ -822,7 +824,7 @@ impl VerificationContract {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
 
         if let Some(ref r) = reason {
-            if r.len() > 128 {
+            if r.len() > MAX_REVOCATION_REASON_LEN {
                 return Err(VerificationError::ReasonTooLong);
             }
         }
@@ -1045,7 +1047,7 @@ impl VerificationContract {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
 
         if let Some(ref r) = reason {
-            if r.len() > 128 {
+            if r.len() > MAX_REVOCATION_REASON_LEN {
                 return Err(VerificationError::ReasonTooLong);
             }
         }
@@ -3385,7 +3387,7 @@ impl VerificationContract {
             .get(&DataKey::DisputeRound(player_id, milestone_index))
             .ok_or(VerificationError::MilestoneNotFound)?;
         let dispute_key = DataKey::MilestoneDispute(player_id, milestone_index, round);
-        let mut dispute: MilestoneDispute = env
+        let dispute: MilestoneDispute = env
             .storage()
             .persistent()
             .get(&dispute_key)
@@ -3400,11 +3402,31 @@ impl VerificationContract {
         }
 
         let now = env.ledger().timestamp();
+        Self::close_dispute(&env, player_id, milestone_index, round, upheld, now)?;
+        events::dispute_resolved(&env, &admin, player_id, milestone_index, upheld);
+        Ok(())
+    }
+
+    /// Shared admin/jury dispute close-out. Keep events in the individual callers.
+    /// Persists the final record with audit TTL before updating open-dispute indexes.
+    fn close_dispute(
+        env: &Env,
+        player_id: u64,
+        milestone_index: u32,
+        round: u32,
+        upheld: bool,
+        now: u64,
+    ) -> Result<(), VerificationError> {
+        let dispute_key = DataKey::MilestoneDispute(player_id, milestone_index, round);
+        let mut dispute: MilestoneDispute = env
+            .storage()
+            .persistent()
+            .get(&dispute_key)
+            .ok_or(VerificationError::MilestoneNotFound)?;
         dispute.resolved = true;
         dispute.upheld = upheld;
         dispute.resolved_at = now;
         env.storage().persistent().set(&dispute_key, &dispute);
-        // Fix #1451: keep the resolved dispute record alive for auditability.
         env.storage()
             .persistent()
             .extend_ttl(&dispute_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
@@ -3418,7 +3440,6 @@ impl VerificationContract {
             &DataKey::ActiveDisputesCount,
             &safe_sub_u32(count, 1).map_err(|_| VerificationError::Overflow)?,
         );
-
         let poc_key = DataKey::PlayerOpenDisputeCount(player_id);
         let poc: u32 = env.storage().persistent().get(&poc_key).unwrap_or(0u32);
         if poc > 0 {
@@ -3427,14 +3448,13 @@ impl VerificationContract {
                 &safe_sub_u32(poc, 1).map_err(|_| VerificationError::Overflow)?,
             );
         }
-
         let open_index_key = DataKey::OpenDisputeIndex;
         let open_index: Vec<(u64, u32, u32)> = env
             .storage()
             .persistent()
             .get(&open_index_key)
-            .unwrap_or_else(|| Vec::new(&env));
-        let mut new_index: Vec<(u64, u32, u32)> = Vec::new(&env);
+            .unwrap_or_else(|| Vec::new(env));
+        let mut new_index: Vec<(u64, u32, u32)> = Vec::new(env);
         for i in 0..open_index.len() {
             let entry = open_index.get(i).unwrap();
             if entry != (player_id, milestone_index, round) {
@@ -3449,8 +3469,6 @@ impl VerificationContract {
                 PERSISTENT_TTL_MAX,
             );
         }
-
-        events::dispute_resolved(&env, &admin, player_id, milestone_index, upheld);
         Ok(())
     }
 
@@ -3696,7 +3714,7 @@ impl VerificationContract {
             .get(&DataKey::DisputeRound(player_id, milestone_index))
             .ok_or(VerificationError::MilestoneNotFound)?;
         let dispute_key = DataKey::MilestoneDispute(player_id, milestone_index, round);
-        let mut dispute: MilestoneDispute = env
+        let dispute: MilestoneDispute = env
             .storage()
             .persistent()
             .get(&dispute_key)
@@ -3745,54 +3763,7 @@ impl VerificationContract {
             false
         };
 
-        dispute.resolved = true;
-        dispute.upheld = upheld;
-        dispute.resolved_at = now;
-        env.storage().persistent().set(&dispute_key, &dispute);
-
-        // Decrement active disputes counter.
-        let count: u32 = env
-            .storage()
-            .instance()
-            .get(&DataKey::ActiveDisputesCount)
-            .unwrap_or(0u32);
-        env.storage().instance().set(
-            &DataKey::ActiveDisputesCount,
-            &safe_sub_u32(count, 1).map_err(|_| VerificationError::Overflow)?,
-        );
-
-        let poc_key = DataKey::PlayerOpenDisputeCount(player_id);
-        let poc: u32 = env.storage().persistent().get(&poc_key).unwrap_or(0u32);
-        if poc > 0 {
-            env.storage().persistent().set(
-                &poc_key,
-                &safe_sub_u32(poc, 1).map_err(|_| VerificationError::Overflow)?,
-            );
-        }
-
-        // Remove from the global open-dispute index.
-        let open_index_key = DataKey::OpenDisputeIndex;
-        let open_index: Vec<(u64, u32, u32)> = env
-            .storage()
-            .persistent()
-            .get(&open_index_key)
-            .unwrap_or_else(|| Vec::new(&env));
-        let mut new_index: Vec<(u64, u32, u32)> = Vec::new(&env);
-        for i in 0..open_index.len() {
-            let entry = open_index.get(i).unwrap();
-            if entry != (player_id, milestone_index, round) {
-                new_index.push_back(entry);
-            }
-        }
-        env.storage().persistent().set(&open_index_key, &new_index);
-        if !new_index.is_empty() {
-            env.storage().persistent().extend_ttl(
-                &open_index_key,
-                PERSISTENT_TTL_MIN,
-                PERSISTENT_TTL_MAX,
-            );
-        }
-
+        Self::close_dispute(&env, player_id, milestone_index, round, upheld, now)?;
         events::dispute_tallied(
             &env,
             player_id,
@@ -5223,6 +5194,77 @@ mod tests {
             },
         }]);
         client.accept_admin();
+    }
+
+    // #1683/#1684: a jury close-out must preserve the resolved dispute for
+    // audit/cooldown reads after its initial short test TTL would have elapsed.
+    #[test]
+    fn test_jury_closeout_extends_record_ttl_and_updates_indexes() {
+        use soroban_sdk::testutils::storage::Persistent as _;
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        env.ledger().with_mut(|ledger| {
+            ledger.sequence_number = 10;
+            ledger.timestamp = 100;
+            ledger.min_persistent_entry_ttl = 10;
+        });
+        let player_id = 42u64;
+        let milestone_index = 3u32;
+        let round = 0u32;
+        let dispute_key = DataKey::MilestoneDispute(player_id, milestone_index, round);
+        env.as_contract(&client.address, || {
+            let dispute = MilestoneDispute {
+                player_id,
+                milestone_index,
+                round,
+                reason: String::from_str(&env, "synthetic dispute"),
+                disputed_at: 90,
+                resolved: false,
+                upheld: false,
+                resolved_at: 0,
+                impact_score: 100,
+                jury_required: true,
+                quorum: 1,
+                voting_deadline: 1000,
+                votes_for: 1,
+                votes_against: 0,
+                jury_eligibility_cutoff: 90,
+                approver_affiliation: String::from_str(&env, "synthetic academy"),
+            };
+            env.storage().persistent().set(&dispute_key, &dispute);
+            env.storage().persistent().set(
+                &DataKey::DisputeRound(player_id, milestone_index), &round,
+            );
+            env.storage().instance().set(&DataKey::ActiveDisputesCount, &1u32);
+            env.storage().persistent().set(&DataKey::PlayerOpenDisputeCount(player_id), &1u32);
+            env.storage().persistent().set(
+                &DataKey::OpenDisputeIndex,
+                &soroban_sdk::vec![&env, (player_id, milestone_index, round)],
+            );
+        });
+        client.tally_dispute(&player_id, &milestone_index);
+        assert_eq!(client.get_active_disputes_count(), 0);
+        env.as_contract(&client.address, || {
+            assert_eq!(
+                env.storage().persistent().get::<DataKey, u32>(
+                    &DataKey::PlayerOpenDisputeCount(player_id)
+                ),
+                Some(0),
+            );
+            let index: Vec<(u64, u32, u32)> = env.storage().persistent()
+                .get(&DataKey::OpenDisputeIndex).unwrap();
+            assert!(index.is_empty());
+            assert!(env.storage().persistent().get_ttl(&dispute_key) >= 500);
+        });
+        env.ledger().with_mut(|ledger| ledger.sequence_number += 50);
+        env.as_contract(&client.address, || {
+            let retained: MilestoneDispute = env.storage().persistent()
+                .get(&dispute_key).expect("jury-resolved dispute must survive short TTL");
+            assert!(retained.resolved);
+            assert!(retained.upheld);
+            assert_eq!(retained.resolved_at, 100);
+        });
     }
 
     // -------------------------------------------------------------------------
