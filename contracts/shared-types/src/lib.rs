@@ -183,6 +183,10 @@ pub trait AdminError {
     fn not_initialized() -> Self;
 }
 
+/// Maximum allowed registration cooldown: 7 days in seconds.
+/// Shared by `registration` and `verification` `set_reg_cooldown`.
+pub const MAX_REG_COOLDOWN_SECS: u64 = 7 * 24 * 60 * 60;
+
 /// Shared admin-authorization helper.
 ///
 /// Reads the stored admin `Address` from persistent storage using `admin_key`,

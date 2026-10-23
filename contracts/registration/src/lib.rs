@@ -24,6 +24,7 @@ pub use types::PlayerVitals;
 
 use scoutchain_shared_types::{
     read_wiring_link, require_admin, safe_math::safe_add_u64, write_wiring_link,
+    MAX_REG_COOLDOWN_SECS,
 };
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, String, Vec};
 
@@ -82,9 +83,6 @@ const ADMIN_BUMP_LEDGERS: u32 = 518_400;
 /// Configurable by admin via `set_reg_cooldown`.  0 disables the cooldown.
 /// Maximum value is 7 days (604_800 seconds).
 const DEFAULT_REG_COOLDOWN_SECS: u64 = 86_400;
-
-/// Maximum allowed registration cooldown: 7 days in seconds.
-const MAX_REG_COOLDOWN_SECS: u64 = 7 * 24 * 60 * 60;
 
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -898,6 +896,14 @@ impl RegistrationContract {
         if env.storage().persistent().has(&DataKey::Player(player_id)) {
             return Err(ScoutChainError::AlreadyRegistered);
         }
+        // The wallet must not already own a (necessarily different) player ID.
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::PlayerByWallet(wallet.clone()))
+        {
+            return Err(ScoutChainError::AlreadyRegistered);
+        }
 
         if vitals.age == 0 || vitals.age < MIN_PLAYER_AGE {
             return Err(ScoutChainError::InvalidInput);
@@ -981,6 +987,15 @@ impl RegistrationContract {
         Self::require_initialized(&env)?;
 
         if env.storage().persistent().has(&DataKey::Scout(scout_id)) {
+            return Err(ScoutChainError::AlreadyRegistered);
+        }
+
+        // The wallet must not already own a (necessarily different) scout ID.
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::ScoutByWallet(wallet.clone()))
+        {
             return Err(ScoutChainError::AlreadyRegistered);
         }
 
@@ -3399,6 +3414,45 @@ mod tests {
         assert_eq!(profile.wallet, wallet);
         assert_eq!(profile.level, ProgressLevel::PerformanceMilestones);
         assert_eq!(client.get_player_status(&7u64), types::PlayerStatus::Active);
+    }
+
+    #[test]
+    fn test_admin_seed_player_rejects_wallet_already_mapped() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let vitals = PlayerVitals {
+            age: 20,
+            position: String::from_str(&env, "ST"),
+            region: String::from_str(&env, "NG"),
+            nationality: String::from_str(&env, "GH"),
+        };
+        let hashes = vec![&env, String::from_str(&env, "QmTest")];
+        let level = ProgressLevel::PerformanceMilestones;
+        client.admin_seed_player(&wallet, &vitals, &hashes, &level, &7u64, &100u64, &200u64);
+
+        let res = client
+            .try_admin_seed_player(&wallet, &vitals, &hashes, &level, &8u64, &100u64, &200u64);
+        assert_eq!(res, Err(Ok(ScoutChainError::AlreadyRegistered)));
+        assert_eq!(client.get_player_id_by_wallet(&wallet), 7u64);
+        assert!(client.try_get_player(&8u64).is_err());
+    }
+
+    #[test]
+    fn test_admin_seed_scout_rejects_wallet_already_mapped() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let region = String::from_str(&env, "FR");
+        client.admin_seed_scout(&wallet, &region, &11u64, &123u64, &true);
+
+        let res = client.try_admin_seed_scout(&wallet, &region, &12u64, &123u64, &true);
+        assert_eq!(res, Err(Ok(ScoutChainError::AlreadyRegistered)));
+        assert!(client.try_get_scout(&12u64).is_err());
     }
 
     #[test]

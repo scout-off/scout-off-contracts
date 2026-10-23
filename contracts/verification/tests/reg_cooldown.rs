@@ -207,3 +207,16 @@ fn test_batch_register_records_cooldown_blocking_reregister_after_revoke() {
         Err(Ok(VerificationError::ValidatorAlreadyRegistered))
     );
 }
+
+#[test]
+fn set_reg_cooldown_rejects_above_max() {
+    use scoutchain_verification::VerificationError;
+    let (_env, client) = setup();
+    client.set_reg_cooldown(&604_800u64);
+    assert_eq!(client.get_reg_cooldown(), 604_800u64);
+    let res = client.try_set_reg_cooldown(&604_801u64);
+    assert_eq!(res, Err(Ok(VerificationError::InvalidCooldown)));
+    let res = client.try_set_reg_cooldown(&u64::MAX);
+    assert_eq!(res, Err(Ok(VerificationError::InvalidCooldown)));
+    assert_eq!(client.get_reg_cooldown(), 604_800u64);
+}

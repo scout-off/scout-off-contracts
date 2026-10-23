@@ -2512,6 +2512,7 @@ impl ScoutAccessContract {
     pub fn close_migration_window(env: Env) -> Result<(), ScoutAccessError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         Self::require_initialized(&env)?;
+        Self::require_migration_active(&env)?;
         env.storage()
             .instance()
             .set(&DataKey::MigrationActive, &false);

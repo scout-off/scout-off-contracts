@@ -31,7 +31,7 @@ use soroban_sdk::{
 };
 
 use scoutchain_shared_types::{
-    read_wiring_link, require_admin,
+    read_wiring_link, require_admin, MAX_REG_COOLDOWN_SECS,
     safe_math::{safe_add_u32, safe_add_u64, safe_sub_u32},
     validate_cid, write_wiring_link,
 };
@@ -635,8 +635,12 @@ impl VerificationContract {
 
     /// Set the per-wallet validator registration cooldown in seconds (admin only).
     /// Pass `0` to disable the cooldown entirely.
+    /// Bounds: `0..=604_800` (7 days); larger values return `InvalidCooldown`.
     pub fn set_reg_cooldown(env: Env, cooldown_secs: u64) -> Result<(), VerificationError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        if cooldown_secs > MAX_REG_COOLDOWN_SECS {
+            return Err(VerificationError::InvalidCooldown);
+        }
         let old = Self::get_reg_cooldown(env.clone());
         env.storage()
             .instance()
@@ -2844,6 +2848,7 @@ impl VerificationContract {
     pub fn close_migration_window(env: Env) -> Result<(), VerificationError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         Self::require_initialized(&env)?;
+        Self::require_migration_active(&env)?;
         env.storage()
             .instance()
             .set(&DataKey::MigrationActive, &false);

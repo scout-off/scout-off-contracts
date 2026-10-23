@@ -80,3 +80,8 @@ Cross-linked from:
 
 - [docs/DEPLOYMENT.md — Address migration](DEPLOYMENT.md#address-migration-new-contract-id)
 - [docs/INDEXER.md — Known gaps](INDEXER.md#known-gaps-between-the-contracts-and-this-schema)
+
+## Migration window and seeding rules
+
+- **open → seed → close is one-way.** `close_migration_window` (progress, verification, scout_access) is only valid while the window is open; calling it before `open_migration_window`, or twice, fails with `MigrationNotActive` and changes nothing. A successful close permanently seals the window.
+- **Wallet uniqueness.** `registration.admin_seed_player` / `admin_seed_scout` (and the `redeem_migration_*` paths that delegate to them) fail with `AlreadyRegistered` and write nothing when the wallet already maps to a player/scout ID, whether seeded or organically registered. Re-seeding an existing ID is likewise rejected.

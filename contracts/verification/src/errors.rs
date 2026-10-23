@@ -206,6 +206,10 @@ pub enum VerificationError {
     /// `open_migration_window` was called after the window was permanently
     /// closed by `close_migration_window`.
     MigrationWindowSealed = 58,
+
+    // ── Cooldown config (issue #1633) ──
+    /// Cooldown value exceeds the maximum allowed (7 days).
+    InvalidCooldown = 59,
 }
 
 impl AdminError for VerificationError {
