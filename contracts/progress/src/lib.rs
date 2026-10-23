@@ -10,7 +10,9 @@ use scoutchain_shared_types::{
     MigrationStatus, ProgressLevel,
 };
 use types::CODE_SCHEMA_VERSION;
-pub use types::{DataKey, FrontierPeak, HistoryProofStep, ProgressEntry, ProgressWiringState};
+pub use types::{
+    DataKey, FrontierPeak, HistoryProofStep, HistorySince, ProgressEntry, ProgressWiringState,
+};
 
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, String, Vec};
@@ -722,17 +724,20 @@ impl ProgressContract {
     ///
     /// Returns up to `limit` entries where `updated_at >= since_timestamp`,
     /// starting from the **most recent** entries and working backwards.
+    /// **Ordering is newest-first**, unlike the other history getters, which
+    /// are oldest-first.
     ///
     /// ## Bounded Cost
     ///
-    /// Unlike the previous unbounded implementation, this function scans at most
-    /// `MAX_PAGES_SCAN` pages (10 pages = 80 entries with the current page size)
-    /// starting from the newest page. This bounds CPU and storage cost to a
-    /// fixed maximum regardless of total history length.
+    /// This function scans at most `MAX_PAGES_SCAN` pages (10 pages = 80
+    /// entries with the current page size) starting from the newest page, and
+    /// returns as soon as it meets the first entry older than
+    /// `since_timestamp` (history is chronological, so everything older also
+    /// fails the filter).
     ///
-    /// `limit` is clamped to 1..=50. If more matching entries exist beyond the
-    /// scanned pages, callers should use `get_history_page_with_cursor` with a
-    /// snapshot taken at the desired timestamp for complete results.
+    /// `limit` is clamped to 1..=50. This getter does **not** tell callers
+    /// when results were cut off by `limit` or the page cap; use
+    /// `get_history_since_v2`, which reports `truncated`.
     ///
     /// Returns an empty Vec if the player has no history or no entries match.
     pub fn get_history_since(
@@ -741,67 +746,23 @@ impl ProgressContract {
         since_timestamp: u64,
         limit: u32,
     ) -> Vec<ProgressEntry> {
-        const MAX_PAGE: u32 = 50;
-        const MAX_PAGES_SCAN: u32 = 10; // bounds cost to ~80 entries max
+        Self::history_since(&env, player_id, since_timestamp, limit).0
+    }
 
-        let count: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::HistoryCounter(player_id))
-            .unwrap_or(0u32);
-
-        if count == 0 {
-            return Vec::new(&env);
-        }
-
-        let effective_limit = limit.clamp(1, MAX_PAGE);
-        let total_pages = count.div_ceil(HISTORY_PAGE_SIZE);
-        let pages_to_scan = total_pages.min(MAX_PAGES_SCAN);
-
-        let mut result: Vec<ProgressEntry> = Vec::new(&env);
-
-        // Scan from newest page backwards, at most `pages_to_scan` pages.
-        for page_index in (0..total_pages).rev().take(pages_to_scan as usize) {
-            let page_key = DataKey::HistoryPage(player_id, page_index);
-            let page: Vec<ProgressEntry> = match env.storage().persistent().get(&page_key) {
-                Some(p) => p,
-                None => {
-                    // Reconstruct from individual entries if page missing
-                    let start = page_index * HISTORY_PAGE_SIZE + 1;
-                    let end = (start + HISTORY_PAGE_SIZE - 1).min(count);
-                    let mut reconstructed: Vec<ProgressEntry> = Vec::new(&env);
-                    for idx in start..=end {
-                        if let Some(entry) = env
-                            .storage()
-                            .persistent()
-                            .get(&DataKey::HistoryEntry(player_id, idx))
-                        {
-                            reconstructed.push_back(entry);
-                        }
-                    }
-                    reconstructed
-                }
-            };
-
-            // Page entries are in chronological order (oldest first).
-            // Since we're scanning pages backwards, iterate page entries in reverse.
-            for i in (0..page.len()).rev() {
-                if let Some(entry) = page.get(i) {
-                    if entry.updated_at >= since_timestamp {
-                        result.push_back(entry);
-                        if result.len() >= effective_limit {
-                            return result;
-                        }
-                    } else {
-                        // Since we're going backwards in time and entries within
-                        // a page are chronological, we can stop scanning this page.
-                        break;
-                    }
-                }
-            }
-        }
-
-        result
+    /// Same as `get_history_since` (newest-first, same bounds), but also
+    /// reports whether matching entries may have been omitted.
+    ///
+    /// `truncated` is `true` when another matching entry exists beyond
+    /// `limit`, or when the 10-page scan cap was reached before an older
+    /// entry was found (more matching entries may exist further back).
+    pub fn get_history_since_v2(
+        env: Env,
+        player_id: u64,
+        since_timestamp: u64,
+        limit: u32,
+    ) -> HistorySince {
+        let (entries, truncated) = Self::history_since(&env, player_id, since_timestamp, limit);
+        HistorySince { entries, truncated }
     }
 
     /// Return the current Merkle commitment root over a player's full
@@ -2047,6 +2008,77 @@ impl ProgressContract {
 // =============================================================================
 // Tests
 // =============================================================================
+impl ProgressContract {
+    /// Shared scan for `get_history_since` / `get_history_since_v2`.
+    /// Returns `(entries newest-first, truncated)`.
+    fn history_since(
+        env: &Env,
+        player_id: u64,
+        since_timestamp: u64,
+        limit: u32,
+    ) -> (Vec<ProgressEntry>, bool) {
+        const MAX_PAGE: u32 = 50;
+        const MAX_PAGES_SCAN: u32 = 10; // bounds cost to ~80 entries max
+
+        let mut result: Vec<ProgressEntry> = Vec::new(env);
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::HistoryCounter(player_id))
+            .unwrap_or(0u32);
+
+        if count == 0 {
+            return (result, false);
+        }
+
+        let effective_limit = limit.clamp(1, MAX_PAGE);
+        let total_pages = count.div_ceil(HISTORY_PAGE_SIZE);
+        let pages_to_scan = total_pages.min(MAX_PAGES_SCAN);
+
+        // Scan from newest page backwards, at most `pages_to_scan` pages.
+        for page_index in (0..total_pages).rev().take(pages_to_scan as usize) {
+            let page_key = DataKey::HistoryPage(player_id, page_index);
+            let page: Vec<ProgressEntry> = match env.storage().persistent().get(&page_key) {
+                Some(p) => p,
+                None => {
+                    // Reconstruct from individual entries if page missing
+                    let start = page_index * HISTORY_PAGE_SIZE + 1;
+                    let end = (start + HISTORY_PAGE_SIZE - 1).min(count);
+                    let mut reconstructed: Vec<ProgressEntry> = Vec::new(env);
+                    for idx in start..=end {
+                        if let Some(entry) = env
+                            .storage()
+                            .persistent()
+                            .get(&DataKey::HistoryEntry(player_id, idx))
+                        {
+                            reconstructed.push_back(entry);
+                        }
+                    }
+                    reconstructed
+                }
+            };
+
+            // Page entries are in chronological order (oldest first); iterate
+            // in reverse. History is chronological across pages too, so the
+            // first older entry ends the whole scan.
+            for i in (0..page.len()).rev() {
+                if let Some(entry) = page.get(i) {
+                    if entry.updated_at < since_timestamp {
+                        return (result, false);
+                    }
+                    if result.len() >= effective_limit {
+                        return (result, true);
+                    }
+                    result.push_back(entry);
+                }
+            }
+        }
+
+        // Every scanned entry matched; older pages beyond the cap are unread.
+        (result, pages_to_scan < total_pages)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2070,6 +2102,91 @@ mod tests {
     fn wire_registration_stub(env: &Env, client: &ProgressContractClient) {
         let reg_id = env.register(RegistrationStub, ());
         client.set_registration_contract(&reg_id);
+    }
+
+    /// Writes `n` chronological history entries (updated_at = 100 + i) directly
+    /// into storage as 8-entry pages.
+    fn seed_history(env: &Env, id: &Address, player_id: u64, n: u32) {
+        let by = Address::generate(env);
+        env.as_contract(id, || {
+            let mut page: Vec<ProgressEntry> = Vec::new(env);
+            let mut page_index = 0u32;
+            for i in 0..n {
+                page.push_back(ProgressEntry {
+                    player_id,
+                    old_level: ProgressLevel::Unverified,
+                    new_level: ProgressLevel::Unverified,
+                    updated_by: by.clone(),
+                    updated_at: 100 + i as u64,
+                    milestone_ref: 0,
+                    ledger_sequence: 0,
+                });
+                if page.len() == HISTORY_PAGE_SIZE || i + 1 == n {
+                    env.storage()
+                        .persistent()
+                        .set(&DataKey::HistoryPage(player_id, page_index), &page);
+                    page = Vec::new(env);
+                    page_index += 1;
+                }
+            }
+            env.storage()
+                .persistent()
+                .set(&DataKey::HistoryCounter(player_id), &n);
+        });
+    }
+
+    #[test]
+    fn test_get_history_since_far_future_reads_one_page() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register(ProgressContract, ());
+        let client = ProgressContractClient::new(&env, &id);
+        client.initialize(&Address::generate(&env));
+        seed_history(&env, &id, 1, 80);
+        // Remove every page but the newest: an early return must not touch them.
+        env.as_contract(&id, || {
+            for p in 0..9u32 {
+                env.storage().persistent().remove(&DataKey::HistoryPage(1, p));
+            }
+        });
+        let r = client.get_history_since_v2(&1, &u64::MAX, &50);
+        assert_eq!(r.entries.len(), 0);
+        assert!(!r.truncated);
+    }
+
+    #[test]
+    fn test_get_history_since_newest_first_and_stops_at_older() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register(ProgressContract, ());
+        let client = ProgressContractClient::new(&env, &id);
+        client.initialize(&Address::generate(&env));
+        seed_history(&env, &id, 1, 20);
+        // updated_at 100..=119; since 117 -> 119,118,117.
+        let r = client.get_history_since_v2(&1, &117, &50);
+        assert_eq!(r.entries.len(), 3);
+        assert_eq!(r.entries.get(0).unwrap().updated_at, 119);
+        assert_eq!(r.entries.get(2).unwrap().updated_at, 117);
+        assert!(!r.truncated);
+        assert_eq!(client.get_history_since(&1, &117, &50).len(), 3);
+    }
+
+    #[test]
+    fn test_get_history_since_reports_truncation() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register(ProgressContract, ());
+        let client = ProgressContractClient::new(&env, &id);
+        client.initialize(&Address::generate(&env));
+        seed_history(&env, &id, 1, 100);
+        // 100 matching entries; limit caps at 50.
+        let r = client.get_history_since_v2(&1, &0, &50);
+        assert_eq!(r.entries.len(), 50);
+        assert!(r.truncated);
+        // Exactly `limit` matching entries is not truncated.
+        let r = client.get_history_since_v2(&1, &150, &50);
+        assert_eq!(r.entries.len(), 50);
+        assert!(!r.truncated);
     }
 
     #[test]

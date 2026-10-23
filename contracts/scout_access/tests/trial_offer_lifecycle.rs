@@ -27,7 +27,8 @@ mod common;
 
 use scoutchain_progress::{ProgressContract, ProgressContractClient};
 use scoutchain_scout_access::{
-    FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
+    DataKey, FeeConfig, ScoutAccessContract, ScoutAccessContractClient, ScoutAccessError,
+    SubscriptionTier,
 };
 use scoutchain_shared_types::ProgressLevel;
 use scoutchain_verification::{VerificationContract, VerificationContractClient};
@@ -538,21 +539,21 @@ fn test_admin_refund_trial_escrow_rescues_outstanding_entry() {
     let h = setup();
     let player_id: u64 = 30;
     let player_wallet = Address::generate(&h.env);
-    let rescue_to = Address::generate(&h.env);
 
     advance_player(&h, player_id, 2);
     let scout = setup_elite_scout(&h, player_id);
     let index = log_offer(&h, &scout, player_id, CID_1, CID_2);
+    let rescue_to = scout.clone();
     let rescue_before = xlm_balance(&h, &rescue_to);
 
     h.scout_access
-        .admin_refund_trial_escrow(&player_id, &index, &rescue_to);
+        .admin_refund_trial_escrow(&player_id, &index);
     let refund_events = h.env.events().all();
 
     assert_eq!(
         xlm_balance(&h, &rescue_to),
         rescue_before + ESCROW_AMOUNT,
-        "rescue address must receive exactly the escrowed amount"
+        "originating scout must receive exactly the escrowed amount"
     );
     assert!(
         find_event(refund_events.events(), "trial_escrow_admin_refunded").is_some(),
@@ -582,12 +583,11 @@ fn test_admin_refund_trial_escrow_rescues_outstanding_entry() {
 #[test]
 fn test_admin_refund_trial_escrow_rejects_non_outstanding_targets() {
     let h = setup();
-    let rescue_to = Address::generate(&h.env);
 
     // Never logged at all — no TrialEscrow record ever existed.
     let never_logged = h
         .scout_access
-        .try_admin_refund_trial_escrow(&999u64, &1u32, &rescue_to);
+        .try_admin_refund_trial_escrow(&999u64, &1u32);
     assert!(
         never_logged.is_err(),
         "refunding a never-created escrow must fail"
@@ -607,7 +607,7 @@ fn test_admin_refund_trial_escrow_rejects_non_outstanding_targets() {
     );
     let already_confirmed =
         h.scout_access
-            .try_admin_refund_trial_escrow(&player_confirmed, &index_a, &rescue_to);
+            .try_admin_refund_trial_escrow(&player_confirmed, &index_a);
     assert!(
         already_confirmed.is_err(),
         "refunding an already-confirmed escrow must fail"
@@ -619,12 +619,70 @@ fn test_admin_refund_trial_escrow_rejects_non_outstanding_targets() {
     let scout_b = setup_elite_scout(&h, player_double);
     let index_b = log_offer(&h, &scout_b, player_double, CID_5, CID_6);
     h.scout_access
-        .admin_refund_trial_escrow(&player_double, &index_b, &rescue_to);
-    let already_refunded =
-        h.scout_access
-            .try_admin_refund_trial_escrow(&player_double, &index_b, &rescue_to);
+        .admin_refund_trial_escrow(&player_double, &index_b);
+    let already_refunded = h
+        .scout_access
+        .try_admin_refund_trial_escrow(&player_double, &index_b);
     assert!(
         already_refunded.is_err(),
         "a second admin_refund_trial_escrow on the same entry must fail, not double-pay"
     );
+}
+
+/// Orphan rescue (#1623): only valid when the `TrialOffer` record is gone;
+/// emits the distinct `trial_escrow_orphan_rescued` event.
+#[test]
+fn test_admin_rescue_orphan_trial_escrow() {
+    let h = setup();
+    let player_id: u64 = 33;
+    let to = Address::generate(&h.env);
+    advance_player(&h, player_id, 2);
+    let scout = setup_elite_scout(&h, player_id);
+    let index = log_offer(&h, &scout, player_id, CID_1, CID_2);
+
+    // TrialOffer still exists: not an orphan.
+    assert!(h
+        .scout_access
+        .try_admin_rescue_orphan_trial_escrow(&player_id, &index, &to)
+        .is_err());
+
+    h.env.as_contract(&h.scout_access.address, || {
+        h.env
+            .storage()
+            .persistent()
+            .remove(&DataKey::TrialOffer(player_id, index));
+    });
+    let before = xlm_balance(&h, &to);
+    h.scout_access
+        .admin_rescue_orphan_trial_escrow(&player_id, &index, &to);
+    let events = h.env.events().all();
+    assert_eq!(xlm_balance(&h, &to), before + ESCROW_AMOUNT);
+    assert!(find_event(events.events(), "trial_escrow_orphan_rescued").is_some());
+}
+
+/// #1625: with escrow set to 0, `log_trial_offer` fails with
+/// `TrialOffersDisabled`; an already-pending offer can still be confirmed.
+#[test]
+fn test_log_trial_offer_rejected_when_escrow_zero() {
+    let h = setup();
+    let player_id: u64 = 34;
+    let player_wallet = Address::generate(&h.env);
+    advance_player(&h, player_id, 2);
+    let scout = setup_elite_scout(&h, player_id);
+    let pending = log_offer(&h, &scout, player_id, CID_1, CID_2);
+
+    h.scout_access.update_fee_config(&FeeConfig {
+        trial_offer_escrow_stroops: 0,
+        ..default_fees()
+    });
+    let result = h.scout_access.try_log_trial_offer(
+        &scout,
+        &player_id,
+        &String::from_str(&h.env, CID_3),
+    );
+    assert_eq!(result, Err(Ok(ScoutAccessError::TrialOffersDisabled)));
+
+    // Pending offers are unaffected by the switch.
+    h.scout_access
+        .confirm_trial_offer(&player_wallet, &player_id, &pending, &None::<String>);
 }

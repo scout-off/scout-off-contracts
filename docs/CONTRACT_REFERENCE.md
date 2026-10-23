@@ -3090,7 +3090,9 @@ stellar contract invoke --id $PROGRESS_CONTRACT_ID \
 
 Return up to `limit` history entries for a player with `updated_at >=
 since_timestamp` (Unix seconds), starting from the **most recent** entries and
-working backwards.
+working backwards. **Ordering is newest-first**, unlike the other history
+getters (oldest-first). The scan stops at the first entry older than
+`since_timestamp`.
 
 **Bounded Cost**
 
@@ -3099,9 +3101,17 @@ Unlike the previous unbounded implementation, this function scans at most
 starting from the newest page. This bounds CPU and storage cost to a fixed
 maximum regardless of total history length.
 
-`limit` is clamped to 1..=50. If more matching entries exist beyond the scanned
-pages, callers should use `get_history_page_with_cursor` with a snapshot taken
-at the desired timestamp for complete results.
+`limit` is clamped to 1..=50. This getter silently omits matching entries
+beyond `limit` or the page cap; use `get_history_since_v2` to detect that, then
+`get_history_page_with_cursor` with a snapshot taken at the desired timestamp
+for complete results.
+
+#### `get_history_since_v2(player_id: u64, since_timestamp: u64, limit: u32) -> HistorySince`
+
+Same scan, ordering (newest-first) and bounds as `get_history_since`, returning
+`HistorySince { entries: Vec<ProgressEntry>, truncated: bool }`. `truncated` is
+`true` when another matching entry exists beyond `limit`, or the 10-page scan
+cap was reached before an older entry was found.
 
 Returns an empty `Vec` if the player has no history or no entries match. An
 empty result is also returned for an unknown `player_id` (default-on-absent, no
@@ -4263,6 +4273,9 @@ stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
 Record a trial offer on-chain and escrow `trial_offer_escrow_stroops` (from
 `FeeConfig`) out of the scout's wallet. Scout must hold an active Elite
 subscription. `details_hash` is an IPFS/Arweave CID of the offer document.
+When `trial_offer_escrow_stroops` is `0`, trial offers are disabled and the call
+fails with `TrialOffersDisabled` before any state change; offers already
+pending can still be confirmed or expired.
 
 This is **step 1 of the two-step trial-offer flow** — it stores a
 `TrialOffer` record and a `TrialEscrow(amount, expires_at)` record and emits
@@ -4276,7 +4289,7 @@ the trial offer index.
 | | |
 |---|---|
 | **Auth** | `scout` must sign (Elite subscription required) |
-| **Errors** | `ContractPaused` · `NotInitialized` · `InvalidInput` · `ScoutNotSubscribed` · `SubscriptionExpired` · `Unauthorized` · `TrialOfferRateLimited` · `Overflow` |
+| **Errors** | `ContractPaused` · `NotInitialized` · `InvalidInput` · `ScoutNotSubscribed` · `SubscriptionExpired` · `Unauthorized` · `TrialOffersDisabled` · `TrialOfferRateLimited` · `Overflow` |
 
 **Check precedence order** (when multiple error conditions are simultaneously
 true, the first matching check in this list wins):
@@ -5072,7 +5085,8 @@ Manages the trusted validator registry and milestone approvals.
 
 | Function | Auth | Description |
 |----------|------|-------------|
-| `admin_refund_trial_escrow(player_id, offer_index: u32, to: Address) -> Result<(), ScoutAccessError>` | admin | Admin-forced refund of a stuck trial-offer escrow to a scout, for dispute resolution / recovery. Emits `trial_escrow_admin_refunded`. |
+| `admin_refund_trial_escrow(player_id, offer_index: u32) -> Result<(), ScoutAccessError>` | admin | Admin-forced refund of a stuck trial-offer escrow to the originating scout (`TrialOffer.scout`); the destination cannot be chosen. Emits `trial_escrow_admin_refunded`. |
+| `admin_rescue_orphan_trial_escrow(player_id, offer_index: u32, to: Address) -> Result<(), ScoutAccessError>` | admin | Rescue an escrow whose `TrialOffer` record is missing, to an admin-chosen address. Fails with `TrialEscrowNotOutstanding` if the offer record still exists. Emits `trial_escrow_orphan_rescued`. |
 | `get_trial_escrow(player_id, index: u32) -> Option<TrialEscrow>` | none | Read the escrow record backing a pending trial offer, if any. |
 | `admin_seed_subscription(subscription: Subscription) -> Result<(), ScoutAccessError>` | admin | Seed a historical subscription record during a migration window. |
 | `admin_seed_contact(contact: ContactRecord) -> Result<(), ScoutAccessError>` | admin | Seed a historical contact-unlock record during a migration window. |
@@ -5586,6 +5600,7 @@ pub struct TrialOffer {
 | 43 | `PlayerNotVerified` | `revoke_evidence_access` caller's wallet does not own the `player_id` passed, or the registration contract is not wired |
 | 44 | `RegistrationContractNotSet` | Registration contract is not wired; Pro/Elite subscriptions require it |
 | 45 | `MigrationWindowSealed` | `open_migration_window` was called after the window was permanently closed by `close_migration_window` |
+| 46 | `TrialOffersDisabled` | `log_trial_offer` was called while `trial_offer_escrow_stroops` is 0 (trial offers disabled) |
 
 ---
 
@@ -5716,7 +5731,8 @@ All events follow the unified `(Symbol, actor)` topic schema introduced in #246.
 | `evidence_access_revoked_by_player` | event_name, scout (Address) | player_id (u64), player (Address) | `revoke_evidence_access` (issue #1380) — player-initiated revocation; key-wrapping service should stop honoring *future* requests for this pair |
 | `auto_renew_set` | event_name, scout (Address) | enabled (bool) | Scout toggled auto-renewal of their subscription |
 | `subscription_auto_renewed` | event_name, scout (Address) | tier (SubscriptionTier), subscribed_at (u64), expires_at (u64) | `renew_if_due` auto-renewed a scout's subscription |
-| `trial_escrow_admin_refunded` | event_name, to (Address) | player_id (u64), index (u32), amount (i128) | `admin_refund_trial_escrow` force-refunded a stuck trial-offer escrow to a scout |
+| `trial_escrow_admin_refunded` | event_name, to (Address) | player_id (u64), index (u32), amount (i128) | `admin_refund_trial_escrow` force-refunded a stuck trial-offer escrow to the originating scout |
+| `trial_escrow_orphan_rescued` | event_name, to (Address) | player_id (u64), index (u32), amount (i128) | `admin_rescue_orphan_trial_escrow` rescued an orphan escrow (no `TrialOffer` record) to an admin-chosen address |
 | `registration_contract_updated` | event_name, admin (Address) | registration_contract (Address) | Registration contract address re-wired |
 | `progress_contract_not_set` | event_name, player_id (u64) | () | Diagnostic: `confirm_trial_offer` reached the cross-call point with no `progress_contract` wired |
 | `progress_call_failed` | event_name, player_id (u64) | error_code (u32) | Diagnostic (transaction receipt only): the cross-contract `advance_level` call from `confirm_trial_offer` returned an error, aborting the whole transaction |

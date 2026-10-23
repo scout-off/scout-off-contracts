@@ -18,6 +18,12 @@ The initial v0.1.0 entry below retains the year-only date because no exact histo
 
 ## Unreleased
 
+- Version: `v2.0.0`
+- Release date: `2026-10-23`
+- Contracts affected: `scout_access`, `progress`
+- Summary: `scout_access`: `log_trial_offer` now fails with new `TrialOffersDisabled` (46) when `trial_offer_escrow_stroops` is 0 (#1625); `validate_fee_config` bounds `trial_offer_escrow_stroops` (<= `MAX_SUB_FEE_STROOPS`) and `trial_offer_expiry_secs` (1 hour – 30 days when escrow > 0) (#1624); `admin_refund_trial_escrow` drops its `to` argument and always refunds `TrialOffer.scout`, with a new `admin_rescue_orphan_trial_escrow` for escrows lacking a `TrialOffer` record (#1623). `progress`: `get_history_since` returns at the first older entry, and new `get_history_since_v2` returns `HistorySince { entries, truncated }` (#1619).
+- Classification: `Breaking (MAJOR)` — `admin_refund_trial_escrow` signature change.
+
 - Version: `v1.1.1`
 - Release date: `2026-08-21`
 - Contracts affected: `progress`

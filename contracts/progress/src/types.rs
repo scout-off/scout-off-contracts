@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, BytesN};
+use soroban_sdk::{contracttype, Address, BytesN, Vec};
 
 pub use scoutchain_shared_types::{ProgressLevel, WiringLink};
 
@@ -40,6 +40,16 @@ pub struct ProgressEntry {
     pub milestone_ref: u32,
     /// Ledger sequence number at the time of the level change
     pub ledger_sequence: u32,
+}
+
+/// Result of `get_history_since_v2`: entries newest-first plus a flag telling
+/// the caller whether more matching entries may exist beyond `limit` or the
+/// page-scan cap.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct HistorySince {
+    pub entries: Vec<ProgressEntry>,
+    pub truncated: bool,
 }
 
 /// One peak of a player's incremental Merkle frontier (issue #1368).

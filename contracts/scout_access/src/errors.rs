@@ -162,6 +162,9 @@ pub enum ScoutAccessError {
     /// `open_migration_window` was called after the window was permanently
     /// closed by `close_migration_window`.
     MigrationWindowSealed = 45,
+    /// `log_trial_offer` was called while `trial_offer_escrow_stroops` is 0
+    /// (trial offers disabled).
+    TrialOffersDisabled = 46,
 }
 
 impl AdminError for ScoutAccessError {

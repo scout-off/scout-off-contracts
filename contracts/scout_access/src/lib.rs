@@ -142,6 +142,17 @@ const MAX_SUB_FEE_STROOPS: i128 = 1_000_000_000_000; // 100,000 XLM
 const MAX_SUB_DURATION_SECS: u64 = 365 * 24 * 3600; // 1 year
 const MAX_PRO_CONTACT_LIMIT: u32 = 10_000;
 
+// Trial-offer bounds (#1624).
+/// Maximum per-offer trial escrow; equal to `MAX_SUB_FEE_STROOPS`.
+const MAX_TRIAL_ESCROW_STROOPS: i128 = MAX_SUB_FEE_STROOPS;
+/// Minimum trial offer expiry (1 hour); shorter windows make nearly every
+/// confirmation fall into the late-refund branch.
+const MIN_TRIAL_EXPIRY_SECS: u64 = 3_600;
+/// Maximum trial offer expiry (30 days). Matches the `TRIAL_TTL_EXTEND_TO`
+/// horizon (518_400 ledgers at ~5s) so the escrow entry cannot archive
+/// before it expires.
+const MAX_TRIAL_EXPIRY_SECS: u64 = 30 * 24 * 3600;
+
 // Fee config proposal activation delay: 7 days (604,800 seconds) at average
 // 5s/ledger ≈ 120,960 ledgers. Scouts have one full week to react to a
 // proposed fee increase before it takes effect.
@@ -1413,6 +1424,18 @@ impl ScoutAccessContract {
         if sub.tier != SubscriptionTier::Elite {
             return Err(ScoutAccessError::Unauthorized);
         }
+
+        // #1625: `trial_offer_escrow_stroops == 0` disables trial offers.
+        // Rejected before any state change. Offers already pending can still
+        // be confirmed or expired.
+        let fee_cfg: FeeConfig = env
+            .storage()
+            .instance()
+            .get::<DataKey, FeeConfig>(&DataKey::FeeConfig)
+            .ok_or(ScoutAccessError::InvalidInput)?;
+        if fee_cfg.trial_offer_escrow_stroops == 0 {
+            return Err(ScoutAccessError::TrialOffersDisabled);
+        }
         env.storage().persistent().extend_ttl(
             &DataKey::Subscription(scout.clone()),
             PERSISTENT_TTL_MIN,
@@ -1492,12 +1515,6 @@ impl ScoutAccessContract {
             TRIAL_TTL_EXTEND_TO,
         );
 
-        // Store escrow for the trial offer
-        let fee_cfg: FeeConfig = env
-            .storage()
-            .instance()
-            .get::<DataKey, FeeConfig>(&DataKey::FeeConfig)
-            .ok_or(ScoutAccessError::InvalidInput)?;
         let escrow_amount = fee_cfg.trial_offer_escrow_stroops;
         let expires_at = safe_add_u64(now, fee_cfg.trial_offer_expiry_secs)
             .map_err(|_| ScoutAccessError::Overflow)?;
@@ -1798,7 +1815,8 @@ impl ScoutAccessContract {
     }
 
     /// Admin-only rescue valve: directly refund one identified, still
-    /// outstanding `TrialEscrow` entry — e.g. one flagged by a scout
+    /// outstanding `TrialEscrow` entry to the scout who logged the offer
+    /// (`TrialOffer.scout`) — e.g. one flagged by a scout
     /// complaint or surfaced by the indexer's drift-detection — without
     /// waiting for `expire_trial_offers` to reach it. See
     /// docs/TRIAL_ESCROW_IMPACT.md, recommendation 2.
@@ -1809,7 +1827,58 @@ impl ScoutAccessContract {
     /// check and the removal target the same record, a retried call after a
     /// successful refund finds nothing outstanding and safely no-ops into
     /// that same error instead of transferring a second time.
+    ///
+    /// The destination is always the originating scout; the admin cannot
+    /// redirect funds (#1623). If the `TrialOffer` record is missing (orphan
+    /// escrow) this fails with `TrialEscrowNotOutstanding`; use
+    /// `admin_rescue_orphan_trial_escrow` for that case.
     pub fn admin_refund_trial_escrow(
+        env: Env,
+        player_id: u64,
+        offer_index: u32,
+    ) -> Result<(), ScoutAccessError> {
+        Self::bump_instance_ttl(&env);
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+
+        let escrow_key = DataKey::TrialEscrow(player_id, offer_index);
+        let escrow: TrialEscrow = env
+            .storage()
+            .persistent()
+            .get(&escrow_key)
+            .ok_or(ScoutAccessError::TrialEscrowNotOutstanding)?;
+        let offer: TrialOffer = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TrialOffer(player_id, offer_index))
+            .ok_or(ScoutAccessError::TrialEscrowNotOutstanding)?;
+
+        let token_addr = Self::get_token(&env)?;
+        let contract_addr = env.current_contract_address();
+        token::Client::new(&env, &token_addr).transfer(&contract_addr, &offer.scout, &escrow.amount);
+
+        // Same cleanup order as confirm_trial_offer/expire_trial_offers:
+        // drop the primary record, then scrub the enumeration index, so no
+        // later sweep or late confirm can see or act on this entry again.
+        env.storage().persistent().remove(&escrow_key);
+        Self::remove_from_outstanding_trial_escrows(&env, player_id, offer_index);
+
+        events::trial_escrow_admin_refunded(
+            &env,
+            player_id,
+            offer_index,
+            &offer.scout,
+            escrow.amount,
+        );
+        Ok(())
+    }
+
+    /// Admin-only rescue for an orphan `TrialEscrow` whose `TrialOffer`
+    /// record no longer exists, so the originating scout cannot be
+    /// determined. The admin chooses `to`; emits the distinct
+    /// `trial_escrow_orphan_rescued` event. Fails with
+    /// `TrialEscrowNotOutstanding` if there is no escrow, or if the
+    /// `TrialOffer` still exists (use `admin_refund_trial_escrow` instead).
+    pub fn admin_rescue_orphan_trial_escrow(
         env: Env,
         player_id: u64,
         offer_index: u32,
@@ -1824,18 +1893,22 @@ impl ScoutAccessContract {
             .persistent()
             .get(&escrow_key)
             .ok_or(ScoutAccessError::TrialEscrowNotOutstanding)?;
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::TrialOffer(player_id, offer_index))
+        {
+            return Err(ScoutAccessError::TrialEscrowNotOutstanding);
+        }
 
         let token_addr = Self::get_token(&env)?;
         let contract_addr = env.current_contract_address();
         token::Client::new(&env, &token_addr).transfer(&contract_addr, &to, &escrow.amount);
 
-        // Same cleanup order as confirm_trial_offer/expire_trial_offers:
-        // drop the primary record, then scrub the enumeration index, so no
-        // later sweep or late confirm can see or act on this entry again.
         env.storage().persistent().remove(&escrow_key);
         Self::remove_from_outstanding_trial_escrows(&env, player_id, offer_index);
 
-        events::trial_escrow_admin_refunded(&env, player_id, offer_index, &to, escrow.amount);
+        events::trial_escrow_orphan_rescued(&env, player_id, offer_index, &to, escrow.amount);
         Ok(())
     }
 
@@ -3356,7 +3429,10 @@ impl ScoutAccessContract {
     /// - `sub_duration_secs` must be in `(0, MAX_SUB_DURATION_SECS]`.
     /// - `pro_contact_limit` must be in `[1, MAX_PRO_CONTACT_LIMIT]`.
     /// - `trial_offer_escrow_stroops` must be `>= 0`; **0 disables trial offers**.
-    /// - `trial_offer_expiry_secs` must be `> 0` when `trial_offer_escrow_stroops > 0`.
+    /// - `trial_offer_escrow_stroops` must be `<= MAX_TRIAL_ESCROW_STROOPS`.
+    /// - `trial_offer_expiry_secs` must be within
+    ///   `[MIN_TRIAL_EXPIRY_SECS, MAX_TRIAL_EXPIRY_SECS]` (1 hour – 30 days)
+    ///   when `trial_offer_escrow_stroops > 0`.
     fn validate_fee_config(config: &FeeConfig) -> Result<(), ScoutAccessError> {
         // Floor and ceiling checks for subscription fees
         if config.basic_sub_stroops < MIN_SUB_FEE_STROOPS
@@ -3398,10 +3474,15 @@ impl ScoutAccessContract {
 
         // trial_offer_escrow_stroops: 0 means trial offers are disabled (valid);
         // negative values are rejected; when > 0, expiry must also be set.
-        if config.trial_offer_escrow_stroops < 0 {
+        if config.trial_offer_escrow_stroops < 0
+            || config.trial_offer_escrow_stroops > MAX_TRIAL_ESCROW_STROOPS
+        {
             return Err(ScoutAccessError::InvalidInput);
         }
-        if config.trial_offer_escrow_stroops > 0 && config.trial_offer_expiry_secs == 0 {
+        if config.trial_offer_escrow_stroops > 0
+            && (config.trial_offer_expiry_secs < MIN_TRIAL_EXPIRY_SECS
+                || config.trial_offer_expiry_secs > MAX_TRIAL_EXPIRY_SECS)
+        {
             return Err(ScoutAccessError::InvalidInput);
         }
 
@@ -4875,6 +4956,26 @@ mod tests {
     // -------------------------------------------------------------------------
     // Issue #822: FeeConfig validation for trial-offer escrow fields
     // -------------------------------------------------------------------------
+
+    /// #1624: boundary tests for the trial escrow / expiry bounds.
+    #[test]
+    fn test_trial_config_bounds() {
+        let ok = |escrow: i128, expiry: u64| {
+            let (_env, admin, xlm, client) = make_contract();
+            let fees = FeeConfig {
+                trial_offer_escrow_stroops: escrow,
+                trial_offer_expiry_secs: expiry,
+                ..default_fees()
+            };
+            client.try_initialize(&admin, &xlm, &fees) == Ok(Ok(()))
+        };
+        assert!(ok(MAX_TRIAL_ESCROW_STROOPS, MIN_TRIAL_EXPIRY_SECS));
+        assert!(!ok(MAX_TRIAL_ESCROW_STROOPS + 1, MIN_TRIAL_EXPIRY_SECS));
+        assert!(ok(1, MAX_TRIAL_EXPIRY_SECS));
+        assert!(!ok(1, MAX_TRIAL_EXPIRY_SECS + 1));
+        assert!(!ok(1, MIN_TRIAL_EXPIRY_SECS - 1));
+        assert!(ok(1, MIN_TRIAL_EXPIRY_SECS));
+    }
 
     /// A zero escrow is valid and disables trial offers (#1421).
     #[test]

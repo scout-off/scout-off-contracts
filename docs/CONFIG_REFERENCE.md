@@ -158,6 +158,16 @@ Before running `./scripts/deploy.sh mainnet`:
 
 ## Contract-Level Settings
 
+### Trial offer bounds (`FeeConfig`)
+
+Enforced by `validate_fee_config` on `initialize`, `update_fee_config`,
+`propose_fee_config` and `admin_seed_fee_config`:
+
+| Field | Bounds |
+|-------|--------|
+| `trial_offer_escrow_stroops` | `0` (trial offers disabled) or `1 ..= 1_000_000_000_000` (`MAX_TRIAL_ESCROW_STROOPS`, = `MAX_SUB_FEE_STROOPS`) |
+| `trial_offer_expiry_secs` | when escrow > 0: `3_600 ..= 2_592_000` (1 hour – 30 days; `MIN_/MAX_TRIAL_EXPIRY_SECS`). The max matches the 518,400-ledger escrow TTL horizon. |
+
 ### Registration Cooldown (`set_reg_cooldown` / `get_reg_cooldown`)
 
 | Setting | Default | Bounds | Description |
