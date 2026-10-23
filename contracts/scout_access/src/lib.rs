@@ -8,7 +8,8 @@ use types::{FeeConfigProposal, ProContactPeriod, ScoutAccessWiringState};
 pub use errors::ScoutAccessError;
 pub use types::{
     ContactRecord, DataKey, EvidenceAccessGrant, FeeConfig, FeeConfigHistoryEntry,
-    ScoutContactsPage, Subscription, SubscriptionTier, TrialEscrow, TrialOffer,
+    ScoutContactsPage, Subscription, SubscriptionTier, TrialEscrow, TrialOffer, TrialOfferEntry,
+    TrialOfferPage,
 };
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env, String, Vec};
@@ -950,11 +951,6 @@ impl ScoutAccessContract {
         Ok(())
     }
 
-    /// Helper: increment contact count for Pro tier scouts.
-    fn increment_contact_count(env: &Env, scout: &Address) {
-        Self::increment_contact_count_by(env, scout, 1)
-    }
-
     /// `ContactCount` key for `scout` in the current 30-day wall-clock bucket.
     fn contact_count_key(env: &Env, scout: &Address) -> DataKey {
         const SECONDS_PER_MONTH: u64 = 2_592_000;
@@ -974,6 +970,121 @@ impl ScoutAccessContract {
         env.storage()
             .persistent()
             .extend_ttl(&quota_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+    }
+
+    /// Advance the renewal-aware Pro quota counter (`ProContactCount`) by `n`.
+    /// No-op for non-Pro tiers. A counter whose `period_start` predates
+    /// `sub.subscribed_at` is treated as zero (the subscription was renewed).
+    fn bump_pro_quota(
+        env: &Env,
+        scout: &Address,
+        sub: &Subscription,
+        n: u32,
+    ) -> Result<(), ScoutAccessError> {
+        if sub.tier != SubscriptionTier::Pro {
+            return Ok(());
+        }
+        let period_key = DataKey::ProContactCount(scout.clone());
+        let period: ProContactPeriod =
+            env.storage()
+                .persistent()
+                .get(&period_key)
+                .unwrap_or(ProContactPeriod {
+                    period_start: sub.subscribed_at,
+                    count: 0,
+                });
+        let current = if period.period_start == sub.subscribed_at {
+            period.count
+        } else {
+            0u32
+        };
+        let updated = ProContactPeriod {
+            period_start: sub.subscribed_at,
+            count: safe_add_u32(current, n).map_err(|_| ScoutAccessError::Overflow)?,
+        };
+        env.storage().persistent().set(&period_key, &updated);
+        env.storage()
+            .persistent()
+            .extend_ttl(&period_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+        Ok(())
+    }
+
+    /// Record one *new* contact: write the `ContactRecord`, update the
+    /// `ScoutContacts` and `PlayerContacts` indexes, issue the evidence grant
+    /// (#1040) and emit `player_contacted`.
+    ///
+    /// Shared by `pay_to_contact` and `batch_contact_players`, which both run,
+    /// in this order: (1) pause / auth / deactivation / subscription guards,
+    /// (2) duplicate-contact and tier-level checks, (3) Pro quota check,
+    /// (4) `collect_fee`, (5) `record_contact` per new contact, (6)
+    /// `bump_pro_quota`, the legacy `ContactCount` bump and the `Subscription`
+    /// TTL extension. Nothing is written before the charge succeeds, so the
+    /// grant is issued if and only if the fee was collected.
+    fn record_contact(
+        env: &Env,
+        scout: &Address,
+        player_id: u64,
+        sub: &Subscription,
+        fee: i128,
+    ) -> Result<(), ScoutAccessError> {
+        let contacted_at = env.ledger().timestamp();
+        let contact_key = DataKey::ContactRecord(player_id, scout.clone());
+        let record = ContactRecord {
+            player_id,
+            scout: scout.clone(),
+            contacted_at,
+        };
+        env.storage().persistent().set(&contact_key, &record);
+        env.storage()
+            .persistent()
+            .extend_ttl(&contact_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+
+        // Scout-centric outbound index.
+        let scout_index_key = DataKey::ScoutContacts(scout.clone());
+        let mut contacted: soroban_sdk::Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&scout_index_key)
+            .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+        if !contacted.contains(player_id) {
+            contacted.push_back(player_id);
+        }
+        env.storage().persistent().set(&scout_index_key, &contacted);
+        env.storage().persistent().extend_ttl(
+            &scout_index_key,
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
+
+        // Player-centric inbound index, so a player can list the scouts who
+        // contacted them from on-chain state without replaying events.
+        let player_index_key = DataKey::PlayerContacts(player_id);
+        let mut inbound: soroban_sdk::Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&player_index_key)
+            .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+        if !inbound.contains(scout) {
+            inbound.push_back(scout.clone());
+        }
+        env.storage().persistent().set(&player_index_key, &inbound);
+        env.storage().persistent().extend_ttl(
+            &player_index_key,
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
+
+        Self::grant_evidence_access(
+            env,
+            player_id,
+            scout,
+            &sub.tier,
+            contacted_at,
+            contacted_at.saturating_add(EVIDENCE_ACCESS_GRANT_TTL_SECS),
+        )?;
+
+        events::player_contacted(env, player_id, scout, fee);
+        Ok(())
     }
 
     /// Write an `EvidenceAccessGrant(player_id, scout)` and append `scout` to
@@ -1082,112 +1193,25 @@ impl ScoutAccessContract {
         // Basic tier has no contact entitlement. Pro tier cannot contact Level-3 players.
         Self::check_tier_level_access(&env, &subscription.tier, player_id)?;
 
-        // Pro-tier quota enforcement: limit contacts to pro_contact_limit per
-        // subscription period.  The counter resets automatically on renewal
-        // because a new period_start is stored when the scout subscribes again.
-        if subscription.tier == SubscriptionTier::Pro {
-            let period_key = DataKey::ProContactCount(scout.clone());
-            let period: ProContactPeriod =
-                env.storage()
-                    .persistent()
-                    .get(&period_key)
-                    .unwrap_or(ProContactPeriod {
-                        period_start: subscription.subscribed_at,
-                        count: 0,
-                    });
-            // If the stored period_start predates the current subscription,
-            // treat the counter as zero (subscription was renewed).
-            let current_count = if period.period_start == subscription.subscribed_at {
-                period.count
-            } else {
-                0u32
-            };
-            if current_count >= config.pro_contact_limit {
-                return Err(ScoutAccessError::ProContactLimitReached);
-            }
-            let new_period = ProContactPeriod {
-                period_start: subscription.subscribed_at,
-                count: safe_add_u32(current_count, 1).map_err(|_| ScoutAccessError::Overflow)?,
-            };
-            env.storage().persistent().set(&period_key, &new_period);
-            env.storage().persistent().extend_ttl(
-                &period_key,
-                PERSISTENT_TTL_MIN,
-                PERSISTENT_TTL_MAX,
-            );
-        }
+        // Pro-tier quota (renewal-aware): checked here, written by
+        // `bump_pro_quota` after the charge. See `record_contact`.
+        Self::check_pro_contact_quota_with_count(&env, &scout, 1)?;
 
         Self::collect_fee(&env, &scout, config.contact_fee_stroops)?;
-        Self::increment_contact_count(&env, &scout);
-
-        let record = ContactRecord {
+        Self::record_contact(
+            &env,
+            &scout,
             player_id,
-            scout: scout.clone(),
-            contacted_at: env.ledger().timestamp(),
-        };
-        env.storage().persistent().set(&contact_key, &record);
-        env.storage()
-            .persistent()
-            .extend_ttl(&contact_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+            &subscription,
+            config.contact_fee_stroops,
+        )?;
+        Self::bump_pro_quota(&env, &scout, &subscription, 1)?;
+        Self::increment_contact_count_by(&env, &scout, 1);
         env.storage().persistent().extend_ttl(
             &DataKey::Subscription(scout.clone()),
             PERSISTENT_TTL_MIN,
             PERSISTENT_TTL_MAX,
         );
-
-        // Update scout-centric contact index
-        let index_key = DataKey::ScoutContacts(scout.clone());
-        let mut contacted: soroban_sdk::Vec<u64> = env
-            .storage()
-            .persistent()
-            .get(&index_key)
-            .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
-        if !contacted.contains(player_id) {
-            contacted.push_back(player_id);
-        }
-        env.storage().persistent().set(&index_key, &contacted);
-        env.storage()
-            .persistent()
-            .extend_ttl(&index_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
-
-        // Update player-centric inbound contact index so a player can list
-        // all scouts who have contacted them directly from on-chain state
-        // without replaying off-chain events.
-        let player_index_key = DataKey::PlayerContacts(player_id);
-        let mut inbound: soroban_sdk::Vec<Address> = env
-            .storage()
-            .persistent()
-            .get(&player_index_key)
-            .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
-        if !inbound.contains(&scout) {
-            inbound.push_back(scout.clone());
-        }
-        env.storage().persistent().set(&player_index_key, &inbound);
-        env.storage().persistent().extend_ttl(
-            &player_index_key,
-            PERSISTENT_TTL_MIN,
-            PERSISTENT_TTL_MAX,
-        );
-
-        // #1040: a successful pay_to_contact is the on-chain authorization
-        // event for this scout to request the wrapped decryption key for
-        // player_id's confidential evidence. This runs after every check
-        // above has already passed and the fee has already been collected,
-        // so it is unreachable on any rejected call (see
-        // adversarial_atomicity.rs / atomic_fee_settlement.rs for the
-        // atomicity tests this must satisfy).
-        Self::grant_evidence_access(
-            &env,
-            player_id,
-            &scout,
-            &subscription.tier,
-            record.contacted_at,
-            record
-                .contacted_at
-                .saturating_add(EVIDENCE_ACCESS_GRANT_TTL_SECS),
-        )?;
-
-        events::player_contacted(&env, player_id, &scout, config.contact_fee_stroops);
         Ok(())
     }
 
@@ -1279,104 +1303,12 @@ impl ScoutAccessContract {
             if env.storage().persistent().has(&contact_key) {
                 continue;
             }
-            let record = ContactRecord {
-                player_id,
-                scout: scout.clone(),
-                contacted_at: env.ledger().timestamp(),
-            };
-            env.storage().persistent().set(&contact_key, &record);
-            env.storage().persistent().extend_ttl(
-                &contact_key,
-                PERSISTENT_TTL_MIN,
-                PERSISTENT_TTL_MAX,
-            );
-
-            // Update scout-centric outbound index
-            let scout_index_key = DataKey::ScoutContacts(scout.clone());
-            let mut scout_contacted: soroban_sdk::Vec<u64> = env
-                .storage()
-                .persistent()
-                .get(&scout_index_key)
-                .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
-            if !scout_contacted.contains(player_id) {
-                scout_contacted.push_back(player_id);
-            }
-            env.storage()
-                .persistent()
-                .set(&scout_index_key, &scout_contacted);
-            env.storage().persistent().extend_ttl(
-                &scout_index_key,
-                PERSISTENT_TTL_MIN,
-                PERSISTENT_TTL_MAX,
-            );
-
-            // Update player-centric inbound index
-            let player_index_key = DataKey::PlayerContacts(player_id);
-            let mut inbound: soroban_sdk::Vec<Address> = env
-                .storage()
-                .persistent()
-                .get(&player_index_key)
-                .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
-            if !inbound.contains(&scout) {
-                inbound.push_back(scout.clone());
-            }
-            env.storage().persistent().set(&player_index_key, &inbound);
-            env.storage().persistent().extend_ttl(
-                &player_index_key,
-                PERSISTENT_TTL_MIN,
-                PERSISTENT_TTL_MAX,
-            );
-
-            // #1040: same grant issuance as pay_to_contact, for each new
-            // contact this batch call actually recorded (and charged) — a
-            // scout must not be able to bypass evidence-access grants by
-            // reaching a contact through the batch entrypoint instead.
-            Self::grant_evidence_access(
-                &env,
-                player_id,
-                &scout,
-                &sub.tier,
-                record.contacted_at,
-                record
-                    .contacted_at
-                    .saturating_add(EVIDENCE_ACCESS_GRANT_TTL_SECS),
-            )?;
-
-            events::player_contacted(&env, player_id, &scout, config.contact_fee_stroops);
+            Self::record_contact(&env, &scout, player_id, &sub, config.contact_fee_stroops)?;
         }
 
         Self::increment_contact_count_by(&env, &scout, new_contacts);
 
-        // Keep the renewal-aware Pro quota counter in lockstep with the
-        // legacy monthly analytics counter. `pay_to_contact` writes this
-        // counter before charging; batch writes it after the single charge.
-        if sub.tier == SubscriptionTier::Pro {
-            let period_key = DataKey::ProContactCount(scout.clone());
-            let period: ProContactPeriod =
-                env.storage()
-                    .persistent()
-                    .get(&period_key)
-                    .unwrap_or(ProContactPeriod {
-                        period_start: sub.subscribed_at,
-                        count: 0,
-                    });
-            let current = if period.period_start == sub.subscribed_at {
-                period.count
-            } else {
-                0u32
-            };
-            let updated = ProContactPeriod {
-                period_start: sub.subscribed_at,
-                count: safe_add_u32(current, new_contacts)
-                    .map_err(|_| ScoutAccessError::Overflow)?,
-            };
-            env.storage().persistent().set(&period_key, &updated);
-            env.storage().persistent().extend_ttl(
-                &period_key,
-                PERSISTENT_TTL_MIN,
-                PERSISTENT_TTL_MAX,
-            );
-        }
+        Self::bump_pro_quota(&env, &scout, &sub, new_contacts)?;
 
         env.storage().persistent().extend_ttl(
             &DataKey::Subscription(scout.clone()),
@@ -2435,6 +2367,10 @@ impl ScoutAccessContract {
 
     /// Return all trial offers for a given player in ascending index order (1..=N).
     /// Returns an empty Vec for a player with no trial offers.
+    ///
+    /// **Deprecated**: unbounded, and entries carry no index (callers must infer
+    /// it from position, which breaks if a key is missing). Use
+    /// `get_trial_offers_page`.
     pub fn get_player_trial_offers(env: Env, player_id: u64) -> soroban_sdk::Vec<TrialOffer> {
         Self::bump_instance_ttl(&env);
         let count: u32 = env
@@ -2455,8 +2391,12 @@ impl ScoutAccessContract {
         offers
     }
 
-    /// Return all trial offers for a player in a single call.
-    /// Bounded at 20 to prevent gas exhaustion. Returns empty Vec for no offers.
+    /// Return trial offers for a player in a single call.
+    ///
+    /// **Deprecated**: despite the name this returns only the **20 oldest**
+    /// offers (indices 1..=20) with no offset and no truncation signal; newer
+    /// offers are silently omitted. Use `get_trial_offers_page`. Returns an
+    /// empty Vec for no offers.
     pub fn get_all_trial_offers(env: Env, player_id: u64) -> soroban_sdk::Vec<TrialOffer> {
         const MAX_OFFERS: u32 = 20;
         Self::bump_instance_ttl(&env);
@@ -2479,6 +2419,45 @@ impl ScoutAccessContract {
             }
         }
         offers
+    }
+
+    /// Page through a player's trial offers, **newest first**.
+    ///
+    /// `offset` is a zero-based position in newest-first order (0 = the most
+    /// recent offer); `limit` is clamped to 1..=50 (0 is treated as 1). An
+    /// `offset` at or past `total` yields an empty page. Each entry carries its
+    /// 1-based `index`, the value `confirm_trial_offer` expects. Missing keys
+    /// are skipped, so a page may hold fewer than `limit` entries.
+    ///
+    /// Read-only: like the other list getters it does not extend the TTL of
+    /// the `TrialOffer` keys it reads (unlike `get_trial_offer`).
+    pub fn get_trial_offers_page(
+        env: Env,
+        player_id: u64,
+        offset: u32,
+        limit: u32,
+    ) -> TrialOfferPage {
+        Self::bump_instance_ttl(&env);
+        let total: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TrialCounter(player_id))
+            .unwrap_or(0u32);
+        let cap = if limit == 0 { 1 } else { limit.min(50) };
+        let mut entries: soroban_sdk::Vec<TrialOfferEntry> = soroban_sdk::Vec::new(&env);
+        let mut pos = offset;
+        while pos < total && entries.len() < cap {
+            let index = total - pos;
+            if let Some(offer) = env
+                .storage()
+                .persistent()
+                .get(&DataKey::TrialOffer(player_id, index))
+            {
+                entries.push_back(TrialOfferEntry { index, offer });
+            }
+            pos += 1;
+        }
+        TrialOfferPage { entries, total }
     }
 
     // -------------------------------------------------------------------------

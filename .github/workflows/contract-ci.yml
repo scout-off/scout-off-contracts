@@ -103,6 +103,8 @@ jobs:
           shellcheck scripts/check-error-code-continuity.sh
           shellcheck scripts/check-cargo-doc.sh
           shellcheck scripts/check-migration-numbering.sh
+          shellcheck scripts/check-storage-layout-compat.sh
+          shellcheck scripts/check-prisma-drift.sh
       - name: Docs completeness check
         run: bash scripts/check-docs.sh
       - name: Event-topic consistency check
@@ -630,6 +632,42 @@ jobs:
           name: abi-diff-report-${{ github.sha }}
           path: abi/*.json
           if-no-files-found: ignore
+  storage-layout-compat:
+    name: Storage Layout Compat Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checker self-test (fixtures)
+        run: |
+          set -euo pipefail
+          bash scripts/check-storage-layout-compat.sh \
+            scripts/fixtures/storage_compat_safe/old_types.rs \
+            scripts/fixtures/storage_compat_safe/new_types.rs
+          if bash scripts/check-storage-layout-compat.sh \
+            scripts/fixtures/storage_compat_breaking/old_types.rs \
+            scripts/fixtures/storage_compat_breaking/new_types.rs; then
+            echo "::error::checker failed to flag the breaking fixture"
+            exit 1
+          fi
+
+      - name: Check storage layout against base ref
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          git fetch origin "$BASE_REF" --depth=1
+          ACK=""
+          if [[ -n "$PR_NUMBER" && -f "docs/breaking-change-ack-${PR_NUMBER}.md" ]]; then
+            echo "Found docs/breaking-change-ack-${PR_NUMBER}.md; acknowledging breaking changes"
+            ACK="--acknowledge-breaking-change"
+          fi
+          bash scripts/check-storage-layout-compat.sh "origin/${BASE_REF}" HEAD $ACK
+
   budget-calibration:
     name: Budget Calibration
     runs-on: ubuntu-latest
