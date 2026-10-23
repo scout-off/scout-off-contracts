@@ -97,6 +97,12 @@ The upgrade procedure is implemented in `scripts/upgrade.sh` (see [DEPLOYMENT.md
 
 ---
 
+## Storage Layout CI Gate
+
+The `storage-layout-compat` job in `contract-ci.yml` runs `scripts/check-storage-layout-compat.sh origin/<base> HEAD` on every PR to `main`/`develop`. It covers `DataKey` and every `#[contracttype]` in the four contracts' `types.rs` and in `shared-types/src/lib.rs`, and fails on any layout-breaking change.
+
+To acknowledge an intentional break, commit `docs/breaking-change-ack-<PR number>.md` describing what changed and the data migration plan (see `docs/breaking-change-ack-1396-1397.md`). When that file exists the job passes `--acknowledge-breaking-change`.
+
 ## v0.1.0 → v0.x.0 Migration Notes
 
 This is the initial release. No prior on-chain state exists. The migration path from v0.1.0 to any future v0.x.0 (minor, backward-compatible) release is:

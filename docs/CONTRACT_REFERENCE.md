@@ -4713,10 +4713,33 @@ stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
 
 ---
 
+#### `get_trial_offers_page(player_id: u64, offset: u32, limit: u32) -> TrialOfferPage`
+
+Page through a player's trial offers, **newest first**. `offset` is a zero-based
+position in newest-first order; `limit` is clamped to 1..=50 (0 is treated as
+1). An `offset` at or past `total` returns an empty page. Each
+`TrialOfferEntry { index, offer }` carries the 1-based `index` expected by
+`confirm_trial_offer`; `TrialOfferPage.total` is the player's trial-offer
+count. Missing keys are skipped. Read-only: does not extend `TrialOffer` TTLs
+(unlike `get_trial_offer`).
+
+| | |
+|---|---|
+| **Auth** | None |
+| **Errors** | None |
+
+```bash
+stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
+  -- get_trial_offers_page --player_id 1 --offset 0 --limit 20
+```
+
+---
+
 #### `get_all_trial_offers(player_id: u64) -> Vec<TrialOffer>`
 
-Return all trial offers logged for a player in index order. Returns an
-empty Vec if none exist.
+**Deprecated** — use `get_trial_offers_page`. Despite the name, returns only the
+20 oldest trial offers (indices 1..=20) in index order, with no offset and no
+truncation signal. Returns an empty Vec if none exist.
 
 | | |
 |---|---|
@@ -4849,7 +4872,8 @@ stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
 
 Return all trial offers for a given player in ascending index order (1..=N).
 Returns an empty Vec for a player with no trial offers. Unbounded (unlike the
-20-entry cap on `get_all_trial_offers`).
+20-entry cap on `get_all_trial_offers`). **Deprecated** — use
+`get_trial_offers_page`.
 
 | | |
 |---|---|
@@ -4884,7 +4908,7 @@ stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
 
 #### `get_all_trial_offers(player_id: u64) -> Vec<TrialOffer>`
 
-Return all trial offers for a player in a single call. Bounded at 20 to prevent gas exhaustion. Returns an empty `Vec` when no offers exist.
+**Deprecated** — use `get_trial_offers_page`. Returns only the 20 oldest offers (indices 1..=20); newer offers are silently omitted. Returns an empty `Vec` when no offers exist.
 
 | Function | Behavior | Recommended use |
 |---|---|---|
