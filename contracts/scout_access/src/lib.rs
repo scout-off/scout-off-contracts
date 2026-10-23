@@ -1207,6 +1207,8 @@ impl ScoutAccessContract {
         Self::bump_instance_ttl(&env);
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
+        // #1616: the function-scoped pause covers every fee-charging contact path.
+        Self::require_pay_to_contact_not_paused(&env)?;
         scout.require_auth();
 
         // Reject deactivated scouts.

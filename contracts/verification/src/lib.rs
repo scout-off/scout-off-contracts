@@ -776,7 +776,8 @@ impl VerificationContract {
 
         // Retroactively invalidate this validator's contribution to every
         // still-open (sub-threshold) pending attestation claim.
-        let invalidated = Self::invalidate_pending_votes_for_validator(env, wallet);
+        let invalidated =
+            Self::invalidate_pending_votes_for_validator(env, wallet, new_active_count);
         if invalidated > 0 {
             events::validator_pending_votes_invalidated(env, admin, wallet, invalidated);
         }
@@ -1848,6 +1849,24 @@ impl VerificationContract {
         env.storage()
             .persistent()
             .get(&DataKey::PendingMilestoneClaim(player_id, evidence_hash))
+    }
+
+    /// Whether an open claim can still reach its snapshotted threshold given
+    /// the current active validator count (issue #1613). `false` when no claim
+    /// is open. Revocation aborts claims that become unreachable, so an open
+    /// claim is normally reachable; this also covers a claim whose validators
+    /// were removed by other means.
+    pub fn is_pending_claim_reachable(env: Env, player_id: u64, evidence_hash: String) -> bool {
+        let claim: Option<PendingMilestoneClaim> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PendingMilestoneClaim(player_id, evidence_hash));
+        let active: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ActiveValidatorCount)
+            .unwrap_or(0u32);
+        matches!(claim, Some(c) if c.threshold <= active)
     }
 
     /// Whether `validator_wallet` has an active (not-yet-expired,
@@ -4639,7 +4658,17 @@ impl VerificationContract {
     /// small constant number of entries regardless of how many claims exist
     /// contract-wide or how long the validator has been registered. Returns
     /// the number of claims actually decremented, for the emitted event.
-    fn invalidate_pending_votes_for_validator(env: &Env, wallet: &Address) -> u32 {
+    ///
+    /// #1613: after retracting the vote, a claim whose snapshotted threshold
+    /// exceeds `active_count` can never commit, so its round is aborted: the
+    /// remaining votes are deleted, the claim is removed (the evidence may be
+    /// re-attested under the then-current threshold) and
+    /// `attestation_round_aborted` is emitted.
+    fn invalidate_pending_votes_for_validator(
+        env: &Env,
+        wallet: &Address,
+        active_count: u32,
+    ) -> u32 {
         let pending_votes_key = DataKey::ValidatorPendingVotes(wallet.clone());
         let refs: Vec<PendingVoteRef> = env
             .storage()
@@ -4682,6 +4711,19 @@ impl VerificationContract {
                     );
                     env.storage().persistent().remove(&vote_key);
                     invalidated += 1;
+
+                    if claim.threshold > active_count {
+                        Self::delete_claim_round_votes(env, &claim);
+                        env.storage().persistent().remove(&claim_key);
+                        events::attestation_round_aborted(
+                            env,
+                            claim.player_id,
+                            &claim.evidence_hash,
+                            claim.round,
+                            claim.threshold,
+                            active_count,
+                        );
+                    }
                 }
             }
         }

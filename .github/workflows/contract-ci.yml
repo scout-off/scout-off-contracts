@@ -695,3 +695,35 @@ jobs:
           print("")
           print("All measured values are within budget.")
           PYEOF
+
+  # Issue #1614: two independent clean-container builds of the same commit must
+  # produce byte-identical optimized WASM for all four contracts.
+  reproducible-build:
+    name: Reproducible WASM build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build pinned build image
+        run: docker build -t scoutchain-wasm-build -f ci/build/Dockerfile ci/build
+
+      - name: Build WASM twice in clean containers
+        run: |
+          for run in 1 2; do
+            mkdir -p "out-$run"
+            # Fresh container and a fresh copy of the tree per run: nothing is shared between builds.
+            rm -rf "src-$run" && git worktree add --detach "src-$run" HEAD
+            docker run --rm -v "$PWD/src-$run:/src" -v "$PWD/out-$run:/out" scoutchain-wasm-build /out
+          done
+
+      - name: Compare hashes
+        run: diff -u out-1/SHA256SUMS out-2/SHA256SUMS && cmp out-1/wasm-hashes.json out-2/wasm-hashes.json
+
+      - name: Upload WASM hashes
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-hashes
+          path: |
+            out-1/wasm-hashes.json
+            out-1/SHA256SUMS
+            out-1/*.optimized.wasm

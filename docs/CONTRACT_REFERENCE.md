@@ -1573,8 +1573,19 @@ see `approve_milestone` above for why.
 An already-open claim keeps the threshold in effect when its current round
 started; changing this value only affects claims that start a fresh round
 afterward, so the admin cannot retroactively fast-track or invalidate an
-in-flight claim by moving the threshold mid-vote. Lowering the global
-threshold does **not** rescue stuck claims that snapshotted a higher value.
+in-flight claim by moving the threshold mid-vote.
+
+**Unreachable claims (issue #1613):** when a revocation drops
+`ActiveValidatorCount` below an open claim's snapshotted threshold, that claim
+can never commit. The revocation therefore aborts the round deterministically:
+the revoked validator's vote is retracted, every remaining vote of the round is
+deleted, the pending claim is removed and `attestation_round_aborted` is
+emitted. The evidence can then be attested again, starting a fresh round under
+the then-current configured threshold (lower it first if the active set is
+still too small). Claims that remain reachable are only decremented by the
+revoked validator's vote. `is_pending_claim_reachable(player_id,
+evidence_hash)` reports whether an open claim's threshold is `<=` the current
+active count (`false` when no claim is open).
 
 Emits `milestone_threshold_updated` on success. A revocation that leaves
 `ActiveValidatorCount < threshold` emits `milestone_threshold_unreachable`
@@ -4224,7 +4235,11 @@ writes an `EvidenceAccessGrant` and emits `evidence_access_granted`, same as
 | | |
 |---|---|
 | **Auth** | `scout` must sign |
-| **Errors** | `ContractPaused` · `NotInitialized` · `ScoutNotSubscribed` · `SubscriptionExpired` · `ContactQuotaExceeded` · `Overflow` |
+| **Errors** | `ContractPaused` · `NotInitialized` · `PayToContactPaused` · `ScoutNotSubscribed` · `SubscriptionExpired` · `ContactQuotaExceeded` · `Overflow` |
+
+The function-scoped `pause_pay_to_contact` covers this entrypoint as well as
+`pay_to_contact`. Guard order: `ContractPaused` → `NotInitialized` →
+`PayToContactPaused`, all before auth, state changes or token transfers.
 
 **Check precedence order** (when multiple error conditions are simultaneously
 true, the first matching check in this list wins):
@@ -4620,8 +4635,9 @@ mirroring `verification.pause_approve_milestone` from issue #809; implemented
 for scout_access in issue #1056).
 
 This halts fee-charging contact while leaving every other function operational:
-scouts can still `subscribe`, renew, read state, and use `batch_contact_players`
-/ `log_trial_offer`. The whole-contract pause (if active) still takes precedence
+scouts can still `subscribe`, renew, read state, and use `log_trial_offer`.
+Both fee-charging contact entrypoints (`pay_to_contact` and
+`batch_contact_players`) return `PayToContactPaused` while it is active. The whole-contract pause (if active) still takes precedence
 over the function-scoped flag — un-pausing the whole contract does not clear
 `pay_to_contact`'s flag. The flag is stored in instance storage under
 `DataKey::PausedPayToContact` and defaults to `false`.
@@ -5659,6 +5675,7 @@ All events follow the unified `(Symbol, actor)` topic schema introduced in #246.
 | `jury_config_updated` | event_name, admin (Address) | old_impact (u32), old_quorum (u32), old_window (u64), new_impact (u32), new_quorum (u32), new_window (u64) | Admin updated jury escalation parameters via `set_jury_config` |
 | `milestone_threshold_updated` | event_name, admin (Address) | old_threshold (u32), new_threshold (u32) | Admin changed the k-of-n milestone approval threshold |
 | `milestone_threshold_unreachable` | event_name, admin (Address) | threshold (u32), active_validator_count (u32) | A revocation (or similar) left active validators below the configured threshold |
+| `attestation_round_aborted` | player_id (u64) | evidence_hash (String), round (u32), threshold (u32), active_count (u32) | A revocation made an open k-of-n claim unreachable; the round and its votes were discarded (issue #1613) |
 | `attestation_key_registered` | event_name, wallet (Address) | (public_key (BytesN<32>), rotated_from (Option<BytesN<32>>)) | A validator registered or rotated its off-chain attestation key |
 | `contract_upgraded` | event_name, admin (Address) | new_wasm_hash (BytesN<32>) | Emitted by `upgrade()` before the WASM swap, so it is attributed to the old code version |
 | `migration_window_opened` | event_name, admin (Address) | () | `open_migration_window` opened the one-time seeding window |

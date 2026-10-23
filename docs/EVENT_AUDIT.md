@@ -145,6 +145,7 @@ The tool reconstructs state from these events:
 | `jury_config_updated` | verification | Jury parameter change | Snapshot fields for config history; does not alter in-flight disputes |
 | `milestone_threshold_updated` | verification | k-of-n threshold change | Operators / indexers track threshold history |
 | `milestone_threshold_unreachable` | verification | Active set dropped below threshold | Health signal after revocation (or similar) |
+| `attestation_round_aborted` | verification | Revocation made an open k-of-n claim unreachable | Indexers drop the pending claim; evidence may be re-attested (#1613) |
 
 ### Attestation key registration
 
