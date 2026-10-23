@@ -80,3 +80,15 @@ Cross-linked from:
 
 - [docs/DEPLOYMENT.md — Address migration](DEPLOYMENT.md#address-migration-new-contract-id)
 - [docs/INDEXER.md — Known gaps](INDEXER.md#known-gaps-between-the-contracts-and-this-schema)
+
+## `admin_seed_history` validation rules (#1617)
+
+Each seeded entry is validated before it is written; violations write nothing:
+
+- `entry.player_id` must equal the target `player_id` (`SeedPlayerMismatch`).
+- `entry.old_level` must equal the previous entry's `new_level`
+  (`Unverified` for index 1) (`SeedLevelDiscontinuity`). Reset entries
+  (`milestone_ref == 0`) may jump `new_level` freely, but their `old_level`
+  must still continue the chain.
+- `updated_at` and `ledger_sequence` must be non-decreasing
+  (`SeedTimestampRegression`).

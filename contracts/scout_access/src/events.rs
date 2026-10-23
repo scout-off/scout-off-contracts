@@ -4,6 +4,10 @@ use soroban_sdk::{contractevent, Address, BytesN, Env, Symbol};
 // ── Typed contract events (issue #1370) ──────────────────────────────────────
 
 /// Emitted by `initialize` / `__constructor`.
+pub const CONTRACT_UPGRADED: &str = "contract_upgraded";
+pub const MIGRATION_WINDOW_CLOSED: &str = "migration_window_closed";
+pub const MIGRATION_WINDOW_OPENED: &str = "migration_window_opened";
+
 #[contractevent]
 pub struct ContractInitialized {
     #[topic]
@@ -277,7 +281,7 @@ pub fn contract_initialized(env: &Env, admin: &Address) {
     ContractInitialized {
         admin: admin.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn scout_subscribed(env: &Env, scout: &Address, tier: &SubscriptionTier, fee_paid: i128) {
@@ -286,7 +290,7 @@ pub fn scout_subscribed(env: &Env, scout: &Address, tier: &SubscriptionTier, fee
         tier: tier.clone(),
         fee_paid,
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn player_contacted(env: &Env, player_id: u64, scout: &Address, fee_paid: i128) {
@@ -295,7 +299,7 @@ pub fn player_contacted(env: &Env, player_id: u64, scout: &Address, fee_paid: i1
         player_id,
         fee_paid,
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn trial_offer_logged(env: &Env, player_id: u64, scout: &Address) {
@@ -303,7 +307,7 @@ pub fn trial_offer_logged(env: &Env, player_id: u64, scout: &Address) {
         scout: scout.clone(),
         player_id,
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn trial_offer_confirmed(env: &Env, player_id: u64, scout: &Address, index: u32) {
@@ -312,7 +316,7 @@ pub fn trial_offer_confirmed(env: &Env, player_id: u64, scout: &Address, index: 
         player_id,
         index,
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn trial_offer_expired(env: &Env, player_id: u64, scout: &Address, index: u32) {
@@ -321,7 +325,7 @@ pub fn trial_offer_expired(env: &Env, player_id: u64, scout: &Address, index: u3
         player_id,
         index,
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn trial_escrow_admin_refunded(
@@ -337,7 +341,7 @@ pub fn trial_escrow_admin_refunded(
         index,
         amount,
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn fees_withdrawn(env: &Env, admin: &Address, to: &Address, amount: i128) {
@@ -347,7 +351,7 @@ pub fn fees_withdrawn(env: &Env, admin: &Address, to: &Address, amount: i128) {
         amount,
         timestamp: env.ledger().timestamp(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn admin_transferred(env: &Env, old_admin: &Address, new_admin: &Address) {
@@ -355,7 +359,7 @@ pub fn admin_transferred(env: &Env, old_admin: &Address, new_admin: &Address) {
         old_admin: old_admin.clone(),
         new_admin: new_admin.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn admin_transfer_proposed(env: &Env, old_admin: &Address, new_admin: &Address) {
@@ -363,35 +367,35 @@ pub fn admin_transfer_proposed(env: &Env, old_admin: &Address, new_admin: &Addre
         old_admin: old_admin.clone(),
         new_admin: new_admin.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn contract_paused(env: &Env, admin: &Address) {
     ContractPaused {
         admin: admin.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn contract_unpaused(env: &Env, admin: &Address) {
     ContractUnpaused {
         admin: admin.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn pay_to_contact_paused(env: &Env, admin: &Address) {
     PayToContactPaused {
         admin: admin.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn pay_to_contact_unpaused(env: &Env, admin: &Address) {
     PayToContactUnpaused {
         admin: admin.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn subscription_created(
@@ -407,7 +411,7 @@ pub fn subscription_created(
         subscribed_at,
         expires_at,
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn subscription_renewed(
@@ -423,7 +427,7 @@ pub fn subscription_renewed(
         subscribed_at,
         expires_at,
     }
-    .emit(env);
+    .publish(env);
 }
 
 /// topics: (event_name, scout)  data: (admin, amount)
@@ -433,7 +437,7 @@ pub fn subscription_refunded(env: &Env, scout: &Address, admin: &Address, amount
         admin: admin.clone(),
         amount,
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn progress_contract_updated(env: &Env, admin: &Address, progress_contract: &Address) {
@@ -441,7 +445,7 @@ pub fn progress_contract_updated(env: &Env, admin: &Address, progress_contract: 
         admin: admin.clone(),
         progress_contract: progress_contract.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn registration_contract_updated(env: &Env, admin: &Address, registration_contract: &Address) {
@@ -449,7 +453,7 @@ pub fn registration_contract_updated(env: &Env, admin: &Address, registration_co
         admin: admin.clone(),
         registration_contract: registration_contract.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn wiring_updated(
@@ -465,7 +469,7 @@ pub fn wiring_updated(
         new_address: new_address.clone(),
         new_epoch,
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn fee_config_proposed(
@@ -479,7 +483,7 @@ pub fn fee_config_proposed(
         proposed_config: proposed_config.clone(),
         proposed_at,
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn fee_config_updated(
@@ -493,7 +497,7 @@ pub fn fee_config_updated(
         old_config: old_config.clone(),
         new_config: new_config.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 /// topics: (event_name, admin)  data: ()
@@ -531,11 +535,11 @@ pub fn fee_config_delay_bypassed(
         old_config: old_config.clone(),
         new_config: new_config.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn progress_contract_not_set(env: &Env, player_id: u64) {
-    ProgressContractNotSet { player_id }.emit(env);
+    ProgressContractNotSet { player_id }.publish(env);
 }
 
 pub fn progress_call_failed(env: &Env, player_id: u64, error_code: u32) {
@@ -543,7 +547,7 @@ pub fn progress_call_failed(env: &Env, player_id: u64, error_code: u32) {
         player_id,
         error_code,
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn auto_renew_set(env: &Env, scout: &Address, enabled: bool) {
@@ -551,7 +555,7 @@ pub fn auto_renew_set(env: &Env, scout: &Address, enabled: bool) {
         scout: scout.clone(),
         enabled,
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn subscription_auto_renewed(
@@ -567,7 +571,7 @@ pub fn subscription_auto_renewed(
         subscribed_at,
         expires_at,
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn subscription_record_restored(env: &Env, admin: &Address, scout: &Address) {
@@ -575,7 +579,7 @@ pub fn subscription_record_restored(env: &Env, admin: &Address, scout: &Address)
         admin: admin.clone(),
         scout: scout.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn evidence_access_granted(
@@ -589,7 +593,7 @@ pub fn evidence_access_granted(
         player_id,
         tier: tier.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn evidence_access_revoked(env: &Env, player_id: u64, scout: &Address, admin: &Address) {
@@ -598,7 +602,7 @@ pub fn evidence_access_revoked(env: &Env, player_id: u64, scout: &Address, admin
         player_id,
         admin: admin.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn player_data_purged(
@@ -614,7 +618,7 @@ pub fn player_data_purged(
         entries_removed,
         more,
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub const EVIDENCE_ACCESS_REVOKED_BY_PLAYER: &str = "evidence_access_revoked_by_player";

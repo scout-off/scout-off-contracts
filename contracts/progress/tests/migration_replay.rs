@@ -13,18 +13,27 @@ use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, Symbol};
 fn setup() -> (Env, ProgressContractClient<'static>, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    let id = env.register(ProgressContract, ());
-    let client = ProgressContractClient::new(&env, &id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let id = env.register(ProgressContract, (admin.clone(),));
+    let client = ProgressContractClient::new(&env, &id);
     (env, client, admin)
 }
 
+fn level_at(index: u32) -> ProgressLevel {
+    match index {
+        0 => ProgressLevel::Unverified,
+        1 => ProgressLevel::VerifiedIdentity,
+        2 => ProgressLevel::PerformanceMilestones,
+        _ => ProgressLevel::EliteTier,
+    }
+}
+
+/// Entries chain: entry `index` moves `level_at(index - 1)` -> `level_at(index)`.
 fn make_entry(env: &Env, player_id: u64, index: u32) -> ProgressEntry {
     ProgressEntry {
         player_id,
-        old_level: ProgressLevel::Unverified,
-        new_level: ProgressLevel::VerifiedIdentity,
+        old_level: level_at(index.saturating_sub(1)),
+        new_level: level_at(index),
         updated_by: Address::generate(env),
         updated_at: 1_700_000_000 + index as u64 * 100,
         milestone_ref: index,
@@ -73,10 +82,9 @@ fn test_seed_multi_entry_with_root_verification() {
     let root = client.get_progress_root(&player_id);
 
     // Register a second contract in the SAME env (no cross-env object issues).
-    let id2 = env.register(ProgressContract, ());
-    let client2 = ProgressContractClient::new(&env, &id2);
     let admin2 = Address::generate(&env);
-    client2.initialize(&admin2);
+    let id2 = env.register(ProgressContract, (admin2.clone(),));
+    let client2 = ProgressContractClient::new(&env, &id2);
     client2.open_migration_window();
 
     client2.admin_seed_history(&player_id, &1u32, &e1, &None);
@@ -123,10 +131,9 @@ fn test_altered_entry_causes_root_mismatch() {
     let correct_root = client.get_progress_root(&player_id);
 
     // Build a second contract in the SAME env with an altered entry.
-    let id2 = env.register(ProgressContract, ());
-    let client2 = ProgressContractClient::new(&env, &id2);
     let admin2 = Address::generate(&env);
-    client2.initialize(&admin2);
+    let id2 = env.register(ProgressContract, (admin2.clone(),));
+    let client2 = ProgressContractClient::new(&env, &id2);
     client2.open_migration_window();
 
     let mut altered = make_entry(&env, player_id, 1);
@@ -140,10 +147,9 @@ fn test_altered_entry_causes_root_mismatch() {
     );
 
     // Third contract: seeding the altered entry with the ORIGINAL root must fail.
-    let id3 = env.register(ProgressContract, ());
-    let client3 = ProgressContractClient::new(&env, &id3);
     let admin3 = Address::generate(&env);
-    client3.initialize(&admin3);
+    let id3 = env.register(ProgressContract, (admin3.clone(),));
+    let client3 = ProgressContractClient::new(&env, &id3);
     client3.open_migration_window();
 
     let mut altered3 = make_entry(&env, player_id, 1);
@@ -275,21 +281,9 @@ fn test_non_admin_cannot_seed_history() {
     // will panic, which try_ surfaces as Err.
     let env = Env::default();
     // NO mock_all_auths.
-    let id = env.register(ProgressContract, ());
-    let client = ProgressContractClient::new(&env, &id);
     let admin = Address::generate(&env);
-
-    // Initialize with mocked admin auth.
-    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
-        address: &admin,
-        invoke: &soroban_sdk::testutils::MockAuthInvoke {
-            contract: &id,
-            fn_name: "initialize",
-            args: soroban_sdk::vec![&env, admin.to_val()],
-            sub_invokes: &[],
-        },
-    }]);
-    client.initialize(&admin);
+    let id = env.register(ProgressContract, (admin.clone(),));
+    let client = ProgressContractClient::new(&env, &id);
 
     // Open migration window with admin auth.
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
@@ -440,4 +434,61 @@ fn test_migration_window_events_emitted() {
         1,
         "migration_window_closed event must be emitted"
     );
+}
+
+// ── #1617: seeded-entry validation ───────────────────────────────────────────
+
+#[test]
+fn test_seed_player_mismatch_rejected() {
+    let (env, client, _admin) = setup();
+    client.open_migration_window();
+    let entry = make_entry(&env, 99, 1);
+    let r = client.try_admin_seed_history(&42u64, &1u32, &entry, &None);
+    assert_eq!(r, Err(Ok(ProgressError::SeedPlayerMismatch)));
+    assert_eq!(client.get_history_count(&42u64), 0u32);
+}
+
+#[test]
+fn test_seed_level_discontinuity_rejected() {
+    let (env, client, _admin) = setup();
+    client.open_migration_window();
+    let mut e = make_entry(&env, 42, 1);
+    e.new_level = ProgressLevel::EliteTier;
+    client.admin_seed_history(&42u64, &1u32, &e, &None);
+    // Previous new_level is EliteTier; this entry claims to start at Unverified.
+    let mut e2 = make_entry(&env, 42, 2);
+    e2.old_level = ProgressLevel::Unverified;
+    let r = client.try_admin_seed_history(&42u64, &2u32, &e2, &None);
+    assert_eq!(r, Err(Ok(ProgressError::SeedLevelDiscontinuity)));
+    // First entry must start at Unverified.
+    let mut first = make_entry(&env, 7, 1);
+    first.old_level = ProgressLevel::EliteTier;
+    let r = client.try_admin_seed_history(&7u64, &1u32, &first, &None);
+    assert_eq!(r, Err(Ok(ProgressError::SeedLevelDiscontinuity)));
+}
+
+#[test]
+fn test_seed_reset_may_jump_down_but_must_chain_from_old_level() {
+    let (env, client, _admin) = setup();
+    client.open_migration_window();
+    client.admin_seed_history(&42u64, &1u32, &make_entry(&env, 42, 1), &None);
+    // Reset (milestone_ref == 0): VerifiedIdentity -> Unverified is allowed.
+    let mut reset = make_entry(&env, 42, 2);
+    reset.old_level = ProgressLevel::VerifiedIdentity;
+    reset.new_level = ProgressLevel::Unverified;
+    reset.milestone_ref = 0;
+    assert!(client
+        .try_admin_seed_history(&42u64, &2u32, &reset, &None)
+        .is_ok());
+}
+
+#[test]
+fn test_seed_timestamp_regression_rejected() {
+    let (env, client, _admin) = setup();
+    client.open_migration_window();
+    client.admin_seed_history(&42u64, &1u32, &make_entry(&env, 42, 1), &None);
+    let mut e2 = make_entry(&env, 42, 2);
+    e2.updated_at = 1;
+    let r = client.try_admin_seed_history(&42u64, &2u32, &e2, &None);
+    assert_eq!(r, Err(Ok(ProgressError::SeedTimestampRegression)));
 }

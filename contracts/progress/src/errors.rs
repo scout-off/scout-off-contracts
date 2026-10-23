@@ -86,6 +86,12 @@ pub enum ProgressError {
     SchemaVersionTooNew = 22,
     /// `migrate` was asked for a target newer than this code understands.
     UnknownSchemaTarget = 23,
+    /// `admin_seed_history` entry's `player_id` differs from the target player.
+    SeedPlayerMismatch = 24,
+    /// `admin_seed_history` entry's `old_level` does not continue the chain.
+    SeedLevelDiscontinuity = 25,
+    /// `admin_seed_history` entry's timestamp or ledger precedes the previous entry.
+    SeedTimestampRegression = 26,
 }
 
 impl AdminError for ProgressError {

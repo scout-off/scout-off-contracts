@@ -48,8 +48,14 @@ const MAX_GLOBAL_MILESTONE_INDEX: u32 = 500;
 /// is bounded by Soroban's 64 KB per-entry limit.
 const MAX_VALIDATORS: u32 = 100;
 
-/// Maximum milestones a single validator may approve for one player.
+/// Maximum milestones a single validator may commit for one player within
+/// one `PLAYER_VALIDATOR_WINDOW_SECS` window (issue #1615).
 const MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR: u32 = 5;
+
+/// Cap window: the per-(validator, player) counter resets once this many
+/// seconds have passed since the window opened, so the cap limits collusion
+/// rate without imposing a permanent liveness ceiling. 90 days.
+const PLAYER_VALIDATOR_WINDOW_SECS: u64 = 90 * 24 * 60 * 60;
 
 /// Maximum number of milestones flagged per call in a for-cause revocation
 /// cascade sweep.  Keeps per-call CPU cost proportional to this limit rather
@@ -3218,11 +3224,16 @@ impl VerificationContract {
                 removed += 1;
             }
             // Remove any associated dispute.
-            let dk = DataKey::MilestoneDispute(player_id, idx);
-            if env.storage().persistent().has(&dk) {
-                env.storage().persistent().remove(&dk);
-                removed += 1;
+            let rk = DataKey::DisputeRound(player_id, idx);
+            let last_round: u32 = env.storage().persistent().get(&rk).unwrap_or(0);
+            for round in 1..=last_round {
+                let dk = DataKey::MilestoneDispute(player_id, idx, round);
+                if env.storage().persistent().has(&dk) {
+                    env.storage().persistent().remove(&dk);
+                    removed += 1;
+                }
             }
+            env.storage().persistent().remove(&rk);
         }
 
         let next_cursor = end;
@@ -4762,54 +4773,35 @@ impl VerificationContract {
     /// Gate milestone commitment on the player being currently active in
     /// the registration contract (issue #1399).
     ///
-    /// **Documented permissive fallback**: if `DataKey::RegistrationContract`
-    /// has never been wired (`set_registration_contract`), this check is
-    /// skipped entirely and the call is allowed through unchanged — this
-    /// preserves today's behavior for any deployment/test that has not yet
-    /// wired the registration contract. Production deployments MUST call
-    /// `set_registration_contract` for this gate to have any effect; an
-    /// unwired contract is not a bypass mechanism, it is the pre-#1399
-    /// default.
+    /// Fails closed: if `DataKey::RegistrationContract` has never been wired
+    /// (`set_registration_contract`) the call is rejected with
+    /// `RegistrationNotConfigured` (issue #1622), matching progress's
+    /// `RegistrationNotConfigured` behaviour (#1409).
     ///
-    /// Once wired:
-    /// 1. `get_player(player_id)` must succeed — any failure (unknown
-    ///    `player_id`, or a minimal stub that does not implement this
-    ///    method at all) is treated uniformly as `PlayerNotRegistered`.
-    /// 2. `is_player_deactivated(player_id)` is then consulted on a
-    ///    best-effort basis: `true` → `PlayerDeactivated`. If the callee
-    ///    does not implement this method (an older/minimal registration
-    ///    stub), the call fails at the host level and is treated as "not
-    ///    deactivated" rather than failing closed, since this method is a
-    ///    newer addition to the registration contract surface than
-    ///    `get_player` itself.
+    /// Once wired, a single `get_player_status(player_id)` call decides:
+    /// any failure (unknown `player_id`) → `PlayerNotRegistered`;
+    /// `Deactivated` → `PlayerDeactivated`; `Active` → allowed.
     fn require_active_player(env: &Env, player_id: u64) -> Result<(), VerificationError> {
         let Some(reg_addr) = env
             .storage()
             .instance()
             .get::<DataKey, Address>(&DataKey::RegistrationContract)
         else {
-            return Ok(());
+            return Err(VerificationError::RegistrationNotConfigured);
         };
 
         let args: Vec<Val> = (player_id,).into_val(env);
-
-        let exists = env.try_invoke_contract::<RegPlayerProfile, VerificationError>(
+        let status = env.try_invoke_contract::<RegPlayerStatus, soroban_sdk::Error>(
             &reg_addr,
-            &Symbol::new(env, "get_player"),
-            args.clone(),
-        );
-        match exists {
-            Ok(Ok(_)) => {}
-            _ => return Err(VerificationError::PlayerNotRegistered),
-        }
-
-        let deactivated = env.try_invoke_contract::<bool, VerificationError>(
-            &reg_addr,
-            &Symbol::new(env, "is_player_deactivated"),
+            &Symbol::new(env, "get_player_status"),
             args,
         );
-        if let Ok(Ok(true)) = deactivated {
-            return Err(VerificationError::PlayerDeactivated);
+        match status {
+            Ok(Ok(RegPlayerStatus::Active)) => {}
+            Ok(Ok(RegPlayerStatus::Deactivated)) => {
+                return Err(VerificationError::PlayerDeactivated)
+            }
+            _ => return Err(VerificationError::PlayerNotRegistered),
         }
 
         Ok(())
@@ -4844,16 +4836,22 @@ impl VerificationContract {
             }
         }
 
-        // Check per-validator limit for every attestor before any
-        // storage is mutated. If any attestor is at the cap the whole
-        // commit is rejected atomically.
-        for i in 0..unique_attestors.len() {
-            let attestor = unique_attestors.get(i).unwrap();
-            let vp_key = DataKey::ValidatorPlayerMilestoneCount(attestor.clone(), player_id);
-            let vp_count: u32 = env.storage().persistent().get(&vp_key).unwrap_or(0u32);
-            if vp_count >= MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR {
-                return Err(VerificationError::MilestoneLimitExceeded);
-            }
+        // #1615: only the committing validator counts toward the cap. In
+        // k-of-n mode co-attestors cannot commit alone, so charging them as
+        // well made `floor(5n/k)` a permanent ceiling on a player's milestones.
+        // The count is also windowed, so the ceiling is a rate, not a total.
+        let now = env.ledger().timestamp();
+        let vp_key = DataKey::ValidatorPlayerMilestoneCount(validator_wallet.clone(), player_id);
+        let vw_key = DataKey::ValidatorPlayerWindowStart(validator_wallet.clone(), player_id);
+        let window_start: u64 = env.storage().persistent().get(&vw_key).unwrap_or(0u64);
+        let window_open = now < window_start.saturating_add(PLAYER_VALIDATOR_WINDOW_SECS);
+        let vp_count: u32 = if window_open {
+            env.storage().persistent().get(&vp_key).unwrap_or(0u32)
+        } else {
+            0
+        };
+        if vp_count >= MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR {
+            return Err(VerificationError::MilestoneLimitExceeded);
         }
 
         let counter_key = DataKey::MilestoneCounter(player_id);
@@ -4913,19 +4911,18 @@ impl VerificationContract {
             .persistent()
             .extend_ttl(&val_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
 
-        // Every attestor counts toward its own per-player cap, matching the
-        // pre-commit check above.
-        for i in 0..unique_attestors.len() {
-            let attestor = unique_attestors.get(i).unwrap();
-            let vp_key = DataKey::ValidatorPlayerMilestoneCount(attestor, player_id);
-            let vp_count: u32 = env.storage().persistent().get(&vp_key).unwrap_or(0u32);
-            env.storage().persistent().set(
-                &vp_key,
-                &(safe_add_u32(vp_count, 1).map_err(|_| VerificationError::Overflow)?),
-            );
+        env.storage().persistent().set(
+            &vp_key,
+            &(safe_add_u32(vp_count, 1).map_err(|_| VerificationError::Overflow)?),
+        );
+        env.storage()
+            .persistent()
+            .extend_ttl(&vp_key, PERSISTENT_TTL_MAX, PERSISTENT_TTL_MAX);
+        if !window_open || vp_count == 0 {
+            env.storage().persistent().set(&vw_key, &now);
             env.storage()
                 .persistent()
-                .extend_ttl(&vp_key, PERSISTENT_TTL_MAX, PERSISTENT_TTL_MAX);
+                .extend_ttl(&vw_key, PERSISTENT_TTL_MAX, PERSISTENT_TTL_MAX);
         }
 
         let vp_index_key = DataKey::ValidatorPlayers(validator_wallet.clone());
@@ -5153,8 +5150,8 @@ mod tests {
             }
         }
 
-        pub fn is_player_deactivated(_env: Env, _player_id: u64) -> bool {
-            false
+        pub fn get_player_status(_env: Env, _player_id: u64) -> RegPlayerStatus {
+            RegPlayerStatus::Active
         }
     }
 
@@ -5258,11 +5255,7 @@ mod tests {
                 &env,
                 (
                     client.address.clone(),
-                    (
-                        Symbol::new(&env, "AdminTransferred"),
-                        old_admin.clone(),
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "AdminTransferred"), old_admin.clone(),).into_val(&env),
                     new_admin.clone().into_val(&env),
                 )
             ]
@@ -6097,11 +6090,7 @@ mod tests {
                 &env,
                 (
                     client.address.clone(),
-                    (
-                        Symbol::new(&env, "ContractPaused"),
-                        admin.clone(),
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "ContractPaused"), admin.clone(),).into_val(&env),
                     ().into_val(&env)
                 )
             ]
@@ -6115,11 +6104,7 @@ mod tests {
                 &env,
                 (
                     client.address.clone(),
-                    (
-                        Symbol::new(&env, "ContractUnpaused"),
-                        admin.clone(),
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "ContractUnpaused"), admin.clone(),).into_val(&env),
                     ().into_val(&env)
                 )
             ]
@@ -6169,11 +6154,7 @@ mod tests {
                 &env,
                 (
                     client.address.clone(),
-                    (
-                        Symbol::new(&env, "ProgressContractUpdated"),
-                        admin.clone(),
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "ProgressContractUpdated"), admin.clone(),).into_val(&env),
                     addr.clone().into_val(&env)
                 ),
                 (
@@ -6409,11 +6390,7 @@ mod tests {
                 &env,
                 (
                     client.address.clone(),
-                    (
-                        Symbol::new(&env, "ContractInitialized"),
-                        admin.clone(),
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "ContractInitialized"), admin.clone(),).into_val(&env),
                     ().into_val(&env)
                 )
             ]
@@ -7205,11 +7182,7 @@ mod tests {
                 &env,
                 (
                     client.address.clone(),
-                    (
-                        Symbol::new(&env, "DisputeResolved"),
-                        admin.clone(),
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "DisputeResolved"), admin.clone(),).into_val(&env),
                     (2u64, 1u32, false).into_val(&env)
                 )
             ]

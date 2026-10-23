@@ -18,6 +18,12 @@ The initial v0.1.0 entry below retains the year-only date because no exact histo
 
 ## Unreleased
 
+- Version: `v2.0.1`
+- Release date: `2026-10-23`
+- Contracts affected: `verification`, `progress`, `scout_access`
+- Summary: #1622 `verification` now fails closed with `RegistrationNotConfigured` (59) when registration is unwired and uses one `get_player_status` call instead of two dynamic calls. #1615 the per-validator-per-player milestone cap charges only the committing validator and resets per 90-day window. #1617 `progress.admin_seed_history` rejects mismatched player IDs, level discontinuities and timestamp regressions (`SeedPlayerMismatch` 24, `SeedLevelDiscontinuity` 25, `SeedTimestampRegression` 26). #1621 `scout_access` rejects payment tokens whose `decimals()` is not 7 with `UnsupportedTokenDecimals` (46); SAC-wrapped XLM is unaffected. Also restores compilation after #1562 (`.publish`, removed topic constants, event name over 32 chars, duplicate `health`).
+- Classification: `Breaking (MAJOR)` for the unwired-registration behaviour change in `verification`; otherwise `Non-breaking (MINOR)`.
+
 - Version: `v1.1.1`
 - Release date: `2026-08-21`
 - Contracts affected: `progress`

@@ -132,7 +132,6 @@ impl ProgressContract {
         env.storage()
             .instance()
             .set(&DataKey::SchemaVersion, &CODE_SCHEMA_VERSION);
-        Ok(())
     }
 
     /// Store the verification contract address allowed to call `advance_level`.
@@ -1120,6 +1119,33 @@ impl ProgressContract {
             safe_add_u32(current_counter, 1).map_err(|_| ProgressError::Overflow)?;
         if history_index != expected_next {
             return Err(ProgressError::InvalidHistoryIndex);
+        }
+
+        // ── Entry validation (#1617) ──────────────────────────────────────────
+        // The Merkle leaf binds `entry.player_id`, so a mis-keyed entry could
+        // never be proven. Levels must chain (`old_level` == previous
+        // `new_level`, `Unverified` for the first entry). Reset entries
+        // (`milestone_ref == 0`) may jump `new_level` arbitrarily, but their
+        // `old_level` must still match the chain. Timestamps and ledger
+        // sequences must be non-decreasing.
+        if entry.player_id != player_id {
+            return Err(ProgressError::SeedPlayerMismatch);
+        }
+        let (prev_level, prev_at, prev_ledger) = if current_counter == 0 {
+            (ProgressLevel::Unverified, 0u64, 0u32)
+        } else {
+            let prev: ProgressEntry = env
+                .storage()
+                .persistent()
+                .get(&DataKey::HistoryEntry(player_id, current_counter))
+                .ok_or(ProgressError::InvalidHistoryIndex)?;
+            (prev.new_level, prev.updated_at, prev.ledger_sequence)
+        };
+        if entry.old_level != prev_level {
+            return Err(ProgressError::SeedLevelDiscontinuity);
+        }
+        if entry.updated_at < prev_at || entry.ledger_sequence < prev_ledger {
+            return Err(ProgressError::SeedTimestampRegression);
         }
 
         // ── Write HistoryEntry ────────────────────────────────────────────────

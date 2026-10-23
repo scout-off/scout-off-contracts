@@ -206,6 +206,11 @@ pub enum VerificationError {
     /// `open_migration_window` was called after the window was permanently
     /// closed by `close_migration_window`.
     MigrationWindowSealed = 58,
+
+    // ── Registration wiring (issue #1622) ──
+    /// The registration contract is not wired (`set_registration_contract`);
+    /// milestone commits fail closed rather than skipping the player check.
+    RegistrationNotConfigured = 59,
 }
 
 impl AdminError for VerificationError {

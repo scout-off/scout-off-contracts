@@ -590,6 +590,9 @@ pub enum DataKey {
     /// under `RevocationRecord(wallet)`; this list holds superseded ones so
     /// the original reason/timestamp are never silently lost.
     RevocationHistory(Address),
+    /// Start timestamp of the current per-(validator, player) cap window
+    /// (issue #1615). Absent for counts written before windows existed.
+    ValidatorPlayerWindowStart(Address, u64),
 }
 
 /// Snapshot of both cross-contract peer address pointers held by the

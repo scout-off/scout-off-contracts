@@ -268,7 +268,6 @@ impl RegistrationContract {
         env.storage()
             .instance()
             .set(&DataKey::LiveScoutCount, &0u64);
-        Ok(())
     }
 
     /// Propose a replacement administrator. The current admin remains active
@@ -2165,11 +2164,7 @@ mod tests {
                 &env,
                 (
                     client.address.clone(),
-                    (
-                        Symbol::new(&env, "AdminTransferred"),
-                        old_admin.clone(),
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "AdminTransferred"), old_admin.clone(),).into_val(&env),
                     new_admin.clone().into_val(&env),
                 )
             ]

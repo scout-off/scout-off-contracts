@@ -1437,7 +1437,7 @@ the k-of-n threshold attestation design below must call
 | | |
 |---|---|
 | **Auth** | `validator_wallet` must sign |
-| **Errors** | `ContractPaused` · `ThresholdModeRequiresAttestation` (k-of-n mode is configured — use `attest_milestone` instead) · `ValidatorNotFound` · `ValidatorInactive` · `InvalidInput` (bad evidence hash or category tag >64 bytes) · `DuplicateEvidence` (evidence hash already used) · `MilestoneLimitExceeded` (5 milestones/player/validator cap) · `SpecializationMismatch` (category provided but validator not tagged for it) · `Overflow` · `ProgressCallFailed` |
+| **Errors** | `ContractPaused` · `ThresholdModeRequiresAttestation` (k-of-n mode is configured — use `attest_milestone` instead) · `ValidatorNotFound` · `ValidatorInactive` · `InvalidInput` (bad evidence hash or category tag >64 bytes) · `DuplicateEvidence` (evidence hash already used) · `MilestoneLimitExceeded` (5 milestones/player/validator per 90-day window, committer only) · `RegistrationNotConfigured` (registration contract not wired; fails closed, error 59) · `PlayerNotRegistered` · `PlayerDeactivated` (checked with a single `get_player_status` call) · `SpecializationMismatch` (category provided but validator not tagged for it) · `Overflow` · `ProgressCallFailed` |
 
 ```bash
 # Untagged milestone (any active validator)
@@ -5539,6 +5539,8 @@ pub struct TrialOffer {
 | 23 | `UnknownSchemaTarget` | `migrate` target above the compiled layout version |
 
 ### `ScoutAccessError` (scout_access contract)
+
+> **Token requirement (#1621):** the payment token must report `decimals() == 7` (SAC-wrapped XLM does); any other precision is rejected at initialization with `UnsupportedTokenDecimals` (46), because all fee bounds are expressed in 7-decimal stroops.
 
 | Code | Variant | Common Cause |
 |------|---------|--------------|

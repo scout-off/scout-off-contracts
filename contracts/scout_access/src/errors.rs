@@ -162,6 +162,8 @@ pub enum ScoutAccessError {
     /// `open_migration_window` was called after the window was permanently
     /// closed by `close_migration_window`.
     MigrationWindowSealed = 45,
+    /// The payment token's `decimals()` is not 7; fee bounds assume XLM stroops.
+    UnsupportedTokenDecimals = 46,
 }
 
 impl AdminError for ScoutAccessError {
