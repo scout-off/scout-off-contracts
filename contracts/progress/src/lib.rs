@@ -1035,8 +1035,10 @@ impl ProgressContract {
     ///
     /// - `HistoryEntry(player_id, history_index)` — the individual entry
     /// - `HistoryCounter(player_id)` — per-player monotonic counter
-    /// - `HistoryVec(player_id)` — full Vec for O(1) reads
-    /// - `HistoryRoot(player_id)` — RFC 6962 Merkle commitment root
+    /// - `HistoryPage(player_id, page)` — bounded history shard (#1618; the
+    ///   unbounded `HistoryVec` is no longer written)
+    /// - `HistoryRoot(player_id)` / `HistoryFrontier(player_id)` — RFC 6962
+    ///   commitment root, updated incrementally in O(log n) hashes
     ///
     /// ## Idempotency
     ///
@@ -1054,8 +1056,8 @@ impl ProgressContract {
     /// ## Merkle verification
     ///
     /// When `expected_root` is `Some`, after writing the entry this function
-    /// recomputes the full Merkle root over all entries in `HistoryVec` using
-    /// the same `mth_range` / `leaf_hash` logic as the live contract.  If the
+    /// compares the incrementally maintained Merkle root (same leaf/node hashing
+    /// as the live contract) against it.  If the
     /// recomputed root ≠ `expected_root`, the function returns
     /// `MerkleRootMismatch`.  Soroban's transaction atomicity guarantees that
     /// **all writes are rolled back** on error, so no partial state persists.
@@ -1134,27 +1136,29 @@ impl ProgressContract {
             .persistent()
             .extend_ttl(&counter_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
 
-        // ── Append to HistoryVec ──────────────────────────────────────────────
-        let vec_key = DataKey::HistoryVec(player_id);
-        let mut history: Vec<ProgressEntry> = env
+        // ── Append to the paged history (#1618) ───────────────────────────────
+        // Same bounded `HistoryPage` layout as `record_progress_entry`; the
+        // unbounded `HistoryVec` is no longer written (readers fall back to it
+        // only for players that predate paging).
+        let page_key = DataKey::HistoryPage(player_id, Self::history_page_index(history_index));
+        let mut page: Vec<ProgressEntry> = env
             .storage()
             .persistent()
-            .get(&vec_key)
+            .get(&page_key)
             .unwrap_or_else(|| Vec::new(&env));
-        history.push_back(entry);
-        env.storage().persistent().set(&vec_key, &history);
+        page.push_back(entry.clone());
+        env.storage().persistent().set(&page_key, &page);
         env.storage()
             .persistent()
-            .extend_ttl(&vec_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+            .extend_ttl(&page_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
 
-        // ── Recompute and persist Merkle root ─────────────────────────────────
-        // Replay the incremental frontier over the whole seeded history. The
-        // replay path reconstructs arbitrary history during a migration, so it
-        // legitimately sees every leaf; it still records the resulting
-        // `HistoryFrontier` so later appends against the migrated player stay
-        // incremental rather than paying this cost again.
+        // ── Update Merkle root incrementally ──────────────────────────────────
+        // O(log n) hashes: fold the new leaf onto the stored frontier. The
+        // full-history rebuild only runs when no frontier exists yet.
         let root_key = DataKey::HistoryRoot(player_id);
-        let frontier = Self::build_frontier(&env, &history, history.len());
+        let mut frontier = Self::load_or_build_frontier(&env, player_id, current_counter);
+        let leaf = Self::leaf_hash(&env, &entry);
+        Self::frontier_append(&env, &mut frontier, leaf);
         let root = Self::frontier_root(&env, &frontier);
         env.storage().persistent().set(&root_key, &root);
         env.storage()

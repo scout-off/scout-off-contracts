@@ -176,6 +176,19 @@ pub struct ValidatorPendingVotesInvalidated {
     pub invalidated_count: u32,
 }
 
+/// Emitted when a revocation leaves an open k-of-n claim with a snapshotted
+/// threshold above the active validator count, so the round is aborted and
+/// its votes discarded (issue #1613). The evidence can then be re-attested.
+#[contractevent]
+pub struct AttestationRoundAborted {
+    #[topic]
+    pub player_id: u64,
+    pub evidence_hash: String,
+    pub round: u32,
+    pub threshold: u32,
+    pub active_count: u32,
+}
+
 /// Emitted when progress cross-contract call fails (diagnostic stream only).
 #[contractevent]
 pub struct ProgressCallFailed {
@@ -535,6 +548,24 @@ pub fn validator_pending_votes_invalidated(
         admin: admin.clone(),
         wallet: wallet.clone(),
         invalidated_count,
+    }
+    .emit(env);
+}
+
+pub fn attestation_round_aborted(
+    env: &Env,
+    player_id: u64,
+    evidence_hash: &String,
+    round: u32,
+    threshold: u32,
+    active_count: u32,
+) {
+    AttestationRoundAborted {
+        player_id,
+        evidence_hash: evidence_hash.clone(),
+        round,
+        threshold,
+        active_count,
     }
     .emit(env);
 }
