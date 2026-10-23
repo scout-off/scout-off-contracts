@@ -7,8 +7,28 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, edited, synchronize, reopened]
 
 jobs:
+  pr-checklist:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require every PR template checklist item in the description
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          missing=0
+          while IFS= read -r item; do
+            if ! printf '%s\n' "$PR_BODY" | grep -qiF -- "- [ ] $item" \
+              && ! printf '%s\n' "$PR_BODY" | grep -qiF -- "- [x] $item"; then
+              echo "ERROR: PR description is missing checklist item: $item"
+              missing=1
+            fi
+          done < <(sed -n 's/^- \[ \] //p' .github/pull_request_template.md)
+          exit "$missing"
+
   check-todos:
     runs-on: ubuntu-latest
     steps:

@@ -97,6 +97,14 @@ Both files document their own process for intentionally raising a budget when a 
 - [ ] `ai.md` is updated if shared types, events, or env vars changed
 - [ ] `docs/CONTRACT_REFERENCE.md` is updated with new functions, events, and error codes *(enforced automatically by `scripts/check-docs.sh` in the CI lint job — the PR will fail if a `pub fn` from any `#[contractimpl]` block lacks a corresponding heading in the docs)*
 
+- [ ] **Cross-contract changes:** any change to a cross-contract interface (e.g. `advance_level` signature) updates every calling contract and all integration tests
+- [ ] **Event schema changes:** any new or modified event is reflected in `CONTRACT_REFERENCE.md`, the indexer migration, and the TypeScript bindings
+- [ ] **Error code changes:** added or reordered error codes update `CONTRACT_REFERENCE.md` and the README error tables, and downstream clients are notified
+- [ ] **TTL constant changes:** reviewed for production ledger cadence impact
+- [ ] **Storage key additions:** reviewed for key collision potential and documented in the contract's `DataKey` enum comments
+
+The same checklist lives in `.github/pull_request_template.md`; the `pr-checklist` job in `.github/workflows/ci.yml` fails a PR whose description is missing any checklist item.
+
 ### Error variant ordering
 
 Every contract's `#[contracterror]` enum (`errors.rs`) is append-only.
