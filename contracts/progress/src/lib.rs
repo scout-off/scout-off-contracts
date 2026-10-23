@@ -91,34 +91,13 @@ impl ProgressContract {
     // Admin
     // -------------------------------------------------------------------------
 
-    // -------------------------------------------------------------------------
-    // Constructor (atomic deployment + initialization — issue #1369)
-    // -------------------------------------------------------------------------
-
-    /// Soroban constructor: called atomically during `stellar contract deploy`.
-    /// Eliminates the front-running window between deploy and initialize.
-    /// See `docs/DEPLOYMENT.md` and `docs/VERSIONING.md`.
-    pub fn __constructor(env: Env, admin: Address) {
-        Self::bump_instance_ttl(&env);
-        Self::init_state(&env, &admin);
-    }
-
-    /// One-time contract initialisation. Kept for backward compatibility.
-    /// Returns `AlreadyInitialized` if the constructor already ran. New
-    /// deployments should rely on the constructor; never call this on a
-    /// freshly deployed contract.
     pub fn initialize(env: Env, admin: Address) -> Result<(), ProgressError> {
         if env.storage().instance().has(&DataKey::Initialized) {
             return Err(ProgressError::AlreadyInitialized);
         }
         admin.require_auth();
         Self::bump_instance_ttl(&env);
-        Self::init_state(&env, &admin);
-        Ok(())
-    }
-
-    fn init_state(env: &Env, admin: &Address) {
-        env.storage().persistent().set(&DataKey::Admin, admin);
+        env.storage().persistent().set(&DataKey::Admin, &admin);
         env.storage().persistent().extend_ttl(
             &DataKey::Admin,
             ADMIN_BUMP_LEDGERS,
@@ -1183,116 +1162,6 @@ impl ProgressContract {
         Ok(())
     }
 
-    // -------------------------------------------------------------------------
-    // GDPR right-to-erasure (issue #1373)
-    // -------------------------------------------------------------------------
-
-    /// Paged erasure of a player's progress state (admin only).
-    ///
-    /// Removes `PlayerLevel`, `HistoryCounter`, `HistoryRoot`, and up to
-    /// `limit` `HistoryEntry` records per call, starting at `cursor` (0 = start).
-    /// When `more` is `false` in the returned tuple all data has been removed.
-    /// Safe to call repeatedly: already-absent keys are skipped silently.
-    ///
-    /// # Safety invariants
-    /// - Ledger history (the transaction record itself) is immutable and cannot
-    ///   be erased from the public blockchain. This function only removes
-    ///   **current-state ledger entries**. Document this limitation to players
-    ///   before offering erasure (see `docs/PLAYER_ERASURE.md`).
-    /// - Player IDs are never reused after erasure to prevent ContactRecord
-    ///   collisions (see issue #234).
-    pub fn purge_player_data(
-        env: Env,
-        player_id: u64,
-        cursor: u32,
-    ) -> Result<(u32, bool), ProgressError> {
-        let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
-        Self::bump_instance_ttl(&env);
-
-        const PAGE_SIZE: u32 = 50;
-        let mut removed: u32 = 0;
-
-        // On the first page (cursor == 0) remove the non-history keys.
-        if cursor == 0 {
-            if env
-                .storage()
-                .persistent()
-                .has(&DataKey::PlayerLevel(player_id))
-            {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::PlayerLevel(player_id));
-                removed += 1;
-            }
-            if env
-                .storage()
-                .persistent()
-                .has(&DataKey::HistoryRoot(player_id))
-            {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::HistoryRoot(player_id));
-                removed += 1;
-            }
-            // Remove legacy unbounded history vec if present.
-            if env
-                .storage()
-                .persistent()
-                .has(&DataKey::HistoryVec(player_id))
-            {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::HistoryVec(player_id));
-                removed += 1;
-            }
-        }
-
-        // Remove history entries starting at cursor+1 (entries are 1-indexed).
-        let total: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::HistoryCounter(player_id))
-            .unwrap_or(0u32);
-
-        let start = cursor + 1;
-        let end = (start + PAGE_SIZE).min(total + 1);
-
-        for idx in start..end {
-            let key = DataKey::HistoryEntry(player_id, idx);
-            if env.storage().persistent().has(&key) {
-                env.storage().persistent().remove(&key);
-                removed += 1;
-            }
-            // Also remove paged history entries.
-            let page = (idx - 1) / HISTORY_PAGE_SIZE;
-            let page_key = DataKey::HistoryPage(player_id, page);
-            if env.storage().persistent().has(&page_key) {
-                env.storage().persistent().remove(&page_key);
-                removed += 1;
-            }
-        }
-
-        let next_cursor = end - 1;
-        let more = next_cursor < total;
-
-        // On final page, remove the counter itself.
-        if !more {
-            if env
-                .storage()
-                .persistent()
-                .has(&DataKey::HistoryCounter(player_id))
-            {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::HistoryCounter(player_id));
-                removed += 1;
-            }
-        }
-
-        events::player_data_purged(&env, &admin, player_id, removed, more);
-        Ok((next_cursor, more))
-    }
-
     pub fn health(env: Env) -> ContractHealth {
         Self::bump_instance_ttl(&env);
         let initialized = env
@@ -1948,11 +1817,26 @@ impl ProgressContract {
         // logical history is reconstructed by concatenating the pages in order.
         let page_index = Self::history_page_index(next_index);
         let page_key = DataKey::HistoryPage(player_id, page_index);
+        // #1609: a player whose earlier entries predate paging has no page
+        // yet; seed it from the always-written `HistoryEntry` keys so the new
+        // page is not a partial page that readers would trust over them.
         let mut page: Vec<ProgressEntry> = env
             .storage()
             .persistent()
             .get(&page_key)
-            .unwrap_or_else(|| Vec::new(env));
+            .unwrap_or_else(|| {
+                let mut seeded: Vec<ProgressEntry> = Vec::new(env);
+                for idx in (page_index * HISTORY_PAGE_SIZE + 1)..next_index {
+                    if let Some(e) = env
+                        .storage()
+                        .persistent()
+                        .get(&DataKey::HistoryEntry(player_id, idx))
+                    {
+                        seeded.push_back(e);
+                    }
+                }
+                seeded
+            });
         page.push_back(entry.clone());
         env.storage().persistent().set(&page_key, &page);
         env.storage()
@@ -2551,7 +2435,7 @@ mod tests {
                     contract_id,
                     soroban_sdk::vec![
                         &env,
-                        Symbol::new(&env, "ProgressUpdated").into_val(&env),
+                        Symbol::new(&env, crate::events::PROGRESS_UPDATED).into_val(&env),
                         validator.into_val(&env),
                     ],
                     (
@@ -2598,7 +2482,7 @@ mod tests {
                     contract_id.clone(),
                     vec![
                         &env,
-                        Symbol::new(&env, "AdminTransferProposed").into_val(&env),
+                        Symbol::new(&env, events::ADMIN_TRANSFER_PROPOSED).into_val(&env),
                         old_admin.clone().into_val(&env),
                     ],
                     stale_admin.clone().into_val(&env),
@@ -2644,7 +2528,7 @@ mod tests {
                     contract_id.clone(),
                     vec![
                         &env,
-                        Symbol::new(&env, "AdminTransferred").into_val(&env),
+                        Symbol::new(&env, events::ADMIN_TRANSFERRED).into_val(&env),
                         old_admin.clone().into_val(&env),
                     ],
                     new_admin.clone().into_val(&env),
@@ -2889,7 +2773,7 @@ mod tests {
                 &env,
                 (
                     client.address.clone(),
-                    (Symbol::new(&env, "PlayerLevelReset"), admin,).into_val(&env),
+                    (Symbol::new(&env, crate::events::PLAYER_LEVEL_RESET), admin,).into_val(&env),
                     (
                         player_id,
                         ProgressLevel::PerformanceMilestones,

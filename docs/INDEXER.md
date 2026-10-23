@@ -17,7 +17,7 @@ into PostgreSQL for fast querying.  It runs as a separate process from the API.
 | `fee_withdrawals` | `scout_access.fees_withdrawn` events | Fee withdrawal audit log |
 | `milestone_flags` | `verification.milestone_flagged` / `milestone_flag_cleared` events | Milestones pending re-review due to for-cause validator revocations |
 | `revocation_records` | `verification.validator_revoked_for_cause` / `revocation_cascade_complete` events | Revoked-validator severity + cascade status |
-| `evidence_access_grants` | `scout_access.get_player_access_grants` | Per-(player, scout) grants: `granted_at`, `expires_at`, `tier_at_grant`, `revoked`, `revoked_at` |
+| `evidence_access_grants` | `scout_access.get_player_access_grants` | Per-(player, scout) grants: `granted_at`, `expires_at`, `tier_at_grant`, `revoked`, `revoked_at`. `evidence_access_renewed` / `evidence_access_reinstated` update the existing row in place (new `expires_at`, `tier_at_grant`; `revoked`/`revoked_at` cleared on reinstate) — never insert a second row |
 
 ## Reconciliation
 

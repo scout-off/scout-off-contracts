@@ -1,297 +1,58 @@
-use soroban_sdk::{contractevent, Address, BytesN, Env, String, Symbol};
+#![allow(deprecated)]
 use crate::types::DiversityConfig;
+use soroban_sdk::{Address, BytesN, Env, String, Symbol};
 
-// ── Typed contract events (issue #1370) ──────────────────────────────────────
+pub const MILESTONE_APPROVED: &str = "milestone_approved";
+pub const VALIDATOR_REGISTERED: &str = "validator_registered";
+pub const VALIDATOR_REVOKED: &str = "validator_revoked";
+pub const VALIDATOR_REVOKED_FOR_CAUSE: &str = "validator_revoked_for_cause";
+pub const BATCH_REVOKED: &str = "batch_revoked";
+pub const VALIDATOR_RESTORED: &str = "validator_restored";
+pub const VALIDATOR_TRANSFERRED: &str = "validator_transferred";
+pub const CONTRACT_PAUSED: &str = "contract_paused";
+pub const CONTRACT_UNPAUSED: &str = "contract_unpaused";
+pub const APPROVE_MILESTONE_PAUSED: &str = "approve_milestone_paused";
+pub const APPROVE_MILESTONE_UNPAUSED: &str = "approve_milestone_unpaused";
+pub const CONTRACT_INITIALIZED: &str = "contract_initialized";
+pub const PROGRESS_CONTRACT_UPDATED: &str = "progress_contract_updated";
+pub const DISPUTE_RESOLVED: &str = "dispute_resolved";
+pub const ADMIN_TRANSFER_PROPOSED: &str = "admin_transfer_proposed";
+pub const ADMIN_TRANSFERRED: &str = "admin_transferred";
+pub const CONTRACT_UPGRADED: &str = "contract_upgraded";
+pub const ATTESTATION_RECORDED: &str = "attestation_recorded";
+pub const ATTESTATION_WINDOW_EXPIRED: &str = "attestation_window_expired";
+pub const VALIDATOR_PENDING_VOTES_INVALIDATED: &str = "validator_votes_invalidated";
+pub const WIRING_UPDATED: &str = "wiring_updated";
+pub const DISPUTE_VOTE_CAST: &str = "dispute_vote_cast";
+pub const DISPUTE_TALLIED: &str = "dispute_tallied";
+pub const ATTESTATION_KEY_REGISTERED: &str = "attestation_key_registered";
+pub const MIGRATION_WINDOW_OPENED: &str = "migration_window_opened";
+pub const MIGRATION_WINDOW_CLOSED: &str = "migration_window_closed";
+pub const MILESTONE_THRESHOLD_UPDATED: &str = "milestone_threshold_updated";
+pub const MILESTONE_THRESHOLD_UNREACHABLE: &str = "milestone_threshold_unreachable";
+pub const JURY_CONFIG_UPDATED: &str = "jury_config_updated";
+pub const DIVERSITY_CONFIG_UPDATED: &str = "diversity_config_updated";
+pub const MIN_REGION_QUORUM_UPDATED: &str = "min_region_quorum_updated";
+pub const VOTING_WINDOW_SECS_UPDATED: &str = "voting_window_secs_updated";
+pub const REG_COOLDOWN_UPDATED: &str = "reg_cooldown_updated";
 
-/// Emitted by `initialize` / `__constructor`.
-#[contractevent]
-pub struct ContractInitialized {
-    #[topic]
-    pub admin: Address,
+/// topics: (event_name, old_admin)  data: new_admin
+pub fn admin_transfer_proposed(env: &Env, old_admin: &Address, new_admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, ADMIN_TRANSFER_PROPOSED), old_admin.clone()),
+        new_admin.clone(),
+    );
 }
 
-/// Emitted by `approve_milestone` and `attest_milestone` (threshold commit).
-#[contractevent]
-pub struct MilestoneApproved {
-    #[topic]
-    pub validator: Address,
-    pub player_id: u64,
-    pub milestone_index: u32,
-    pub description: String,
-    pub evidence_hash: String,
+/// topics: (event_name, old_admin)  data: new_admin
+pub fn admin_transferred(env: &Env, old_admin: &Address, new_admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, ADMIN_TRANSFERRED), old_admin.clone()),
+        new_admin.clone(),
+    );
 }
 
-/// Emitted by `register_validator`.
-#[contractevent]
-pub struct ValidatorRegistered {
-    #[topic]
-    pub wallet: Address,
-    pub credentials: String,
-}
-
-/// Emitted by `revoke_validator` (routine).
-#[contractevent]
-pub struct ValidatorRevoked {
-    #[topic]
-    pub admin: Address,
-    pub wallet: Address,
-    pub reason: String,
-}
-
-/// Emitted by `revoke_validator` (for-cause).
-#[contractevent]
-pub struct ValidatorRevokedForCause {
-    #[topic]
-    pub admin: Address,
-    pub wallet: Address,
-    pub reason: String,
-}
-
-/// Emitted by `restore_validator`.
-#[contractevent]
-pub struct ValidatorRestored {
-    #[topic]
-    pub admin: Address,
-    pub wallet: Address,
-}
-
-/// Emitted by `transfer_validator`.
-#[contractevent]
-pub struct ValidatorTransferred {
-    #[topic]
-    pub admin: Address,
-    pub old_wallet: Address,
-    pub new_wallet: Address,
-}
-
-/// Emitted by `pause_contract`.
-#[contractevent]
-pub struct ContractPaused {
-    #[topic]
-    pub admin: Address,
-}
-
-/// Emitted by `unpause_contract`.
-#[contractevent]
-pub struct ContractUnpaused {
-    #[topic]
-    pub admin: Address,
-}
-
-/// Emitted by `pause_approve_milestone`.
-#[contractevent]
-pub struct ApproveMilestonePaused {
-    #[topic]
-    pub admin: Address,
-}
-
-/// Emitted by `unpause_approve_milestone`.
-#[contractevent]
-pub struct ApproveMilestoneUnpaused {
-    #[topic]
-    pub admin: Address,
-}
-
-/// Emitted by `set_progress_contract`.
-#[contractevent]
-pub struct ProgressContractUpdated {
-    #[topic]
-    pub admin: Address,
-    pub progress_contract: Address,
-}
-
-/// Emitted by every `set_*_contract` wiring call.
-#[contractevent]
-pub struct WiringUpdated {
-    #[topic]
-    pub admin: Address,
-    #[topic]
-    pub link: soroban_sdk::Symbol,
-    pub new_address: Address,
-    pub new_epoch: u32,
-}
-
-/// Emitted by `dispute_milestone`.
-#[contractevent]
-pub struct MilestoneDisputed {
-    #[topic]
-    pub player_wallet: Address,
-    pub player_id: u64,
-    pub milestone_index: u32,
-    pub reason: String,
-}
-
-/// Emitted by `resolve_dispute`.
-#[contractevent]
-pub struct DisputeResolved {
-    #[topic]
-    pub admin: Address,
-    pub player_id: u64,
-    pub milestone_index: u32,
-    pub upheld: bool,
-}
-
-/// Emitted when level advancement is skipped (player already at max).
-#[contractevent]
-pub struct LevelAdvancementSkipped {
-    #[topic]
-    pub player_id: u64,
-    pub reason: String,
-}
-
-/// Emitted when progress contract address is not set.
-#[contractevent]
-pub struct ProgressContractNotSet {
-    #[topic]
-    pub player_id: u64,
-}
-
-/// Emitted on every accepted `attest_milestone` vote.
-#[contractevent]
-pub struct AttestationRecorded {
-    #[topic]
-    pub validator: Address,
-    pub player_id: u64,
-    pub evidence_hash: String,
-    pub vote_count: u32,
-    pub threshold: u32,
-    pub description_hash: BytesN<32>,
-}
-
-/// Emitted when a sub-threshold claim's voting window expires.
-#[contractevent]
-pub struct AttestationWindowExpired {
-    #[topic]
-    pub player_id: u64,
-    pub evidence_hash: String,
-    pub new_round: u32,
-}
-
-/// Emitted when a revoked validator's pending votes are invalidated.
-#[contractevent]
-pub struct ValidatorPendingVotesInvalidated {
-    #[topic]
-    pub admin: Address,
-    pub wallet: Address,
-    pub invalidated_count: u32,
-}
-
-/// Emitted when progress cross-contract call fails (diagnostic stream only).
-#[contractevent]
-pub struct ProgressCallFailed {
-    #[topic]
-    pub player_id: u64,
-    pub error_code: u32,
-}
-
-/// Emitted by `restore_validator_record`.
-#[contractevent]
-pub struct ValidatorRecordRestored {
-    #[topic]
-    pub admin: Address,
-    pub wallet: Address,
-}
-
-/// Emitted by `restore_milestone_record`.
-#[contractevent]
-pub struct MilestoneRecordRestored {
-    #[topic]
-    pub admin: Address,
-    pub player_id: u64,
-    pub index: u32,
-}
-
-/// Emitted for each milestone flagged during a for-cause revocation cascade.
-#[contractevent]
-pub struct MilestoneFlaggedForRereview {
-    #[topic]
-    pub validator: Address,
-    pub player_id: u64,
-    pub milestone_index: u32,
-}
-
-/// Emitted when a re-review flag is cleared.
-#[contractevent]
-pub struct MilestoneFlagCleared {
-    #[topic]
-    pub reviewer: Address,
-    pub player_id: u64,
-    pub milestone_index: u32,
-}
-
-/// Emitted when a for-cause cascade sweep completes.
-#[contractevent]
-pub struct RevocationCascadeComplete {
-    #[topic]
-    pub validator: Address,
-    pub total_flagged: u32,
-}
-
-/// Emitted when a cascade sweep reaches per-call limit and a cursor is stored.
-#[contractevent]
-pub struct RevocationCascadeContinued {
-    #[topic]
-    pub validator: Address,
-    pub next_cursor: u32,
-    pub flagged_this_call: u32,
-}
-
-/// Emitted by `propose_admin`.
-#[contractevent]
-pub struct AdminTransferProposed {
-    #[topic]
-    pub old_admin: Address,
-    pub new_admin: Address,
-}
-
-/// Emitted by `accept_admin`.
-#[contractevent]
-pub struct AdminTransferred {
-    #[topic]
-    pub old_admin: Address,
-    pub new_admin: Address,
-}
-
-/// Emitted when a validator casts a vote on a jury-required dispute.
-#[contractevent]
-pub struct DisputeVoteCast {
-    #[topic]
-    pub validator: Address,
-    pub player_id: u64,
-    pub milestone_index: u32,
-    pub for_upheld: bool,
-}
-
-/// Emitted when a jury-required dispute is tallied and resolved.
-#[contractevent]
-pub struct DisputeTallied {
-    #[topic]
-    pub player_id: u64,
-    pub milestone_index: u32,
-    pub upheld: bool,
-    pub votes_for: u32,
-    pub votes_against: u32,
-}
-
-/// Emitted by `purge_player_data` (GDPR erasure, issue #1373).
-#[contractevent]
-pub struct PlayerDataPurged {
-    #[topic]
-    pub admin: Address,
-    pub player_id: u64,
-    pub entries_removed: u32,
-    pub more: bool,
-}
-
-// ── Emit helpers ─────────────────────────────────────────────────────────────
-
-pub fn contract_initialized(env: &Env, admin: &Address) {
-    ContractInitialized {
-        admin: admin.clone(),
-    }
-    .emit(env);
-}
-
+/// topics: (event_name, validator)  data: (player_id, description, evidence_hash)
 pub fn milestone_approved(
     env: &Env,
     player_id: u64,
@@ -300,22 +61,23 @@ pub fn milestone_approved(
     description: &String,
     evidence_hash: &String,
 ) {
-    MilestoneApproved {
-        validator: validator.clone(),
-        player_id,
-        milestone_index,
-        description: description.clone(),
-        evidence_hash: evidence_hash.clone(),
-    }
-    .emit(env);
+    env.events().publish(
+        (Symbol::new(env, "milestone_approved"), validator.clone()),
+        (
+            player_id,
+            milestone_index,
+            description.clone(),
+            evidence_hash.clone(),
+        ),
+    );
 }
 
+/// topics: (event_name, wallet)  data: credentials
 pub fn validator_registered(env: &Env, wallet: &Address, credentials: &String) {
-    ValidatorRegistered {
-        wallet: wallet.clone(),
-        credentials: credentials.clone(),
-    }
-    .emit(env);
+    env.events().publish(
+        (Symbol::new(env, "validator_registered"), wallet.clone()),
+        credentials.clone(),
+    );
 }
 
 /// topics: (event_name, wallet)  data: (public_key, rotated_from)
@@ -326,88 +88,113 @@ pub fn attestation_key_registered(
     rotated_from: &Option<soroban_sdk::BytesN<32>>,
 ) {
     env.events().publish(
-        (Symbol::new(env, "attestation_key_registered"), wallet.clone()),
+        (Symbol::new(env, ATTESTATION_KEY_REGISTERED), wallet.clone()),
         (public_key.clone(), rotated_from.clone()),
     );
 }
 
 /// topics: (event_name, admin)  data: (wallet, reason)
 pub fn validator_revoked(env: &Env, admin: &Address, wallet: &Address, reason: &String) {
-    ValidatorRevoked {
-        admin: admin.clone(),
-        wallet: wallet.clone(),
-        reason: reason.clone(),
-    }
-    .emit(env);
+    env.events().publish(
+        (Symbol::new(env, "validator_revoked"), admin.clone()),
+        (wallet.clone(), reason.clone()),
+    );
 }
 
+/// topics: (event_name, admin)  data: (count, for_cause)
+pub fn batch_revoked(env: &Env, admin: &Address, count: u32, for_cause: bool) {
+    env.events().publish(
+        (Symbol::new(env, BATCH_REVOKED), admin.clone()),
+        (count, for_cause),
+    );
+}
+
+/// topics: (event_name, admin)  data: (wallet, reason)
 pub fn validator_revoked_for_cause(env: &Env, admin: &Address, wallet: &Address, reason: &String) {
-    ValidatorRevokedForCause {
-        admin: admin.clone(),
-        wallet: wallet.clone(),
-        reason: reason.clone(),
-    }
-    .emit(env);
+    env.events().publish(
+        (
+            Symbol::new(env, "validator_revoked_for_cause"),
+            admin.clone(),
+        ),
+        (wallet.clone(), reason.clone()),
+    );
 }
 
+/// topics: (event_name, admin)  data: wallet
 pub fn validator_restored(env: &Env, admin: &Address, wallet: &Address) {
-    ValidatorRestored {
-        admin: admin.clone(),
-        wallet: wallet.clone(),
-    }
-    .emit(env);
+    env.events().publish(
+        (Symbol::new(env, VALIDATOR_RESTORED), admin.clone()),
+        wallet.clone(),
+    );
 }
 
+/// topics: (event_name, admin)  data: (old_wallet, new_wallet)
 pub fn validator_transferred(
     env: &Env,
     admin: &Address,
     old_wallet: &Address,
     new_wallet: &Address,
 ) {
-    ValidatorTransferred {
-        admin: admin.clone(),
-        old_wallet: old_wallet.clone(),
-        new_wallet: new_wallet.clone(),
-    }
-    .emit(env);
+    env.events().publish(
+        (Symbol::new(env, VALIDATOR_TRANSFERRED), admin.clone()),
+        (old_wallet.clone(), new_wallet.clone()),
+    );
 }
 
+/// topics: (event_name, admin)  data: ()
 pub fn contract_paused(env: &Env, admin: &Address) {
-    ContractPaused {
-        admin: admin.clone(),
-    }
-    .emit(env);
+    env.events()
+        .publish((Symbol::new(env, "contract_paused"), admin.clone()), ());
 }
 
+/// topics: (event_name, admin)  data: ()
 pub fn contract_unpaused(env: &Env, admin: &Address) {
-    ContractUnpaused {
-        admin: admin.clone(),
-    }
-    .emit(env);
+    env.events()
+        .publish((Symbol::new(env, "contract_unpaused"), admin.clone()), ());
 }
 
+/// topics: (event_name, admin)  data: ()
 pub fn approve_milestone_paused(env: &Env, admin: &Address) {
-    ApproveMilestonePaused {
-        admin: admin.clone(),
-    }
-    .emit(env);
+    env.events().publish(
+        (Symbol::new(env, "approve_milestone_paused"), admin.clone()),
+        (),
+    );
 }
 
+/// topics: (event_name, admin)  data: ()
 pub fn approve_milestone_unpaused(env: &Env, admin: &Address) {
-    ApproveMilestoneUnpaused {
-        admin: admin.clone(),
-    }
-    .emit(env);
+    env.events().publish(
+        (
+            Symbol::new(env, "approve_milestone_unpaused"),
+            admin.clone(),
+        ),
+        (),
+    );
 }
 
+/// topics: (event_name, admin)  data: ()
+pub fn contract_initialized(env: &Env, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "contract_initialized"), admin.clone()),
+        (),
+    );
+}
+
+/// topics: (event_name, admin)  data: progress_contract
 pub fn progress_contract_updated(env: &Env, admin: &Address, progress_contract: &Address) {
-    ProgressContractUpdated {
-        admin: admin.clone(),
-        progress_contract: progress_contract.clone(),
-    }
-    .emit(env);
+    env.events().publish(
+        (Symbol::new(env, "progress_contract_updated"), admin.clone()),
+        progress_contract.clone(),
+    );
 }
 
+/// topics: (event_name, admin, link)  data: (new_address, new_epoch)
+///
+/// Emitted by every `set_progress_contract` / `update_progress_contract` /
+/// `set_registration_contract` / `update_registration_contract` call, in
+/// addition to (not replacing) `progress_contract_updated`. `link`
+/// identifies which peer pointer changed (`"progress_contract"` or
+/// `"registration_contract"`). See `docs/WIRING_REGISTRY_DESIGN.md`.
 pub fn wiring_updated(
     env: &Env,
     admin: &Address,
@@ -415,15 +202,18 @@ pub fn wiring_updated(
     new_address: &Address,
     new_epoch: u32,
 ) {
-    WiringUpdated {
-        admin: admin.clone(),
-        link: soroban_sdk::Symbol::new(env, link),
-        new_address: new_address.clone(),
-        new_epoch,
-    }
-    .emit(env);
+    env.events().publish(
+        (
+            Symbol::new(env, WIRING_UPDATED),
+            admin.clone(),
+            Symbol::new(env, link),
+        ),
+        (new_address.clone(), new_epoch),
+    );
 }
 
+/// Emitted when a player disputes a milestone (issue #471)
+/// topics: (event_name, player_wallet)  data: (player_id, milestone_index, reason)
 pub fn milestone_disputed(
     env: &Env,
     player_wallet: &Address,
@@ -431,15 +221,17 @@ pub fn milestone_disputed(
     milestone_index: u32,
     reason: &String,
 ) {
-    MilestoneDisputed {
-        player_wallet: player_wallet.clone(),
-        player_id,
-        milestone_index,
-        reason: reason.clone(),
-    }
-    .emit(env);
+    env.events().publish(
+        (
+            Symbol::new(env, "milestone_disputed"),
+            player_wallet.clone(),
+        ),
+        (player_id, milestone_index, reason.clone()),
+    );
 }
 
+/// Emitted when an admin resolves a milestone dispute.
+/// topics: (event_name, admin)  data: (player_id, milestone_index, upheld)
 pub fn dispute_resolved(
     env: &Env,
     admin: &Address,
@@ -447,21 +239,21 @@ pub fn dispute_resolved(
     milestone_index: u32,
     upheld: bool,
 ) {
-    DisputeResolved {
-        admin: admin.clone(),
-        player_id,
-        milestone_index,
-        upheld,
-    }
-    .emit(env);
+    env.events().publish(
+        (Symbol::new(env, "dispute_resolved"), admin.clone()),
+        (player_id, milestone_index, upheld),
+    );
 }
 
+/// Emitted when a milestone is recorded but level advancement is skipped because
+/// the player is already at the maximum level (EliteTier).  The milestone itself
+/// is still persisted; only the cross-contract advance_level call is omitted.
+/// `reason` is always "AlreadyAtMaxLevel".
 pub fn level_advancement_skipped(env: &Env, player_id: u64, reason: &String) {
-    LevelAdvancementSkipped {
-        player_id,
-        reason: reason.clone(),
-    }
-    .emit(env);
+    env.events().publish(
+        (Symbol::new(env, "level_advancement_skipped"), player_id),
+        reason.clone(),
+    );
 }
 
 /// Emitted when diversity gating blocks level advancement (the milestone is
@@ -469,6 +261,10 @@ pub fn level_advancement_skipped(env: &Env, player_id: u64, reason: &String) {
 /// distinct validator affiliations).
 ///
 /// topics: (event_name, player_id)  data: (milestone_index, distinct_affiliations, required)
+///
+/// `distinct_affiliations` is the player's current count of distinct validator
+/// affiliations; `required` is the threshold from `DiversityConfig`. UIs can
+/// show "needs 1 more independent validator" from this data.
 pub fn level_advancement_deferred(
     env: &Env,
     player_id: u64,
@@ -487,7 +283,10 @@ pub fn level_advancement_deferred(
 /// deployment.  In production this indicates a missing wiring step and the
 /// indexer should alert on it.  The milestone is still persisted.
 pub fn progress_contract_not_set(env: &Env, player_id: u64) {
-    ProgressContractNotSet { player_id }.emit(env);
+    env.events().publish(
+        (Symbol::new(env, "progress_contract_not_set"), player_id),
+        (),
+    );
 }
 
 /// topics: (event_name, validator)  data: (player_id, evidence_hash, vote_count, threshold, description_hash)
@@ -500,136 +299,146 @@ pub fn attestation_recorded(
     threshold: u32,
     description_hash: &BytesN<32>,
 ) {
-    AttestationRecorded {
-        validator: validator.clone(),
-        player_id,
-        evidence_hash: evidence_hash.clone(),
-        vote_count,
-        threshold,
-        description_hash: description_hash.clone(),
-    }
-    .emit(env);
+    env.events().publish(
+        (Symbol::new(env, ATTESTATION_RECORDED), validator.clone()),
+        (
+            player_id,
+            evidence_hash.clone(),
+            vote_count,
+            threshold,
+            description_hash.clone(),
+        ),
+    );
 }
 
+/// Emitted when a sub-threshold claim's voting window has elapsed and a new
+/// vote resets it to a fresh round, discarding all prior votes.
+/// topics: (event_name, player_id)  data: (evidence_hash, new_round)
 pub fn attestation_window_expired(
     env: &Env,
     player_id: u64,
     evidence_hash: &String,
     new_round: u32,
 ) {
-    AttestationWindowExpired {
-        player_id,
-        evidence_hash: evidence_hash.clone(),
-        new_round,
-    }
-    .emit(env);
+    env.events().publish(
+        (Symbol::new(env, ATTESTATION_WINDOW_EXPIRED), player_id),
+        (evidence_hash.clone(), new_round),
+    );
 }
 
+/// Emitted when `revoke_validator` retroactively strips a revoked
+/// validator's contribution from still-pending (sub-threshold) claims.
+/// topics: (event_name, admin)  data: (wallet, invalidated_count)
 pub fn validator_pending_votes_invalidated(
     env: &Env,
     admin: &Address,
     wallet: &Address,
     invalidated_count: u32,
 ) {
-    ValidatorPendingVotesInvalidated {
-        admin: admin.clone(),
-        wallet: wallet.clone(),
-        invalidated_count,
-    }
-    .emit(env);
+    env.events().publish(
+        (
+            Symbol::new(env, VALIDATOR_PENDING_VOTES_INVALIDATED),
+            admin.clone(),
+        ),
+        (wallet.clone(), invalidated_count),
+    );
 }
 
+/// Emitted just before a ProgressCallFailed error is returned, so the
+/// off-chain indexer can detect the failure by scanning transaction receipts.
+/// Because ProgressCallFailed aborts the entire transaction, this event only
+/// appears in the diagnostic stream — it is not committed to the ledger.
+/// Payload is the raw error discriminant returned by try_advance_level.
 pub fn progress_call_failed(env: &Env, player_id: u64, error_code: u32) {
-    ProgressCallFailed {
-        player_id,
+    env.events().publish(
+        (Symbol::new(env, "progress_call_failed"), player_id),
         error_code,
-    }
-    .emit(env);
+    );
 }
 
+/// Emitted by `restore_validator_record` when an admin re-extends an archived
+/// or expired validator entry's TTL back to the core-identity policy value.
+/// topics: (event_name, admin)  data: wallet
 pub fn validator_record_restored(env: &Env, admin: &Address, wallet: &Address) {
-    ValidatorRecordRestored {
-        admin: admin.clone(),
-        wallet: wallet.clone(),
-    }
-    .emit(env);
+    env.events().publish(
+        (Symbol::new(env, "validator_record_restored"), admin.clone()),
+        wallet.clone(),
+    );
 }
 
+/// Emitted by `restore_milestone_record` when an admin re-extends an archived
+/// or expired milestone entry's TTL back to the core-identity policy value.
+/// topics: (event_name, admin)  data: (player_id, index)
 pub fn milestone_record_restored(env: &Env, admin: &Address, player_id: u64, index: u32) {
-    MilestoneRecordRestored {
-        admin: admin.clone(),
-        player_id,
-        index,
-    }
-    .emit(env);
+    env.events().publish(
+        (Symbol::new(env, "milestone_record_restored"), admin.clone()),
+        (player_id, index),
+    );
 }
 
+/// Emitted for each milestone flagged during a for-cause revocation cascade
+/// (issue #1039).
+///
+/// topics: (event_name, validator)  data: (player_id, milestone_index)
 pub fn milestone_flagged_for_rereview(
     env: &Env,
     validator: &Address,
     player_id: u64,
     milestone_index: u32,
 ) {
-    MilestoneFlaggedForRereview {
-        validator: validator.clone(),
-        player_id,
-        milestone_index,
-    }
-    .emit(env);
+    env.events().publish(
+        (Symbol::new(env, "milestone_flagged"), validator.clone()),
+        (player_id, milestone_index),
+    );
 }
 
-pub fn milestone_flag_cleared(
-    env: &Env,
-    reviewer: &Address,
-    player_id: u64,
-    milestone_index: u32,
-) {
-    MilestoneFlagCleared {
-        reviewer: reviewer.clone(),
-        player_id,
-        milestone_index,
-    }
-    .emit(env);
+/// Emitted when an active validator clears a pending re-review flag via
+/// `rereview_milestone` (issue #1039).
+///
+/// topics: (event_name, reviewer)  data: (player_id, milestone_index)
+pub fn milestone_flag_cleared(env: &Env, reviewer: &Address, player_id: u64, milestone_index: u32) {
+    env.events().publish(
+        (Symbol::new(env, "milestone_flag_cleared"), reviewer.clone()),
+        (player_id, milestone_index),
+    );
 }
 
+/// Emitted when a for-cause cascade sweep completes (all milestones flagged)
+/// or when `continue_revocation_cascade` exhausts the remaining milestones
+/// in a single call.
+///
+/// topics: (event_name, validator)  data: total_flagged_so_far
 pub fn revocation_cascade_complete(env: &Env, validator: &Address, total_flagged: u32) {
-    RevocationCascadeComplete {
-        validator: validator.clone(),
+    env.events().publish(
+        (
+            Symbol::new(env, "revocation_cascade_complete"),
+            validator.clone(),
+        ),
         total_flagged,
-    }
-    .emit(env);
+    );
 }
 
+/// Emitted when a for-cause cascade sweep call reaches its per-call limit and
+/// a continuation cursor is stored so the sweep can be resumed.
+///
+/// topics: (event_name, validator)  data: (next_cursor, flagged_this_call)
 pub fn revocation_cascade_continued(
     env: &Env,
     validator: &Address,
     next_cursor: u32,
     flagged_this_call: u32,
 ) {
-    RevocationCascadeContinued {
-        validator: validator.clone(),
-        next_cursor,
-        flagged_this_call,
-    }
-    .emit(env);
+    env.events().publish(
+        (
+            Symbol::new(env, "revocation_cascade_continued"),
+            validator.clone(),
+        ),
+        (next_cursor, flagged_this_call),
+    );
 }
 
-pub fn admin_transfer_proposed(env: &Env, old_admin: &Address, new_admin: &Address) {
-    AdminTransferProposed {
-        old_admin: old_admin.clone(),
-        new_admin: new_admin.clone(),
-    }
-    .emit(env);
-}
-
-pub fn admin_transferred(env: &Env, old_admin: &Address, new_admin: &Address) {
-    AdminTransferred {
-        old_admin: old_admin.clone(),
-        new_admin: new_admin.clone(),
-    }
-    .emit(env);
-}
-
+/// Emitted when a validator casts a vote on a jury-required dispute.
+/// topics: (event_name, validator)  data: (player_id, milestone_index, for_upheld)
 pub fn dispute_vote_cast(
     env: &Env,
     player_id: u64,
@@ -637,15 +446,14 @@ pub fn dispute_vote_cast(
     validator: &Address,
     for_upheld: bool,
 ) {
-    DisputeVoteCast {
-        validator: validator.clone(),
-        player_id,
-        milestone_index,
-        for_upheld,
-    }
-    .emit(env);
+    env.events().publish(
+        (Symbol::new(env, DISPUTE_VOTE_CAST), validator.clone()),
+        (player_id, milestone_index, for_upheld),
+    );
 }
 
+/// Emitted when a jury-required dispute is tallied and resolved.
+/// topics: (event_name, player_id)  data: (milestone_index, upheld, votes_for, votes_against)
 pub fn dispute_tallied(
     env: &Env,
     player_id: u64,
@@ -654,30 +462,10 @@ pub fn dispute_tallied(
     votes_for: u32,
     votes_against: u32,
 ) {
-    DisputeTallied {
-        player_id,
-        milestone_index,
-        upheld,
-        votes_for,
-        votes_against,
-    }
-    .emit(env);
-}
-
-pub fn player_data_purged(
-    env: &Env,
-    admin: &Address,
-    player_id: u64,
-    entries_removed: u32,
-    more: bool,
-) {
-    PlayerDataPurged {
-        admin: admin.clone(),
-        player_id,
-        entries_removed,
-        more,
-    }
-    .emit(env);
+    env.events().publish(
+        (Symbol::new(env, DISPUTE_TALLIED), player_id),
+        (milestone_index, upheld, votes_for, votes_against),
+    );
 }
 
 /// Emitted before `update_current_contract_wasm` — attributed to the old code version.

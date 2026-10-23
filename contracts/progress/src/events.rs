@@ -1,90 +1,34 @@
+#![allow(deprecated, dead_code)]
 use scoutchain_shared_types::ProgressLevel;
-use soroban_sdk::{contractevent, Address, BytesN, Env, Symbol};
+use soroban_sdk::{Address, BytesN, Env, Symbol};
 
-// ── Typed contract events (issue #1370) ──────────────────────────────────────
+pub const ADMIN_TRANSFERRED: &str = "admin_transferred";
+pub const ADMIN_TRANSFER_PROPOSED: &str = "admin_transfer_proposed";
+pub const PROGRESS_UPDATED: &str = "progress_updated";
+pub const PLAYER_LEVEL_RESET: &str = "player_level_reset";
+pub const WIRING_UPDATED: &str = "wiring_updated";
+pub const CONTRACT_UPGRADED: &str = "contract_upgraded";
+pub const MIGRATION_WINDOW_OPENED: &str = "migration_window_opened";
+pub const MIGRATION_WINDOW_CLOSED: &str = "migration_window_closed";
+pub const SCHEMA_MIGRATED: &str = "schema_migrated";
 
-/// Emitted by `advance_level` and `reset_player_level`.
-#[contractevent]
-pub struct ProgressUpdated {
-    #[topic]
-    pub updated_by: Address,
-    pub player_id: u64,
-    pub old_level: ProgressLevel,
-    pub new_level: ProgressLevel,
+/// topics: (event_name, old_admin)  data: new_admin
+pub fn admin_transferred(env: &Env, old_admin: &Address, new_admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "admin_transferred"), old_admin.clone()),
+        new_admin.clone(),
+    );
 }
 
-/// Emitted by `reset_player_level` (admin dispute-resolution reset).
-#[contractevent]
-pub struct PlayerLevelReset {
-    #[topic]
-    pub admin: Address,
-    pub player_id: u64,
-    pub old_level: ProgressLevel,
-    pub target_level: ProgressLevel,
+/// topics: (event_name, old_admin)  data: new_admin
+pub fn admin_transfer_proposed(env: &Env, old_admin: &Address, new_admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, ADMIN_TRANSFER_PROPOSED), old_admin.clone()),
+        new_admin.clone(),
+    );
 }
 
-/// Emitted by `propose_admin`.
-#[contractevent]
-pub struct AdminTransferProposed {
-    #[topic]
-    pub old_admin: Address,
-    pub new_admin: Address,
-}
-
-/// Emitted by `accept_admin`.
-#[contractevent]
-pub struct AdminTransferred {
-    #[topic]
-    pub old_admin: Address,
-    pub new_admin: Address,
-}
-
-/// Emitted by `set_registration_contract` / `set_verification_contract` /
-/// `set_scout_access_contract`.
-#[contractevent]
-pub struct WiringUpdated {
-    #[topic]
-    pub admin: Address,
-    #[topic]
-    pub link: soroban_sdk::Symbol,
-    pub new_address: Address,
-    pub new_epoch: u32,
-}
-
-/// Emitted by `pause_contract`.
-#[contractevent]
-pub struct ContractPaused {
-    #[topic]
-    pub admin: Address,
-}
-
-/// Emitted by `unpause_contract`.
-#[contractevent]
-pub struct ContractUnpaused {
-    #[topic]
-    pub admin: Address,
-}
-
-/// Emitted by `restore_player_level_record`.
-#[contractevent]
-pub struct PlayerLevelRecordRestored {
-    #[topic]
-    pub admin: Address,
-    pub player_id: u64,
-}
-
-/// Emitted by `purge_player_data` (GDPR erasure, issue #1373).
-#[contractevent]
-pub struct PlayerDataPurged {
-    #[topic]
-    pub admin: Address,
-    pub player_id: u64,
-    pub entries_removed: u32,
-    pub more: bool,
-}
-
-// ── Emit helpers ─────────────────────────────────────────────────────────────
-
+/// topics: (event_name, updated_by)  data: (player_id, old_level, new_level)
 pub fn progress_updated(
     env: &Env,
     player_id: u64,
@@ -93,15 +37,13 @@ pub fn progress_updated(
     updated_by: &Address,
     _milestone_ref: u32,
 ) {
-    ProgressUpdated {
-        updated_by: updated_by.clone(),
-        player_id,
-        old_level: old_level.clone(),
-        new_level: new_level.clone(),
-    }
-    .emit(env);
+    env.events().publish(
+        (Symbol::new(env, "progress_updated"), updated_by.clone()),
+        (player_id, old_level.clone(), new_level.clone()),
+    );
 }
 
+/// topics: (event_name, admin)  data: (player_id, old_level, target_level)
 pub fn player_level_reset(
     env: &Env,
     admin: &Address,
@@ -109,31 +51,20 @@ pub fn player_level_reset(
     old_level: &ProgressLevel,
     target_level: &ProgressLevel,
 ) {
-    PlayerLevelReset {
-        admin: admin.clone(),
-        player_id,
-        old_level: old_level.clone(),
-        target_level: target_level.clone(),
-    }
-    .emit(env);
+    env.events().publish(
+        (Symbol::new(env, "player_level_reset"), admin.clone()),
+        (player_id, old_level.clone(), target_level.clone()),
+    );
 }
 
-pub fn admin_transfer_proposed(env: &Env, old_admin: &Address, new_admin: &Address) {
-    AdminTransferProposed {
-        old_admin: old_admin.clone(),
-        new_admin: new_admin.clone(),
-    }
-    .emit(env);
-}
-
-pub fn admin_transferred(env: &Env, old_admin: &Address, new_admin: &Address) {
-    AdminTransferred {
-        old_admin: old_admin.clone(),
-        new_admin: new_admin.clone(),
-    }
-    .emit(env);
-}
-
+/// topics: (event_name, admin, link)  data: (new_address, new_epoch)
+///
+/// Emitted by every `set_registration_contract` / `set_verification_contract`
+/// / `set_scout_access_contract` call. `link` identifies which of this
+/// contract's three peer pointers changed (`"registration_contract"`,
+/// `"verification_contract"`, or `"scout_access_contract"`) so a single
+/// indexer subscription can distinguish them without three separate event
+/// names. See `docs/WIRING_REGISTRY_DESIGN.md`.
 pub fn wiring_updated(
     env: &Env,
     admin: &Address,
@@ -141,51 +72,39 @@ pub fn wiring_updated(
     new_address: &Address,
     new_epoch: u32,
 ) {
-    WiringUpdated {
-        admin: admin.clone(),
-        link: soroban_sdk::Symbol::new(env, link),
-        new_address: new_address.clone(),
-        new_epoch,
-    }
-    .emit(env);
+    env.events().publish(
+        (
+            Symbol::new(env, WIRING_UPDATED),
+            admin.clone(),
+            Symbol::new(env, link),
+        ),
+        (new_address.clone(), new_epoch),
+    );
 }
 
+/// topics: (event_name, admin)  data: ()
 pub fn contract_paused(env: &Env, admin: &Address) {
-    ContractPaused {
-        admin: admin.clone(),
-    }
-    .emit(env);
+    env.events()
+        .publish((Symbol::new(env, "contract_paused"), admin.clone()), ());
 }
 
+/// topics: (event_name, admin)  data: ()
 pub fn contract_unpaused(env: &Env, admin: &Address) {
-    ContractUnpaused {
-        admin: admin.clone(),
-    }
-    .emit(env);
+    env.events()
+        .publish((Symbol::new(env, "contract_unpaused"), admin.clone()), ());
 }
 
+/// Emitted by `restore_player_level_record` when an admin re-extends an
+/// archived or expired player-level entry's TTL back to the policy value.
+/// topics: (event_name, admin)  data: player_id
 pub fn player_level_record_restored(env: &Env, admin: &Address, player_id: u64) {
-    PlayerLevelRecordRestored {
-        admin: admin.clone(),
+    env.events().publish(
+        (
+            Symbol::new(env, "player_level_record_restored"),
+            admin.clone(),
+        ),
         player_id,
-    }
-    .emit(env);
-}
-
-pub fn player_data_purged(
-    env: &Env,
-    admin: &Address,
-    player_id: u64,
-    entries_removed: u32,
-    more: bool,
-) {
-    PlayerDataPurged {
-        admin: admin.clone(),
-        player_id,
-        entries_removed,
-        more,
-    }
-    .emit(env);
+    );
 }
 
 /// topics: (event_name, admin)  data: ()

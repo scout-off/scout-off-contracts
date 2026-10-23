@@ -3,8 +3,8 @@ import jwt from "jsonwebtoken";
 import {
   buildChallengeTx,
   verifyChallengeTx,
-  deriveRole,
-  issueSep10Token,
+  issueSession,
+  refreshSession,
 } from "./services/sep10";
 import { requireAuth, requireRole } from "./middleware/auth";
 import { prisma } from "./db";
@@ -12,19 +12,16 @@ import { prisma } from "./db";
 const app = express();
 app.use(express.json());
 
-// In-memory token store for demo (replace with DB in production)
-const issuedTokens = new Map<string, string>();
-
 // SEP-10 challenge endpoint — returns a server-signed challenge
 // transaction that the client must sign and return.
-app.get("/auth", (req: Request, res: Response) => {
+app.get("/auth", async (req: Request, res: Response) => {
   const account = req.query.account as string | undefined;
   if (!account) {
     return res.status(400).json({ error: "account query parameter is required" });
   }
 
   try {
-    const challenge = buildChallengeTx(account);
+    const challenge = await buildChallengeTx(account);
     res.json({ challenge });
   } catch (error) {
     return res.status(500).json({
@@ -50,12 +47,26 @@ app.post("/auth", async (req: Request, res: Response) => {
 
   try {
     const verifiedAccount = await verifyChallengeTx(transaction, account);
-    const role = await deriveRole(verifiedAccount);
-    const token = issueSep10Token({ sub: verifiedAccount, role }, process.env.JWT_SECRET!);
+    const session = await issueSession(verifiedAccount);
 
-    issuedTokens.set(token, "active");
+    res.json(session);
+  } catch (error) {
+    return res.status(401).json({
+      error: error instanceof Error ? error.message : "Authentication failed",
+    });
+  }
+});
 
-    res.json({ token });
+// Refresh endpoint — rotates the refresh token and re-derives the role.
+app.post("/auth/refresh", async (req: Request, res: Response) => {
+  const { refreshToken } = req.body as { refreshToken?: string };
+
+  if (!refreshToken) {
+    return res.status(400).json({ error: "refreshToken is required" });
+  }
+
+  try {
+    res.json(await refreshSession(refreshToken));
   } catch (error) {
     return res.status(401).json({
       error: error instanceof Error ? error.message : "Authentication failed",

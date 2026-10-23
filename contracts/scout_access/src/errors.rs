@@ -162,6 +162,16 @@ pub enum ScoutAccessError {
     /// `open_migration_window` was called after the window was permanently
     /// closed by `close_migration_window`.
     MigrationWindowSealed = 45,
+
+    // ── Evidence-access renewal (issue #1607) ──
+    /// `renew_evidence_access` was called while the grant is still active.
+    GrantNotExpired = 46,
+    /// `reinstate_evidence_access` was called on a grant that is not revoked.
+    GrantNotRevoked = 47,
+    /// `reinstate_evidence_access` cannot undo an admin takedown.
+    GrantAdminRevoked = 48,
+    /// `renew_evidence_access` requires an existing `ContactRecord` for the pair.
+    ContactNotFound = 49,
 }
 
 impl AdminError for ScoutAccessError {

@@ -206,6 +206,10 @@ pub enum VerificationError {
     /// `open_migration_window` was called after the window was permanently
     /// closed by `close_migration_window`.
     MigrationWindowSealed = 58,
+
+    // ── Bulk revocation (issue #1605) ──
+    /// `batch_revoke_validators` was called with more than `MAX_BATCH_REVOKE` wallets.
+    BatchTooLarge = 59,
 }
 
 impl AdminError for VerificationError {

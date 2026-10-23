@@ -219,40 +219,13 @@ impl RegistrationContract {
     // Admin
     // -------------------------------------------------------------------------
 
-    // -------------------------------------------------------------------------
-    // Constructor (atomic deployment + initialization — issue #1369)
-    // -------------------------------------------------------------------------
-
-    /// Soroban constructor: called atomically during `stellar contract deploy`.
-    /// Because deployment and initialization are a single transaction, there is
-    /// no window in which a third party could front-run this call and claim
-    /// the admin role (compare with the old two-step deploy→initialize flow).
-    ///
-    /// Protocol 22+ required (Soroban constructor support). Existing deployments
-    /// that used the old `initialize` entrypoint are unaffected — constructors
-    /// only run on new deploys. See `docs/DEPLOYMENT.md` and `docs/VERSIONING.md`.
-    pub fn __constructor(env: Env, admin: Address) {
-        Self::init_state(&env, &admin);
-    }
-
-    /// One-time contract initialisation. Kept for backward compatibility with
-    /// already-deployed contracts that were set up via the old two-step flow.
-    /// On a freshly deployed contract (which already ran `__constructor`) this
-    /// function returns `AlreadyInitialized` immediately and is otherwise a
-    /// no-op. New deployments should use the constructor and never call this.
+    /// One-time contract initialisation. Must be called before any other function.
     pub fn initialize(env: Env, admin: Address) -> Result<(), ScoutChainError> {
         if env.storage().instance().has(&DataKey::Initialized) {
             return Err(ScoutChainError::AlreadyInitialized);
         }
         admin.require_auth();
-        Self::init_state(&env, &admin);
-        Ok(())
-    }
-
-    /// Shared initialisation logic used by both `__constructor` and the legacy
-    /// `initialize` entrypoint.
-    fn init_state(env: &Env, admin: &Address) {
-        env.storage().persistent().set(&DataKey::Admin, admin);
+        env.storage().persistent().set(&DataKey::Admin, &admin);
         env.storage().persistent().extend_ttl(
             &DataKey::Admin,
             ADMIN_BUMP_LEDGERS,
@@ -654,14 +627,10 @@ impl RegistrationContract {
             .remove(&DataKey::Player(player_id));
         env.storage()
             .persistent()
-            .remove(&DataKey::PlayerByWallet(profile.wallet.clone()));
+            .remove(&DataKey::PlayerByWallet(profile.wallet));
         env.storage()
             .persistent()
             .remove(&DataKey::PlayerLevel(player_id));
-        // Remove deactivation flag if present.
-        env.storage()
-            .persistent()
-            .remove(&DataKey::PlayerDeactivated(player_id));
 
         // Remove from player index
         let mut player_ids: Vec<u64> = env
@@ -676,9 +645,8 @@ impl RegistrationContract {
                 .set(&DataKey::PlayerIndex, &player_ids);
         }
 
-        // Remove from composite (level, region) index.
+        // Remove from composite index
         Self::composite_index_remove(&env, &level, &profile.vitals.region, player_id);
-        // Remove from per-level sub-index.
         Self::level_index_remove(&env, &level, player_id);
 
         // Decrement live player count (saturating to avoid underflow)
@@ -2119,7 +2087,7 @@ mod tests {
                 (
                     client.address.clone(),
                     (
-                        Symbol::new(&env, "AdminTransferProposed"),
+                        Symbol::new(&env, events::ADMIN_TRANSFER_PROPOSED),
                         old_admin.clone(),
                     )
                         .into_val(&env),
@@ -2166,7 +2134,7 @@ mod tests {
                 (
                     client.address.clone(),
                     (
-                        Symbol::new(&env, "AdminTransferred"),
+                        Symbol::new(&env, events::ADMIN_TRANSFERRED),
                         old_admin.clone(),
                     )
                         .into_val(&env),
@@ -3603,7 +3571,7 @@ mod tests {
                 (
                     client.address.clone(),
                     (
-                        soroban_sdk::Symbol::new(&env, "ScoutVerified"),
+                        soroban_sdk::Symbol::new(&env, crate::events::SCOUT_VERIFIED),
                         wallet.clone()
                     )
                         .into_val(&env),
@@ -3735,7 +3703,7 @@ mod tests {
                 (
                     client.address.clone(),
                     (
-                        Symbol::new(&env, "WiringUpdated"),
+                        Symbol::new(&env, crate::events::WIRING_UPDATED),
                         admin.clone(),
                         Symbol::new(&env, "progress_contract"),
                     )
