@@ -140,6 +140,9 @@ impl ProgressContract {
     /// Store the registration contract address so we can sync player levels (admin only).
     pub fn set_registration_contract(env: Env, addr: Address) -> Result<(), ProgressError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        if !scoutchain_shared_types::verify_peer(&env, &addr, "registration", 0) {
+            return Err(ProgressError::InvalidPeerContract);
+        }
         let epoch = write_wiring_link(
             &env,
             &DataKey::RegistrationContract,
@@ -171,6 +174,9 @@ impl ProgressContract {
     pub fn set_verification_contract(env: Env, addr: Address) -> Result<(), ProgressError> {
         Self::bump_instance_ttl(&env);
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        if !scoutchain_shared_types::verify_peer(&env, &addr, "verification", 0) {
+            return Err(ProgressError::InvalidPeerContract);
+        }
         let epoch = write_wiring_link(
             &env,
             &DataKey::VerificationContract,
@@ -186,6 +192,9 @@ impl ProgressContract {
     pub fn set_scout_access_contract(env: Env, addr: Address) -> Result<(), ProgressError> {
         Self::bump_instance_ttl(&env);
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        if !scoutchain_shared_types::verify_peer(&env, &addr, "scout_access", 0) {
+            return Err(ProgressError::InvalidPeerContract);
+        }
         let epoch = write_wiring_link(
             &env,
             &DataKey::ScoutAccessContract,
@@ -1386,6 +1395,11 @@ impl ProgressContract {
     /// Returns the deployed crate version (from Cargo.toml at build time).
     pub fn version(env: Env) -> String {
         String::from_str(&env, CONTRACT_VERSION)
+    }
+
+    /// Stable contract identifier used by the on-chain wiring handshake (#1610).
+    pub fn contract_kind(env: Env) -> soroban_sdk::Symbol {
+        soroban_sdk::Symbol::new(&env, "progress")
     }
 
     /// Returns a snapshot of all cross-contract peer address pointers held by

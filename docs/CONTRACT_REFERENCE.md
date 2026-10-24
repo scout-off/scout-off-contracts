@@ -825,6 +825,7 @@ registration is permitted; duplicate prevention is enforced per role only.
 | `player_reactivated` | event_name, admin (Address) | player_id (u64) | Player restored to discovery |
 | `player_level_synced` | event_name, caller (Address) | player_id (u64) | Player level updated by progress contract |
 | `scout_verified` | event_name, admin (Address) | scout_id (u64) | Scout marked verified |
+| `scout_unverified` | event_name, wallet (Address) | scout_id (u64), admin (Address) | Scout verification revoked (`unverify_scout`) |
 | `scout_deactivated` | event_name, admin (Address) | scout_id (u64) | Scout hidden from discovery |
 | `scout_reactivated` | event_name, admin (Address) | scout_id (u64) | Scout restored to discovery |
 | `admin_transfer_proposed` | event_name, old_admin (Address) | new_admin (Address) | Admin replacement proposed |

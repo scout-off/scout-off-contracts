@@ -378,6 +378,9 @@ impl RegistrationContract {
     /// this is the majority policy across all four contracts).
     pub fn set_progress_contract(env: Env, addr: Address) -> Result<(), ScoutChainError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        if !scoutchain_shared_types::verify_peer(&env, &addr, "progress", 0) {
+            return Err(ScoutChainError::InvalidPeerContract);
+        }
         let epoch = write_wiring_link(
             &env,
             &DataKey::ProgressContract,
@@ -838,6 +841,8 @@ impl RegistrationContract {
                 verified_at: None,
                 evidence_ref: None,
                 method: None,
+                revoked_at: None,
+                revoked_reason: None,
             },
             // Reuse `now` instead of calling env.ledger().timestamp() a second time.
             registered_at: now,
@@ -1005,6 +1010,8 @@ impl RegistrationContract {
                 } else {
                     None
                 },
+                revoked_at: None,
+                revoked_reason: None,
             },
             registered_at,
         };
@@ -1546,6 +1553,8 @@ impl RegistrationContract {
             verified_at: Some(env.ledger().timestamp()),
             evidence_ref: None,
             method: Some(String::from_str(&env, "admin_manual")),
+            revoked_at: None,
+            revoked_reason: None,
         };
         profile.verified = true;
         env.storage()
@@ -1558,6 +1567,55 @@ impl RegistrationContract {
         );
         events::scout_verified(&env, scout_id, &profile.wallet);
         Ok(())
+    }
+
+    /// Revoke a scout's verification (admin only).
+    ///
+    /// Only drops Pro/Elite privileges enforced by `scout_access`; it does not
+    /// deactivate the account. The original `verified_by`/`verified_at` evidence
+    /// is preserved and `revoked_at`/`revoked_reason` record the revocation.
+    /// Unverifying an already-unverified scout returns `InvalidInput`.
+    pub fn unverify_scout(env: Env, scout_id: u64, reason: String) -> Result<(), ScoutChainError> {
+        let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        let mut profile: ScoutProfile = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Scout(scout_id))
+            .ok_or(ScoutChainError::ScoutNotFound)?;
+        if !profile.verified {
+            return Err(ScoutChainError::InvalidInput);
+        }
+        profile.verified = false;
+        profile.verification.verified = false;
+        profile.verification.revoked_at = Some(env.ledger().timestamp());
+        profile.verification.revoked_reason = Some(reason);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Scout(scout_id), &profile);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Scout(scout_id),
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
+        events::scout_unverified(&env, scout_id, &profile.wallet, &admin);
+        Ok(())
+    }
+
+    /// Lightweight check used by `scout_access`: whether the scout owning
+    /// `wallet` is currently verified. Returns `false` for unknown wallets.
+    pub fn is_scout_verified(env: Env, wallet: Address) -> bool {
+        let Some(scout_id) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, u64>(&DataKey::ScoutByWallet(wallet))
+        else {
+            return false;
+        };
+        env.storage()
+            .persistent()
+            .get::<DataKey, ScoutProfile>(&DataKey::Scout(scout_id))
+            .map(|p| p.verified)
+            .unwrap_or(false)
     }
 
     /// Return the number of currently registered players.
@@ -1781,6 +1839,11 @@ impl RegistrationContract {
     /// Returns the deployed crate version (from Cargo.toml at build time).
     pub fn version(env: Env) -> String {
         String::from_str(&env, CONTRACT_VERSION)
+    }
+
+    /// Stable contract identifier used by the on-chain wiring handshake (#1610).
+    pub fn contract_kind(env: Env) -> soroban_sdk::Symbol {
+        soroban_sdk::Symbol::new(&env, "registration")
     }
 
     // -------------------------------------------------------------------------
@@ -2165,11 +2228,7 @@ mod tests {
                 &env,
                 (
                     client.address.clone(),
-                    (
-                        Symbol::new(&env, "AdminTransferred"),
-                        old_admin.clone(),
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "AdminTransferred"), old_admin.clone(),).into_val(&env),
                     new_admin.clone().into_val(&env),
                 )
             ]
@@ -4385,6 +4444,8 @@ mod tests {
                 verified_at: None,
                 evidence_ref: None,
                 method: None,
+                revoked_at: None,
+                revoked_reason: None,
             },
             registered_at: 2000u64,
         };

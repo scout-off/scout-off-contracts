@@ -86,6 +86,8 @@ pub enum ProgressError {
     SchemaVersionTooNew = 22,
     /// `migrate` was asked for a target newer than this code understands.
     UnknownSchemaTarget = 23,
+    /// Wiring target failed the `contract_kind`/`version` handshake (#1610).
+    InvalidPeerContract = 24,
 }
 
 impl AdminError for ProgressError {

@@ -388,3 +388,107 @@ fn test_attacker_cannot_pay_for_elite_instead() {
         .try_subscribe(&attacker, &SubscriptionTier::Elite);
     assert_eq!(result, Err(Ok(ScoutAccessError::ScoutNotVerified)));
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests: revocation via unverify_scout (#1608)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_unverify_scout_records_audit_fields() {
+    let h = setup();
+    let id = h
+        .registration_client
+        .get_scout_by_wallet(&h.scout1)
+        .scout_id;
+    h.registration_client.verify_scout(&id);
+    h.registration_client
+        .unverify_scout(&id, &String::from_str(&h.env, "fraud"));
+
+    let rec = h.registration_client.get_scout_verification(&id);
+    assert!(!rec.verified);
+    assert!(rec.verified_at.is_some());
+    assert_eq!(rec.revoked_at, Some(1_000_000));
+    assert_eq!(rec.revoked_reason, Some(String::from_str(&h.env, "fraud")));
+    assert!(!h.registration_client.is_scout_verified(&h.scout1));
+
+    // Already unverified: second call is rejected.
+    assert!(h
+        .registration_client
+        .try_unverify_scout(&id, &String::from_str(&h.env, "again"))
+        .is_err());
+}
+
+#[test]
+fn test_renew_if_due_fails_after_unverify_for_pro() {
+    let h = setup();
+    let id = h
+        .registration_client
+        .get_scout_by_wallet(&h.scout1)
+        .scout_id;
+    h.registration_client.verify_scout(&id);
+    h.scout_access_client
+        .subscribe(&h.scout1, &SubscriptionTier::Pro);
+    h.scout_access_client.set_auto_renew(&h.scout1, &true);
+
+    h.registration_client
+        .unverify_scout(&id, &String::from_str(&h.env, "fraud"));
+    h.env
+        .ledger()
+        .with_mut(|l| l.timestamp = 1_000_000 + 31 * 24 * 60 * 60);
+
+    assert_eq!(
+        h.scout_access_client.try_renew_if_due(&h.scout1),
+        Err(Ok(ScoutAccessError::ScoutNotVerified))
+    );
+}
+
+#[test]
+fn test_basic_tier_renewal_unaffected_by_unverify() {
+    let h = setup();
+    let id = h
+        .registration_client
+        .get_scout_by_wallet(&h.scout1)
+        .scout_id;
+    h.scout_access_client
+        .subscribe(&h.scout1, &SubscriptionTier::Basic);
+    h.scout_access_client.set_auto_renew(&h.scout1, &true);
+    // Never verified; Basic renewal must still succeed.
+    let _ = id;
+    h.env
+        .ledger()
+        .with_mut(|l| l.timestamp = 1_000_000 + 31 * 24 * 60 * 60);
+    h.scout_access_client.renew_if_due(&h.scout1);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests: on-chain wiring handshake (#1610)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_wiring_rejects_non_scoutchain_and_wrong_kind_peers() {
+    let h = setup();
+
+    // Plain account address: not a contract.
+    let not_a_contract = Address::generate(&h.env);
+    assert_eq!(
+        h.scout_access_client
+            .try_set_registration_contract(&not_a_contract),
+        Err(Ok(ScoutAccessError::InvalidPeerContract))
+    );
+
+    // A real ScoutChain contract of the wrong kind (scout_access itself).
+    let wrong_kind = h.scout_access_client.address.clone();
+    assert_eq!(
+        h.scout_access_client
+            .try_set_registration_contract(&wrong_kind),
+        Err(Ok(ScoutAccessError::InvalidPeerContract))
+    );
+    assert_eq!(
+        h.scout_access_client.try_set_progress_contract(&wrong_kind),
+        Err(Ok(ScoutAccessError::InvalidPeerContract))
+    );
+
+    // The correct kind is accepted.
+    h.scout_access_client
+        .set_registration_contract(&h.registration_client.address);
+}

@@ -1,6 +1,6 @@
 use crate::types::MigrationRole;
-use soroban_sdk::{contractevent, Address, BytesN, Env, String, Symbol};
 use scoutchain_shared_types::ProgressLevel;
+use soroban_sdk::{contractevent, Address, BytesN, Env, String, Symbol};
 
 // ── Typed contract events (issue #1370) ──────────────────────────────────────
 //
@@ -222,6 +222,24 @@ pub fn scout_verified(env: &Env, scout_id: u64, wallet: &Address) {
     ScoutVerified {
         wallet: wallet.clone(),
         scout_id,
+    }
+    .emit(env);
+}
+
+/// Emitted by `unverify_scout`.
+#[contractevent]
+pub struct ScoutUnverified {
+    #[topic]
+    pub wallet: Address,
+    pub scout_id: u64,
+    pub admin: Address,
+}
+
+pub fn scout_unverified(env: &Env, scout_id: u64, wallet: &Address, admin: &Address) {
+    ScoutUnverified {
+        wallet: wallet.clone(),
+        scout_id,
+        admin: admin.clone(),
     }
     .emit(env);
 }

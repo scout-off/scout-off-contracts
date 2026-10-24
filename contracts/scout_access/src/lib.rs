@@ -73,6 +73,8 @@ mod registration_contract {
         pub verified_at: Option<u64>,
         pub evidence_ref: Option<String>,
         pub method: Option<String>,
+        pub revoked_at: Option<u64>,
+        pub revoked_reason: Option<String>,
     }
 
     // Named uniquely (not `Error`) — see the note in `mod progress_contract`
@@ -93,6 +95,7 @@ mod registration_contract {
         fn get_scout_by_wallet(env: Env, wallet: Address) -> Result<ScoutProfile, RegClientError>;
         fn get_player_id_by_wallet(env: Env, wallet: Address) -> Result<u64, RegClientError>;
         fn is_scout_deactivated(env: Env, scout_id: u64) -> bool;
+        fn is_scout_verified(env: Env, wallet: Address) -> bool;
     }
 }
 
@@ -203,6 +206,30 @@ impl ScoutAccessContract {
             }
         }
         Ok(())
+    }
+
+    /// Pro and Elite actions require the scout to be *currently* verified in
+    /// the registration contract (verification can be revoked by
+    /// `unverify_scout`). Basic tier is unaffected. Fails closed: if the
+    /// registration contract is unwired or the call fails, access is denied.
+    fn require_verified_for_tier(
+        env: &Env,
+        scout: &Address,
+        tier: &SubscriptionTier,
+    ) -> Result<(), ScoutAccessError> {
+        if *tier == SubscriptionTier::Basic {
+            return Ok(());
+        }
+        let reg_contract_addr = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::RegistrationContract)
+            .ok_or(ScoutAccessError::RegistrationContractNotSet)?;
+        let reg_client = registration_contract::Client::new(env, &reg_contract_addr);
+        match reg_client.try_is_scout_verified(scout) {
+            Ok(Ok(true)) => Ok(()),
+            _ => Err(ScoutAccessError::ScoutNotVerified),
+        }
     }
 
     fn bump_instance_ttl(env: &Env) {
@@ -499,6 +526,9 @@ impl ScoutAccessContract {
     pub fn set_progress_contract(env: Env, addr: Address) -> Result<(), ScoutAccessError> {
         Self::bump_instance_ttl(&env);
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        if !scoutchain_shared_types::verify_peer(&env, &addr, "progress", 0) {
+            return Err(ScoutAccessError::InvalidPeerContract);
+        }
         let epoch = write_wiring_link(
             &env,
             &DataKey::ProgressContract,
@@ -528,6 +558,9 @@ impl ScoutAccessContract {
     pub fn set_registration_contract(env: Env, addr: Address) -> Result<(), ScoutAccessError> {
         Self::bump_instance_ttl(&env);
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        if !scoutchain_shared_types::verify_peer(&env, &addr, "registration", 0) {
+            return Err(ScoutAccessError::InvalidPeerContract);
+        }
         let epoch = write_wiring_link(
             &env,
             &DataKey::RegistrationContract,
@@ -856,6 +889,8 @@ impl ScoutAccessContract {
             .get(&DataKey::Subscription(scout.clone()))
             .ok_or(ScoutAccessError::ScoutNotSubscribed)?;
 
+        Self::require_verified_for_tier(&env, &scout, &existing.tier)?;
+
         let now = env.ledger().timestamp();
         let config = Self::fee_config(&env)?;
 
@@ -1065,6 +1100,7 @@ impl ScoutAccessContract {
         if subscription.expires_at < env.ledger().timestamp() {
             return Err(ScoutAccessError::SubscriptionExpired);
         }
+        Self::require_verified_for_tier(&env, &scout, &subscription.tier)?;
 
         // Pro-tier quota is enforced below via `ProContactCount`, which resets
         // on subscription renewal (issue #19). `check_pro_contact_quota` uses
@@ -1225,6 +1261,7 @@ impl ScoutAccessContract {
         if sub.tier == SubscriptionTier::Basic {
             return Err(ScoutAccessError::TierNotPermitted);
         }
+        Self::require_verified_for_tier(&env, &scout, &sub.tier)?;
 
         let config = Self::fee_config(&env)?;
         let mut new_contacts: u32 = 0;
@@ -1413,6 +1450,7 @@ impl ScoutAccessContract {
         if sub.tier != SubscriptionTier::Elite {
             return Err(ScoutAccessError::Unauthorized);
         }
+        Self::require_verified_for_tier(&env, &scout, &sub.tier)?;
         env.storage().persistent().extend_ttl(
             &DataKey::Subscription(scout.clone()),
             PERSISTENT_TTL_MIN,
@@ -2920,11 +2958,7 @@ impl ScoutAccessContract {
         let now = env.ledger().timestamp();
         for idx in 0..trial_count {
             let ek = DataKey::TrialEscrow(player_id, idx);
-            if let Some(escrow) = env
-                .storage()
-                .persistent()
-                .get::<DataKey, TrialEscrow>(&ek)
-            {
+            if let Some(escrow) = env.storage().persistent().get::<DataKey, TrialEscrow>(&ek) {
                 if now <= escrow.expires_at && escrow.amount > 0 {
                     return Err(ScoutAccessError::TrialOfferNotFound);
                 }
@@ -3038,6 +3072,11 @@ impl ScoutAccessContract {
     /// Returns the deployed crate version (from Cargo.toml at build time).
     pub fn version(env: Env) -> String {
         String::from_str(&env, CONTRACT_VERSION)
+    }
+
+    /// Stable contract identifier used by the on-chain wiring handshake (#1610).
+    pub fn contract_kind(env: Env) -> soroban_sdk::Symbol {
+        soroban_sdk::Symbol::new(&env, "scout_access")
     }
 
     // -------------------------------------------------------------------------
@@ -3511,6 +3550,8 @@ mod tests {
                     verified_at: None,
                     evidence_ref: None,
                     method: None,
+                    revoked_at: None,
+                    revoked_reason: None,
                 },
                 registered_at: 0,
             }
@@ -3600,11 +3641,7 @@ mod tests {
                 &env,
                 (
                     contract_id.clone(),
-                    (
-                        Symbol::new(&env, "ContractInitialized"),
-                        admin.clone()
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "ContractInitialized"), admin.clone()).into_val(&env),
                     admin.clone().into_val(&env)
                 )
             ]
@@ -3903,20 +3940,12 @@ mod tests {
                 &env,
                 (
                     contract_id.clone(),
-                    (
-                        Symbol::new(&env, "EvidenceAccessGranted"),
-                        scout.clone()
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "EvidenceAccessGranted"), scout.clone()).into_val(&env),
                     (42u64, SubscriptionTier::Elite).into_val(&env)
                 ),
                 (
                     contract_id.clone(),
-                    (
-                        Symbol::new(&env, "PlayerContacted"),
-                        scout.clone()
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "PlayerContacted"), scout.clone()).into_val(&env),
                     (42u64, default_fees().contact_fee_stroops).into_val(&env)
                 )
             ]
@@ -4481,11 +4510,7 @@ mod tests {
                 &env,
                 (
                     contract_id.clone(),
-                    (
-                        Symbol::new(&env, "AdminTransferred"),
-                        old_admin.clone(),
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "AdminTransferred"), old_admin.clone(),).into_val(&env),
                     new_admin.clone().into_val(&env),
                 )
             ]
@@ -4570,11 +4595,7 @@ mod tests {
                 &env,
                 (
                     client.address.clone(),
-                    (
-                        Symbol::new(&env, "ContractPaused"),
-                        admin.clone()
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "ContractPaused"), admin.clone()).into_val(&env),
                     ().into_val(&env)
                 )
             ]
@@ -4588,11 +4609,7 @@ mod tests {
                 &env,
                 (
                     client.address.clone(),
-                    (
-                        Symbol::new(&env, "ContractUnpaused"),
-                        admin.clone()
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "ContractUnpaused"), admin.clone()).into_val(&env),
                     ().into_val(&env)
                 )
             ]
@@ -5271,11 +5288,7 @@ mod tests {
                 &env,
                 (
                     contract_id.clone(),
-                    (
-                        Symbol::new(&env, "ProgressContractUpdated"),
-                        _admin.clone(),
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "ProgressContractUpdated"), _admin.clone(),).into_val(&env),
                     progress_addr.clone().into_val(&env),
                 ),
                 (
@@ -6702,11 +6715,7 @@ mod tests {
                 &env,
                 (
                     contract_id.clone(),
-                    (
-                        Symbol::new(&env, "AutoRenewSet"),
-                        scout.clone()
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "AutoRenewSet"), scout.clone()).into_val(&env),
                     true.into_val(&env),
                 )
             ]

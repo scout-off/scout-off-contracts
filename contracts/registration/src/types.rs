@@ -89,6 +89,10 @@ pub struct ScoutVerificationRecord {
     pub evidence_ref: Option<String>,
     /// Verification method label (e.g. "admin_manual", "kyc_attestation").
     pub method: Option<String>,
+    /// Ledger timestamp when verification was revoked via `unverify_scout`.
+    pub revoked_at: Option<u64>,
+    /// Admin-supplied reason for the revocation.
+    pub revoked_reason: Option<String>,
 }
 
 /// Scout profile stored on-chain

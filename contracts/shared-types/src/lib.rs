@@ -331,6 +331,54 @@ where
     next_epoch
 }
 
+/// Read-only handshake used by wiring setters (#1610): returns `true` only if
+/// `addr` is a ScoutChain contract whose `contract_kind()` equals
+/// `expected_kind` and whose `version()` has a major component of at least
+/// `min_major`. Non-contract addresses, missing entrypoints and malformed
+/// responses all return `false` instead of trapping.
+pub fn verify_peer(env: &Env, addr: &Address, expected_kind: &str, min_major: u32) -> bool {
+    let kind = env.try_invoke_contract::<soroban_sdk::Symbol, soroban_sdk::Error>(
+        addr,
+        &soroban_sdk::Symbol::new(env, "contract_kind"),
+        Vec::new(env),
+    );
+    match kind {
+        Ok(Ok(k)) if k == soroban_sdk::Symbol::new(env, expected_kind) => {}
+        _ => return false,
+    }
+    let version = env.try_invoke_contract::<String, soroban_sdk::Error>(
+        addr,
+        &soroban_sdk::Symbol::new(env, "version"),
+        Vec::new(env),
+    );
+    let Ok(Ok(version)) = version else {
+        return false;
+    };
+    let len = version.len() as usize;
+    if len == 0 || len > 32 {
+        return false;
+    }
+    let mut buf = [0u8; 32];
+    version.copy_into_slice(&mut buf[..len]);
+    let mut major: u32 = 0;
+    let mut seen_digit = false;
+    for b in &buf[..len] {
+        if b.is_ascii_digit() {
+            seen_digit = true;
+            major = match major
+                .checked_mul(10)
+                .and_then(|m| m.checked_add((b - b'0') as u32))
+            {
+                Some(m) => m,
+                None => return false,
+            };
+        } else {
+            break;
+        }
+    }
+    seen_digit && major >= min_major
+}
+
 /// Safe (checked) arithmetic helpers shared across all four contracts.
 ///
 /// # Design rationale

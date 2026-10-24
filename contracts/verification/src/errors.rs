@@ -206,6 +206,8 @@ pub enum VerificationError {
     /// `open_migration_window` was called after the window was permanently
     /// closed by `close_migration_window`.
     MigrationWindowSealed = 58,
+    /// Wiring target failed the `contract_kind`/`version` handshake (#1610).
+    InvalidPeerContract = 59,
 }
 
 impl AdminError for VerificationError {

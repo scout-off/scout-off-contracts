@@ -325,6 +325,9 @@ impl VerificationContract {
         if env.storage().instance().has(&DataKey::ProgressContractSet) {
             return Err(VerificationError::AlreadyConfigured);
         }
+        if !scoutchain_shared_types::verify_peer(&env, &progress_contract, "progress", 0) {
+            return Err(VerificationError::InvalidPeerContract);
+        }
         let epoch = write_wiring_link(
             &env,
             &DataKey::ProgressContract,
@@ -346,6 +349,9 @@ impl VerificationContract {
         progress_contract: Address,
     ) -> Result<(), VerificationError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        if !scoutchain_shared_types::verify_peer(&env, &progress_contract, "progress", 0) {
+            return Err(VerificationError::InvalidPeerContract);
+        }
         let epoch = write_wiring_link(
             &env,
             &DataKey::ProgressContract,
@@ -379,6 +385,9 @@ impl VerificationContract {
         {
             return Err(VerificationError::AlreadyConfigured);
         }
+        if !scoutchain_shared_types::verify_peer(&env, &reg_contract, "registration", 0) {
+            return Err(VerificationError::InvalidPeerContract);
+        }
         let epoch = write_wiring_link(
             &env,
             &DataKey::RegistrationContract,
@@ -399,6 +408,9 @@ impl VerificationContract {
         reg_contract: Address,
     ) -> Result<(), VerificationError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        if !scoutchain_shared_types::verify_peer(&env, &reg_contract, "registration", 0) {
+            return Err(VerificationError::InvalidPeerContract);
+        }
         let epoch = write_wiring_link(
             &env,
             &DataKey::RegistrationContract,
@@ -3275,6 +3287,11 @@ impl VerificationContract {
         String::from_str(&env, CONTRACT_VERSION)
     }
 
+    /// Stable contract identifier used by the on-chain wiring handshake (#1610).
+    pub fn contract_kind(env: Env) -> soroban_sdk::Symbol {
+        soroban_sdk::Symbol::new(&env, "verification")
+    }
+
     // -------------------------------------------------------------------------
     // Milestone dispute (issue #471)
     // -------------------------------------------------------------------------
@@ -5258,11 +5275,7 @@ mod tests {
                 &env,
                 (
                     client.address.clone(),
-                    (
-                        Symbol::new(&env, "AdminTransferred"),
-                        old_admin.clone(),
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "AdminTransferred"), old_admin.clone(),).into_val(&env),
                     new_admin.clone().into_val(&env),
                 )
             ]
@@ -6097,11 +6110,7 @@ mod tests {
                 &env,
                 (
                     client.address.clone(),
-                    (
-                        Symbol::new(&env, "ContractPaused"),
-                        admin.clone(),
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "ContractPaused"), admin.clone(),).into_val(&env),
                     ().into_val(&env)
                 )
             ]
@@ -6115,11 +6124,7 @@ mod tests {
                 &env,
                 (
                     client.address.clone(),
-                    (
-                        Symbol::new(&env, "ContractUnpaused"),
-                        admin.clone(),
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "ContractUnpaused"), admin.clone(),).into_val(&env),
                     ().into_val(&env)
                 )
             ]
@@ -6169,11 +6174,7 @@ mod tests {
                 &env,
                 (
                     client.address.clone(),
-                    (
-                        Symbol::new(&env, "ProgressContractUpdated"),
-                        admin.clone(),
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "ProgressContractUpdated"), admin.clone(),).into_val(&env),
                     addr.clone().into_val(&env)
                 ),
                 (
@@ -6409,11 +6410,7 @@ mod tests {
                 &env,
                 (
                     client.address.clone(),
-                    (
-                        Symbol::new(&env, "ContractInitialized"),
-                        admin.clone(),
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "ContractInitialized"), admin.clone(),).into_val(&env),
                     ().into_val(&env)
                 )
             ]
@@ -7205,11 +7202,7 @@ mod tests {
                 &env,
                 (
                     client.address.clone(),
-                    (
-                        Symbol::new(&env, "DisputeResolved"),
-                        admin.clone(),
-                    )
-                        .into_val(&env),
+                    (Symbol::new(&env, "DisputeResolved"), admin.clone(),).into_val(&env),
                     (2u64, 1u32, false).into_val(&env)
                 )
             ]

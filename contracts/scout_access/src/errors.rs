@@ -162,6 +162,8 @@ pub enum ScoutAccessError {
     /// `open_migration_window` was called after the window was permanently
     /// closed by `close_migration_window`.
     MigrationWindowSealed = 45,
+    /// Wiring target failed the `contract_kind`/`version` handshake (#1610).
+    InvalidPeerContract = 46,
 }
 
 impl AdminError for ScoutAccessError {

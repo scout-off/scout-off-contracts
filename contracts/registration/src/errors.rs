@@ -64,6 +64,8 @@ pub enum ScoutChainError {
     // ── Cooldown config ──
     /// Cooldown value exceeds the maximum allowed (7 days).
     InvalidCooldown = 19,
+    /// Wiring target failed the `contract_kind`/`version` handshake (#1610).
+    InvalidPeerContract = 20,
 }
 
 impl AdminError for ScoutChainError {
