@@ -879,3 +879,9 @@ Quick checklist:
 
 <!-- handsoff-issue-1653 -->
 - #1653: registration: deactivating a player doesn't affect verification or scout_access eligibility for disputes and grants
+
+<!-- handsoff-issue-1678 -->
+- #1678: scout_access: renew_if_due's doc claims all subscribe() protections apply, but several are skipped
+
+<!-- handsoff-issue-1681 -->
+- #1681: verification: remove the redundant `has(ProgressContract)` check inside its own else-branch in commit_approved_milestone

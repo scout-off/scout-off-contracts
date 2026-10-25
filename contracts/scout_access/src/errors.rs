@@ -217,6 +217,12 @@ pub enum ScoutAccessError {
     GrantAdminRevoked = 56,
     /// `renew_evidence_access` requires an existing `ContactRecord` for the pair.
     ContactNotFound = 57,
+
+    // ── Migration seeding (issue #1679) ──
+    /// `admin_seed_trial_offer` was called with a `trial_index` that is not
+    /// exactly `TrialCounter + 1` for the target player. Mirrors progress's
+    /// `InvalidHistoryIndex` for the same contiguity violation.
+    InvalidTrialIndex = 58,
 }
 
 impl AdminError for ScoutAccessError {
