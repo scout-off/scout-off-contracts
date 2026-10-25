@@ -1,92 +1,200 @@
-#![allow(deprecated, dead_code)]
-use scoutchain_shared_types::ProgressLevel;
-use soroban_sdk::{Address, BytesN, Env, String, Symbol};
-
 use crate::types::MigrationRole;
+use scoutchain_shared_types::ProgressLevel;
+use soroban_sdk::{contractevent, Address, BytesN, Env, String, Symbol};
 
-pub const PLAYER_REGISTERED: &str = "player_registered";
-pub const SCOUT_REGISTERED: &str = "scout_registered";
-pub const PROFILE_UPDATED: &str = "profile_updated";
-pub const PLAYER_DEREGISTERED: &str = "player_deregistered";
-pub const PLAYER_DEACTIVATED: &str = "player_deactivated";
-pub const PLAYER_REACTIVATED: &str = "player_reactivated";
-pub const PLAYER_LEVEL_SYNCED: &str = "player_level_synced";
-pub const SCOUT_VERIFIED: &str = "scout_verified";
-pub const SCOUT_DEACTIVATED: &str = "scout_deactivated";
-pub const SCOUT_REACTIVATED: &str = "scout_reactivated";
-pub const ADMIN_TRANSFER_PROPOSED: &str = "admin_transfer_proposed";
-pub const ADMIN_TRANSFERRED: &str = "admin_transferred";
-pub const CONTRACT_UPGRADED: &str = "contract_upgraded";
-pub const MIGRATION_REDEEMED: &str = "migration_redeemed";
-pub const WIRING_UPDATED: &str = "wiring_updated";
-pub const CONTRACT_PAUSED: &str = "contract_paused";
-pub const CONTRACT_UNPAUSED: &str = "contract_unpaused";
-pub const REG_COOLDOWN_UPDATED: &str = "reg_cooldown_updated";
+// ── Typed contract events (issue #1370) ──────────────────────────────────────
+//
+// All events are defined as `#[contractevent]` structs so their schemas are
+// included in the WASM contract spec. Generated TypeScript bindings can decode
+// these events without ad-hoc topic-string parsing.
+//
+// Topic layout is preserved exactly for indexer backward compatibility:
+//   • First topic field  → event name (Symbol, derived from struct name by SDK)
+//   • Remaining #[topic] fields → additional indexed topics
+//   • Non-#[topic] fields       → event data payload
+// ─────────────────────────────────────────────────────────────────────────────
 
-/// topics: (event_name, admin, link)  data: (new_address, new_epoch)
-///
-/// Emitted by `set_progress_contract`. `link` is always
-/// `"progress_contract"` (the contract's only wiring pointer); the argument
-/// exists so this event's shape matches the other three contracts'
-/// `wiring_updated` events. See `docs/WIRING_REGISTRY_DESIGN.md`.
-pub fn wiring_updated(
-    env: &Env,
-    admin: &Address,
-    link: &str,
-    new_address: &Address,
-    new_epoch: u32,
-) {
-    env.events().publish(
-        (
-            Symbol::new(env, WIRING_UPDATED),
-            admin.clone(),
-            Symbol::new(env, link),
-        ),
-        (new_address.clone(), new_epoch),
-    );
+/// Emitted by `register_player`.
+#[contractevent]
+pub struct PlayerRegistered {
+    #[topic]
+    pub wallet: Address,
+    pub player_id: u64,
 }
 
-/// topics: (event_name, old_admin)  data: new_admin
-pub fn admin_transfer_proposed(env: &Env, old_admin: &Address, new_admin: &Address) {
-    env.events().publish(
-        (Symbol::new(env, ADMIN_TRANSFER_PROPOSED), old_admin.clone()),
-        new_admin.clone(),
-    );
+/// Emitted by `register_scout`.
+#[contractevent]
+pub struct ScoutRegistered {
+    #[topic]
+    pub wallet: Address,
+    pub scout_id: u64,
 }
 
-/// topics: (event_name, old_admin)  data: new_admin
-pub fn admin_transferred(env: &Env, old_admin: &Address, new_admin: &Address) {
-    env.events().publish(
-        (Symbol::new(env, ADMIN_TRANSFERRED), old_admin.clone()),
-        new_admin.clone(),
-    );
+/// Emitted by `update_profile`.
+#[contractevent]
+pub struct ProfileUpdated {
+    #[topic]
+    pub wallet: Address,
+    pub player_id: u64,
 }
 
-/// topics: (event_name, wallet)  data: player_id
+/// Emitted by `deregister_scout` (GDPR erasure, #1641).
+/// topics: (event_name, admin)  data: (scout_id, wallet)
+#[contractevent(topics = ["scout_deregistered"], data_format = "vec")]
+pub struct ScoutDeregistered {
+    #[topic]
+    pub admin: Address,
+    pub scout_id: u64,
+    pub wallet: Address,
+}
+
+/// Emitted by `deregister_player` (GDPR right-to-erasure).
+#[contractevent]
+pub struct PlayerDeregistered {
+    #[topic]
+    pub admin: Address,
+    pub player_id: u64,
+    pub level: scoutchain_shared_types::ProgressLevel,
+    pub region: soroban_sdk::String,
+}
+
+/// Emitted by `deactivate_player`.
+#[contractevent]
+pub struct PlayerDeactivated {
+    #[topic]
+    pub admin: Address,
+    pub player_id: u64,
+}
+
+/// Emitted by `reactivate_player`.
+#[contractevent]
+pub struct PlayerReactivated {
+    #[topic]
+    pub admin: Address,
+    pub player_id: u64,
+}
+
+/// Emitted by `set_player_level` (called by the progress contract).
+#[contractevent]
+pub struct PlayerLevelSynced {
+    #[topic]
+    pub caller: Address,
+    pub player_id: u64,
+    pub level: scoutchain_shared_types::ProgressLevel,
+}
+
+/// Emitted by `verify_scout`.
+#[contractevent]
+pub struct ScoutVerified {
+    #[topic]
+    pub wallet: Address,
+    pub scout_id: u64,
+}
+
+/// Emitted by `deactivate_scout`.
+#[contractevent]
+pub struct ScoutDeactivated {
+    #[topic]
+    pub admin: Address,
+    pub scout_id: u64,
+}
+
+/// Emitted by `reactivate_scout`.
+#[contractevent]
+pub struct ScoutReactivated {
+    #[topic]
+    pub admin: Address,
+    pub scout_id: u64,
+}
+
+/// Emitted by `propose_admin`.
+#[contractevent]
+pub struct AdminTransferProposed {
+    #[topic]
+    pub old_admin: Address,
+    pub new_admin: Address,
+}
+
+/// Emitted by `accept_admin`.
+#[contractevent]
+pub struct AdminTransferred {
+    #[topic]
+    pub old_admin: Address,
+    pub new_admin: Address,
+}
+
+/// Emitted by `redeem_migration_ticket`.
+#[contractevent]
+pub struct MigrationRedeemed {
+    #[topic]
+    pub wallet: Address,
+    pub role: MigrationRole,
+    pub profile_id: u64,
+    pub new_contract_hint: Address,
+}
+
+/// Emitted by `set_progress_contract`.
+#[contractevent]
+pub struct WiringUpdated {
+    #[topic]
+    pub admin: Address,
+    #[topic]
+    pub link: soroban_sdk::Symbol,
+    pub new_address: Address,
+    pub new_epoch: u32,
+}
+
+/// Emitted by `restore_player_record`.
+#[contractevent]
+pub struct PlayerRecordRestored {
+    #[topic]
+    pub admin: Address,
+    pub player_id: u64,
+}
+
+/// Emitted by `restore_scout_record`.
+#[contractevent]
+pub struct ScoutRecordRestored {
+    #[topic]
+    pub admin: Address,
+    pub scout_id: u64,
+}
+
+// ── Emit helpers ─────────────────────────────────────────────────────────────
+
 pub fn player_registered(env: &Env, player_id: u64, wallet: &Address) {
-    env.events().publish(
-        (Symbol::new(env, "player_registered"), wallet.clone()),
+    PlayerRegistered {
+        wallet: wallet.clone(),
         player_id,
-    );
+    }
+    .publish(env);
 }
 
-/// topics: (event_name, wallet)  data: scout_id
 pub fn scout_registered(env: &Env, scout_id: u64, wallet: &Address) {
-    env.events().publish(
-        (Symbol::new(env, "scout_registered"), wallet.clone()),
+    ScoutRegistered {
+        wallet: wallet.clone(),
         scout_id,
-    );
+    }
+    .publish(env);
 }
 
-/// topics: (event_name, wallet)  data: player_id
 pub fn profile_updated(env: &Env, player_id: u64, wallet: &Address) {
-    env.events().publish(
-        (Symbol::new(env, "profile_updated"), wallet.clone()),
+    ProfileUpdated {
+        wallet: wallet.clone(),
         player_id,
-    );
+    }
+    .publish(env);
 }
 
-/// topics: (event_name, admin)  data: (player_id, level, region)
+pub fn scout_deregistered(env: &Env, scout_id: u64, wallet: &Address, admin: &Address) {
+    ScoutDeregistered {
+        admin: admin.clone(),
+        scout_id,
+        wallet: wallet.clone(),
+    }
+    .emit(env);
+}
+
 pub fn player_deregistered(
     env: &Env,
     player_id: u64,
@@ -94,73 +202,112 @@ pub fn player_deregistered(
     region: &String,
     admin: &Address,
 ) {
-    env.events().publish(
-        (Symbol::new(env, "player_deregistered"), admin.clone()),
-        (player_id, level.clone(), region.clone()),
-    );
+    PlayerDeregistered {
+        admin: admin.clone(),
+        player_id,
+        level: level.clone(),
+        region: region.clone(),
+    }
+    .publish(env);
 }
 
-/// topics: (event_name, admin)  data: player_id
 pub fn player_deactivated(env: &Env, player_id: u64, admin: &Address) {
-    env.events().publish(
-        (Symbol::new(env, "player_deactivated"), admin.clone()),
+    PlayerDeactivated {
+        admin: admin.clone(),
         player_id,
-    );
+    }
+    .publish(env);
 }
 
-/// topics: (event_name, admin)  data: player_id
 pub fn player_reactivated(env: &Env, player_id: u64, admin: &Address) {
-    env.events().publish(
-        (Symbol::new(env, "player_reactivated"), admin.clone()),
+    PlayerReactivated {
+        admin: admin.clone(),
         player_id,
-    );
+    }
+    .publish(env);
 }
 
-/// topics: (event_name, caller)  data: (player_id, level)
 /// `caller` is the progress contract address performing the level sync.
 pub fn player_level_synced(env: &Env, player_id: u64, caller: &Address, level: &ProgressLevel) {
-    env.events().publish(
-        (Symbol::new(env, "player_level_synced"), caller.clone()),
-        (player_id, level.clone()),
-    );
+    PlayerLevelSynced {
+        caller: caller.clone(),
+        player_id,
+        level: level.clone(),
+    }
+    .publish(env);
 }
 
-/// topics: (event_name, wallet)  data: scout_id
 pub fn scout_verified(env: &Env, scout_id: u64, wallet: &Address) {
-    env.events().publish(
-        (Symbol::new(env, "scout_verified"), wallet.clone()),
+    ScoutVerified {
+        wallet: wallet.clone(),
         scout_id,
-    );
+    }
+    .publish(env);
+}
+
+/// Emitted by `unverify_scout`.
+#[contractevent]
+pub struct ScoutUnverified {
+    #[topic]
+    pub wallet: Address,
+    pub scout_id: u64,
+    pub admin: Address,
+}
+
+pub fn scout_unverified(env: &Env, scout_id: u64, wallet: &Address, admin: &Address) {
+    ScoutUnverified {
+        wallet: wallet.clone(),
+        scout_id,
+        admin: admin.clone(),
+    }
+    .emit(env);
 }
 
 /// Emitted before `update_current_contract_wasm` — attributed to the old code version.
 /// topics: (event_name, admin)  data: new_wasm_hash
 pub fn contract_upgraded(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>) {
     env.events().publish(
-        (Symbol::new(env, CONTRACT_UPGRADED), admin.clone()),
+        (Symbol::new(env, "contract_upgraded"), admin.clone()),
         new_wasm_hash.clone(),
     );
 }
 /// topics: (event_name, admin)  data: scout_id
 pub fn scout_deactivated(env: &Env, scout_id: u64, admin: &Address) {
-    env.events().publish(
-        (Symbol::new(env, SCOUT_DEACTIVATED), admin.clone()),
+    ScoutDeactivated {
+        admin: admin.clone(),
         scout_id,
-    );
+    }
+    .publish(env);
 }
 
-/// topics: (event_name, admin)  data: scout_id
 pub fn scout_reactivated(env: &Env, scout_id: u64, admin: &Address) {
-    env.events().publish(
-        (Symbol::new(env, SCOUT_REACTIVATED), admin.clone()),
+    ScoutReactivated {
+        admin: admin.clone(),
         scout_id,
-    );
+    }
+    .publish(env);
+}
+
+pub fn admin_transfer_proposed(env: &Env, old_admin: &Address, new_admin: &Address) {
+    AdminTransferProposed {
+        old_admin: old_admin.clone(),
+        new_admin: new_admin.clone(),
+    }
+    .publish(env);
+}
+
+pub fn admin_transferred(env: &Env, old_admin: &Address, new_admin: &Address) {
+    AdminTransferred {
+        old_admin: old_admin.clone(),
+        new_admin: new_admin.clone(),
+    }
+    .publish(env);
 }
 
 /// topics: (event_name, admin)  data: (old_cooldown_secs, new_cooldown_secs)
 pub fn reg_cooldown_updated(env: &Env, admin: &Address, old_cooldown: u64, new_cooldown: u64) {
     env.events().publish(
-        (Symbol::new(env, REG_COOLDOWN_UPDATED), admin.clone()),
+        (Symbol::new(env, "reg_cooldown_updated"), admin.clone()),
         (old_cooldown, new_cooldown),
     );
 }
@@ -173,40 +320,55 @@ pub fn migration_redeemed(
     profile_id: u64,
     new_contract_hint: &Address,
 ) {
-    env.events().publish(
-        (Symbol::new(env, MIGRATION_REDEEMED), wallet.clone()),
-        (*role, profile_id, new_contract_hint.clone()),
-    );
+    MigrationRedeemed {
+        wallet: wallet.clone(),
+        role: *role,
+        profile_id,
+        new_contract_hint: new_contract_hint.clone(),
+    }
+    .publish(env);
 }
 
-/// topics: (event_name, admin)  data: player_id
-/// Emitted by `restore_player_record` when an admin re-extends an archived or
-/// expired player profile's TTL back to the core-identity policy value.
+pub fn wiring_updated(
+    env: &Env,
+    admin: &Address,
+    link: &str,
+    new_address: &Address,
+    new_epoch: u32,
+) {
+    WiringUpdated {
+        admin: admin.clone(),
+        link: soroban_sdk::Symbol::new(env, link),
+        new_address: new_address.clone(),
+        new_epoch,
+    }
+    .publish(env);
+}
+
 pub fn player_record_restored(env: &Env, admin: &Address, player_id: u64) {
-    env.events().publish(
-        (Symbol::new(env, "player_record_restored"), admin.clone()),
+    PlayerRecordRestored {
+        admin: admin.clone(),
         player_id,
-    );
+    }
+    .publish(env);
 }
 
-/// topics: (event_name, admin)  data: scout_id
-/// Emitted by `restore_scout_record` when an admin re-extends an archived or
-/// expired scout profile's TTL back to the core-identity policy value.
 pub fn scout_record_restored(env: &Env, admin: &Address, scout_id: u64) {
-    env.events().publish(
-        (Symbol::new(env, "scout_record_restored"), admin.clone()),
+    ScoutRecordRestored {
+        admin: admin.clone(),
         scout_id,
-    );
+    }
+    .publish(env);
 }
 
 /// topics: (event_name, admin)  data: ()
 pub fn contract_paused(env: &Env, admin: &Address) {
     env.events()
-        .publish((Symbol::new(env, CONTRACT_PAUSED), admin.clone()), ());
+        .publish((Symbol::new(env, "contract_paused"), admin.clone()), ());
 }
 
 /// topics: (event_name, admin)  data: ()
 pub fn contract_unpaused(env: &Env, admin: &Address) {
     env.events()
-        .publish((Symbol::new(env, CONTRACT_UNPAUSED), admin.clone()), ());
+        .publish((Symbol::new(env, "contract_unpaused"), admin.clone()), ());
 }

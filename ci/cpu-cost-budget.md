@@ -51,6 +51,7 @@ measured-cost trends can be tracked across commits.
 | progress       | `get_progress_history_page`      | 10,000,000                |
 | progress       | `advance_level_long_history` (≥ 64 entries) | 50,000,000   |
 | progress       | `verify_history_proof`           | 8,000,000                 |
+| progress       | `admin_seed_history` (500th entry) | 15,000,000              |
 | scout_access   | `subscribe`                      | 20,000,000                |
 | scout_access   | `pay_to_contact`                 | 20,000,000                |
 | scout_access   | `batch_contact_players` (5 ids)  | 25,000,000                |

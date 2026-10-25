@@ -12,6 +12,7 @@
 #     - A path to a single types.rs file
 #     - A path to the repo root directory (contracts/ subdirectory is used)
 #     - A git ref (commit SHA, branch name, or tag)
+#   Covers the four contracts (types.rs) and shared-types (lib.rs).
 #
 # Exit codes:
 #   0 — no breaking changes (or all acknowledged with the flag)
@@ -294,7 +295,7 @@ def main():
     old_dir = sys.argv[1]
     new_dir = sys.argv[2]
 
-    contracts = ['registration', 'verification', 'progress', 'scout_access']
+    contracts = ['registration', 'verification', 'progress', 'scout_access', 'shared_types']
     any_breaking = False
     any_output = False
 
@@ -328,13 +329,24 @@ is_file_path() {
   [[ -f "$1" || -d "$1" ]]
 }
 
-# Extract types.rs files for all four contracts from a git ref into dest dir.
+# Repo-relative source file holding a unit's stored types. shared_types keeps
+# them in lib.rs (e.g. StoredPlayerProfile); the four contracts use types.rs.
+types_path() {
+  if [[ "$1" == "shared_types" ]]; then
+    echo "contracts/shared-types/src/lib.rs"
+  else
+    echo "contracts/$1/src/types.rs"
+  fi
+}
+
+# Extract types.rs files for all four contracts and shared-types from a git ref into dest dir.
 extract_git_ref() {
   local ref="$1"
   local dest="$2"
   mkdir -p "$dest"
-  for contract in registration verification progress scout_access; do
-    local src_path="contracts/${contract}/src/types.rs"
+  for contract in registration verification progress scout_access shared_types; do
+    local src_path
+    src_path="$(types_path "$contract")"
     if git -C "$REPO_ROOT" show "${ref}:${src_path}" \
         > "${dest}/${contract}_types.rs" 2>/dev/null; then
       :
@@ -352,12 +364,13 @@ copy_from_path() {
   mkdir -p "$dest"
   if [[ -f "$src" ]]; then
     # Single file — treat as the types.rs for all contracts (fixture mode)
-    for contract in registration verification progress scout_access; do
+    for contract in registration verification progress scout_access shared_types; do
       cp "$src" "${dest}/${contract}_types.rs"
     done
   else
-    for contract in registration verification progress scout_access; do
-      local f="${src}/contracts/${contract}/src/types.rs"
+    for contract in registration verification progress scout_access shared_types; do
+      local f
+      f="${src}/$(types_path "$contract")"
       if [[ -f "$f" ]]; then
         cp "$f" "${dest}/${contract}_types.rs"
       else
@@ -394,7 +407,7 @@ OLD_SUM="${WORK_DIR}/old_sum"
 NEW_SUM="${WORK_DIR}/new_sum"
 mkdir -p "$OLD_SUM" "$NEW_SUM"
 
-for contract in registration verification progress scout_access; do
+for contract in registration verification progress scout_access shared_types; do
   python3 "$EXTRACTOR_PY" "${OLD_SRC}/${contract}_types.rs" \
     > "${OLD_SUM}/${contract}_summary.txt" 2>/dev/null || \
     : > "${OLD_SUM}/${contract}_summary.txt"

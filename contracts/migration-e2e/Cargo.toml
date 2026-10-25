@@ -1,0 +1,15 @@
+[package]
+name = "migration-e2e"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dev-dependencies]
+registration = { path = "../registration" }
+progress = { path = "../progress" }
+verification = { path = "../verification" }
+scout_access = { path = "../scout_access" }
+soroban-sdk = { workspace = true, features = ["testutils"] }

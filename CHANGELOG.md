@@ -18,6 +18,26 @@ The initial v0.1.0 entry below retains the year-only date because no exact histo
 
 ## Unreleased
 
+- Contracts affected: `registration`, `scout_access`, `progress`, `verification`, `shared-types`
+- Summary: Added `registration.unverify_scout` / `is_scout_verified` and the `scout_unverified` event; `ScoutVerificationRecord` gains `revoked_at` and `revoked_reason` (#1608). scout_access re-checks verification for Pro/Elite on contact, batch contact, trial offers and renewal. Added `contract_kind()` to every contract and an on-chain `verify_peer` handshake in all wiring setters, with new `InvalidPeerContract` errors (#1610).
+- Classification: `Breaking (MAJOR)` — storage layout of `ScoutVerificationRecord` changes; wiring setters now reject non-ScoutChain addresses.
+
+- Version: `v2.0.1`
+- Release date: `2026-10-23`
+- Contracts affected: `verification`, `progress`, `scout_access`
+- Summary: #1622 `verification` now fails closed with `RegistrationNotConfigured` (62) when registration is unwired and uses one `get_player_status` call instead of two dynamic calls. #1615 the per-validator-per-player milestone cap charges only the committing validator and resets per 90-day window. #1617 `progress.admin_seed_history` rejects mismatched player IDs, level discontinuities and timestamp regressions (`SeedPlayerMismatch` 24, `SeedLevelDiscontinuity` 25, `SeedTimestampRegression` 26). #1621 `scout_access` rejects payment tokens whose `decimals()` is not 7 with `UnsupportedTokenDecimals` (48); SAC-wrapped XLM is unaffected. Also restores compilation after #1562 (`.publish`, removed topic constants, event name over 32 chars, duplicate `health`).
+- Classification: `Breaking (MAJOR)` for the unwired-registration behaviour change in `verification`; otherwise `Non-breaking (MINOR)`.
+
+- Version: `v2.0.0`
+- Release date: `2026-10-23`
+- Contracts affected: `scout_access`, `progress`
+- Summary: `scout_access`: `log_trial_offer` now fails with new `TrialOffersDisabled` (47) when `trial_offer_escrow_stroops` is 0 (#1625); `validate_fee_config` bounds `trial_offer_escrow_stroops` (<= `MAX_SUB_FEE_STROOPS`) and `trial_offer_expiry_secs` (1 hour – 30 days when escrow > 0) (#1624); `admin_refund_trial_escrow` drops its `to` argument and always refunds `TrialOffer.scout`, with a new `admin_rescue_orphan_trial_escrow` for escrows lacking a `TrialOffer` record (#1623). `progress`: `get_history_since` returns at the first older entry, and new `get_history_since_v2` returns `HistorySince { entries, truncated }` (#1619).
+- Classification: `Breaking (MAJOR)` — `admin_refund_trial_escrow` signature change.
+
+- Contracts affected: `progress`, `registration`, `scout_access`, `verification`
+- Summary: Pause/unpause entrypoints (`pause_contract`, `unpause_contract`, `pause_pay_to_contact`, `unpause_pay_to_contact`, `pause_approve_milestone`, `unpause_approve_milestone`) are now idempotent and emit no event when the flag already has the target value (#1718). Unified `limit = 0` handling (#1720): views clamp to 1, state-changing batches reject with `InvalidInput` — `registration::filter_players(limit = 0)` now returns one item instead of `InvalidInput`, `verification::get_player_disputes*` return one item instead of an empty page, and `scout_access::expire_trial_offers(0)` now returns `InvalidInput` instead of `Ok(0)`. `verification::get_validator_statuses` now returns `Result` and rejects more than 20 wallets with `InvalidInput` instead of silently truncating (#1721).
+- Classification: `Breaking (MAJOR)` — `get_validator_statuses` return type changes and `limit = 0` behaviour changes for `filter_players` and `expire_trial_offers`.
+
 - Version: `v1.1.1`
 - Release date: `2026-08-21`
 - Contracts affected: `progress`

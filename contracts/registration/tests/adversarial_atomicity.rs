@@ -98,3 +98,56 @@ fn test_invalid_registration_commits_no_state() {
         "no partial profile may be written"
     );
 }
+
+/// A region longer than the 6-byte canonical form (after trimming) must be
+/// rejected and must commit no state. This pins the real canonical limit
+/// rather than the obsolete 100-byte pre-check bound.
+#[test]
+fn test_region_longer_than_canonical_is_rejected() {
+    let h = setup();
+    let wallet = Address::generate(&h.env);
+
+    // 65-byte padded region: passes any 64-byte buffer pre-check only if the
+    // bound were wrong; must be rejected by canonicalisation.
+    let padded = "NG-ABC".to_string() + &" ".repeat(59);
+    let bad = PlayerVitals {
+        age: 20,
+        position: String::from_str(&h.env, "ST"),
+        region: String::from_str(&h.env, &padded),
+        nationality: String::from_str(&h.env, "FR"),
+    };
+    let res = h
+        .client
+        .try_register_player(&wallet, &bad, &one_hash(&h.env));
+    assert!(
+        res.is_err(),
+        "region longer than canonical form must be rejected: {res:?}"
+    );
+    assert_eq!(h.client.get_player_count(), 0, "no player may be created");
+    assert!(
+        h.client.try_get_player_by_wallet(&wallet).is_err(),
+        "no partial profile may be written"
+    );
+}
+
+/// A 6-byte canonical region ("NG-ABC") must be accepted.
+#[test]
+fn test_six_byte_canonical_region_is_accepted() {
+    let h = setup();
+    let wallet = Address::generate(&h.env);
+
+    let vitals = PlayerVitals {
+        age: 20,
+        position: String::from_str(&h.env, "ST"),
+        region: String::from_str(&h.env, "NG-ABC"),
+        nationality: String::from_str(&h.env, "FR"),
+    };
+    let res = h
+        .client
+        .try_register_player(&wallet, &vitals, &one_hash(&h.env));
+    assert!(
+        res.is_ok(),
+        "6-byte canonical region must be accepted: {res:?}"
+    );
+    assert_eq!(h.client.get_player_count(), 1);
+}

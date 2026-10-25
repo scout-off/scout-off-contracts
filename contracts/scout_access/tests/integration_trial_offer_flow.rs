@@ -176,6 +176,13 @@ fn test_log_trial_offer_advances_player_to_elite_tier() {
 
     // The cross-contract call must have advanced the player to EliteTier.
     assert_eq!(h.progress.get_level(&player_id), ProgressLevel::EliteTier);
+
+    // #1640: the EliteTier history entry is attributed to the scout who made
+    // the offer, not the scout_access contract address.
+    let count = h.progress.get_history_count(&player_id);
+    let entry = h.progress.get_history_entry(&player_id, &count);
+    assert_eq!(entry.new_level, ProgressLevel::EliteTier);
+    assert_eq!(entry.updated_by, scout);
 }
 
 /// Edge case: when the player is already at EliteTier, log_trial_offer must

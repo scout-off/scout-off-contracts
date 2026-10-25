@@ -43,10 +43,17 @@ def parse_cpu_report(path: Path) -> dict[str, dict[str, int]]:
         cost_budget: progress::advance_level = 403752 cpu instructions (budget 15000000)
     - Legacy format (cargo test output):
         scoutchain_scout_access::tests::cost_budget::test_subscribe_cost ... passed: 3_421_000
+
+    Malformed lines are ignored rather than raising, so a partially written
+    report still yields the entries that did parse cleanly.
     """
     if not path.exists():
         return {}
-    text = path.read_text()
+    return parse_cpu_report_text(path.read_text())
+
+
+def parse_cpu_report_text(text: str) -> dict[str, dict[str, int]]:
+    """Parse the CPU-cost report body into a nested ``{contract: {op: cost}}`` map."""
     results: dict[str, dict[str, int]] = {}
     for line in text.splitlines():
         # New format: cost_budget: <contract>::<op> = <cpu> cpu instructions (budget <budget>)
