@@ -123,7 +123,7 @@ PLAYER_ADDRESS="$(stellar keys address smoke-player)"
 # 3. Build WASM + deploy the OLD contract set via the real scripts.
 # ---------------------------------------------------------------------------
 echo "==> Building WASM contracts..."
-cargo build --workspace --target wasm32v1-none --release
+cargo build --workspace --target wasm32v1-none --release --locked
 
 echo "==> Deploying OLD contract set (scripts/deploy.sh)..."
 bash scripts/deploy.sh "$NETWORK"

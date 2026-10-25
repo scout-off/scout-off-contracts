@@ -18,7 +18,7 @@
 # Usage:
 #   ./scripts/upgrade.sh --contract <id> --wasm <path> [--network <net>]
 #                        [--target <version>] [--max-items <n>]
-#                        [--max-iterations <n>]
+#                        [--max-iterations <n>] [--allow-cli-mismatch]
 
 set -euo pipefail
 
@@ -28,6 +28,7 @@ NETWORK="testnet"
 TARGET_VERSION=""
 MAX_ITEMS=100
 MAX_ITERATIONS=50
+ALLOW_CLI_MISMATCH=0
 
 usage() {
   sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
@@ -42,6 +43,7 @@ while [[ $# -gt 0 ]]; do
     --target)          TARGET_VERSION="${2:-}"; shift 2 ;;
     --max-items)       MAX_ITEMS="${2:-}"; shift 2 ;;
     --max-iterations)  MAX_ITERATIONS="${2:-}"; shift 2 ;;
+    --allow-cli-mismatch) ALLOW_CLI_MISMATCH=1; shift ;;
     -h|--help)         usage ;;
     *) echo "Unknown argument: $1" >&2; usage ;;
   esac
@@ -61,6 +63,10 @@ if ! command -v stellar >/dev/null 2>&1; then
   echo "ERROR: stellar CLI not found on PATH." >&2
   exit 1
 fi
+
+# shellcheck source=lib/check-stellar-cli.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/check-stellar-cli.sh"
+check_stellar_cli_version "$ALLOW_CLI_MISMATCH"
 
 # Read a single u32 out of an invoke result. `stellar contract invoke --output
 # json` wraps the value in {"result": ...}, and the result is itself a JSON

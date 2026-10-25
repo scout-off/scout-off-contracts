@@ -532,6 +532,9 @@ Copy `.env.example` to `.env` and fill in all required values before running any
 | `DEPLOYER_SECRET` | Stellar secret key used to deploy and invoke contracts |
 | `ADMIN_ADDRESS` | Stellar G-address that will own all four contracts |
 | `XLM_TOKEN_ADDRESS` | Native XLM token contract address on the target network |
+| `STELLAR_NETWORK` | `testnet`, `mainnet` or `local` (default: `testnet`); unknown values are rejected. `local` requires `NETWORK_PASSPHRASE` |
+| `HORIZON_URL` | Stellar Horizon endpoint |
+| `SOROBAN_RPC_URL` | Soroban RPC endpoint |
 | `STELLAR_NETWORK` | Target network: `testnet` or `mainnet` (default: `testnet`) |
 | `HORIZON_URL` | Stellar Horizon endpoint for the target network |
 | `SOROBAN_RPC_URL` | Soroban RPC endpoint for the target network |
@@ -566,7 +569,7 @@ cargo test --workspace
 cargo test --workspace -- --nocapture
 
 # Lint and format check
-cargo clippy --workspace -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
@@ -781,7 +784,7 @@ Comprehensive event reference is available in [`ai.md`](ai.md#events-reference).
 | `validator_transferred` | Validator wallet address is transferred to a new address |
 | `progress_updated` | Player advances to a new level |
 | `player_level_reset` | Admin resets player progress level (dispute resolution only) |
-| `scout_subscribed` | Scout purchases a talent access subscription (legacy event, emitted alongside `subscription_created` or `subscription_renewed`) |
+| `scout_subscribed` | Scout purchases a talent access subscription (**deprecated**, removed in v3.0.0; emitted alongside `subscription_created` or `subscription_renewed`) |
 | `subscription_created` | Scout purchases their very first subscription |
 | `subscription_renewed` | Scout renews or upgrades an existing subscription |
 | `subscription_refunded` | Scout subscription refunded (e.g., downgrade or expiry) |
@@ -831,7 +834,7 @@ See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for the full guide.
 
 Quick checklist:
 - All contract tests pass: `cargo test --workspace`
-- Zero clippy warnings: `cargo clippy --workspace -- -D warnings`
+- Zero clippy warnings: `cargo clippy --workspace --all-targets -- -D warnings`
 - Formatting clean: `cargo fmt --all -- --check`
 - New functions have tests and are documented in [docs/CONTRACT_REFERENCE.md](docs/CONTRACT_REFERENCE.md)
 - Validator authorization logic changes require explicit review from a second team member

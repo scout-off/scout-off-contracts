@@ -628,3 +628,131 @@ fn test_admin_refund_trial_escrow_rejects_non_outstanding_targets() {
         "a second admin_refund_trial_escrow on the same entry must fail, not double-pay"
     );
 }
+
+// ---------------------------------------------------------------------------
+// get_scout_trial_offers — issue #1698
+// ---------------------------------------------------------------------------
+
+/// A scout that has never logged an offer gets an empty list.
+#[test]
+fn test_get_scout_trial_offers_empty_for_new_scout() {
+    let h = setup();
+    let scout = Address::generate(&h.env);
+    assert_eq!(h.scout_access.get_scout_trial_offers(&scout).len(), 0);
+}
+
+/// Offers to two players are returned as `(player_id, index)` pairs in log
+/// order, with indices matching those returned by `log_trial_offer`.
+#[test]
+fn test_get_scout_trial_offers_returns_pairs_in_log_order() {
+    let h = setup();
+    let (player_a, player_b) = (20u64, 21u64);
+    advance_player(&h, player_a, 2);
+    advance_player(&h, player_b, 2);
+
+    let scout = setup_elite_scout(&h, player_a);
+    h.scout_access.pay_to_contact(&scout, &player_b);
+
+    let idx_a = log_offer(&h, &scout, player_a, CID_1, CID_2);
+    let idx_b = log_offer(&h, &scout, player_b, CID_3, CID_4);
+
+    let offers = h.scout_access.get_scout_trial_offers(&scout);
+    assert_eq!(offers.len(), 2);
+    assert_eq!(offers.get(0).unwrap(), (player_a, idx_a));
+    assert_eq!(offers.get(1).unwrap(), (player_b, idx_b));
+}
+
+/// Each returned index is exactly the one `log_trial_offer` handed back and
+/// resolves via `get_trial_offer`.
+#[test]
+fn test_get_scout_trial_offers_indices_match_log_trial_offer() {
+    let h = setup();
+    let player_id = 22u64;
+    advance_player(&h, player_id, 2);
+    let scout = setup_elite_scout(&h, player_id);
+
+    let idx = log_offer(&h, &scout, player_id, CID_5, CID_6);
+    let (pid, stored_idx) = h.scout_access.get_scout_trial_offers(&scout).get(0).unwrap();
+    assert_eq!((pid, stored_idx), (player_id, idx));
+    assert!(h.scout_access.try_get_trial_offer(&pid, &stored_idx).is_ok());
+}
+
+/// Pins current behaviour: confirming an offer does not remove it from the
+/// scout's list.
+#[test]
+fn test_get_scout_trial_offers_keeps_confirmed_offer() {
+    let h = setup();
+    let player_id = 23u64;
+    advance_player(&h, player_id, 2);
+    let scout = setup_elite_scout(&h, player_id);
+    let idx = log_offer(&h, &scout, player_id, CID_7, CID_8);
+
+    h.scout_access.confirm_trial_offer(
+        &Address::generate(&h.env),
+        &player_id,
+        &idx,
+        &None::<String>,
+    );
+
+    let offers = h.scout_access.get_scout_trial_offers(&scout);
+    assert_eq!(offers.len(), 1);
+    assert_eq!(offers.get(0).unwrap(), (player_id, idx));
+}
+
+/// Pins current behaviour: an expired (swept) offer stays in the scout's list.
+#[test]
+fn test_get_scout_trial_offers_keeps_expired_offer() {
+    let h = setup();
+    let player_id = 24u64;
+    advance_player(&h, player_id, 2);
+    let scout = setup_elite_scout(&h, player_id);
+    let idx = log_offer(&h, &scout, player_id, CID_9, CID_10);
+
+    h.env.ledger().with_mut(|l| l.timestamp += EXPIRY_SECS + 1);
+    h.scout_access.expire_trial_offers(&10);
+
+    let offers = h.scout_access.get_scout_trial_offers(&scout);
+    assert_eq!(offers.len(), 1);
+    assert_eq!(offers.get(0).unwrap(), (player_id, idx));
+}
+
+// ---------------------------------------------------------------------------
+// 7. get_trial_escrow keeps the escrow record alive (issue #1715)
+// ---------------------------------------------------------------------------
+
+const TRIAL_TTL_THRESHOLD: u32 = 259_200;
+const TRIAL_TTL_EXTEND_TO: u32 = 518_400;
+
+fn escrow_ttl(h: &Harness, player_id: u64, index: u32) -> u32 {
+    h.env.as_contract(&h.scout_access.address, || {
+        h.env
+            .storage()
+            .persistent()
+            .get_ttl(&scoutchain_scout_access::DataKey::TrialEscrow(player_id, index))
+    })
+}
+
+#[test]
+fn test_get_trial_escrow_extends_escrow_ttl() {
+    let h = setup();
+    let player_id: u64 = 1;
+    advance_player(&h, player_id, 2);
+    let scout = setup_elite_scout(&h, player_id);
+    let index = log_offer(&h, &scout, player_id, CID_1, CID_2);
+
+    // Keep the contract instance alive across the jump; only the escrow
+    // entry's TTL is under test.
+    h.env.as_contract(&h.scout_access.address, || {
+        h.env.storage().instance().extend_ttl(1, 1_000_000);
+    });
+
+    let jump = TRIAL_TTL_EXTEND_TO - TRIAL_TTL_THRESHOLD + 1_000;
+    h.env.ledger().with_mut(|l| l.sequence_number += jump);
+    assert!(escrow_ttl(&h, player_id, index) < TRIAL_TTL_THRESHOLD);
+
+    assert!(h.scout_access.get_trial_escrow(&player_id, &index).is_some());
+    assert_eq!(escrow_ttl(&h, player_id, index), TRIAL_TTL_EXTEND_TO);
+
+    // Absent key: returns None without trapping on extend_ttl.
+    assert_eq!(h.scout_access.get_trial_escrow(&player_id, &99u32), None);
+}

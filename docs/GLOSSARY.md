@@ -27,6 +27,10 @@ until an operator deliberately opts into k-of-n mode.
   attestation](CONTRACT_REFERENCE.md#k-of-n-threshold-milestone-attestation)
   for the full design rationale (claim identity, bounded storage, revoke-mid-vote
   and window-expiry semantics).
+- If a revocation leaves fewer active validators than an open claim's snapshotted
+  threshold, the round is aborted (votes deleted, `attestation_round_aborted`
+  emitted) so the evidence can be re-attested; `is_pending_claim_reachable`
+  reports reachability (issue #1613).
 - Relevant functions: `attest_milestone`, `submit_attested_milestone`,
   `set_milestone_threshold`, `get_milestone_threshold`, `get_pending_claim`,
   `has_attested` — see
