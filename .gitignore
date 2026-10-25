@@ -1,5 +1,6 @@
 # Rust / Cargo
 target/
+# Cargo.lock is tracked for reproducible WASM builds; CI builds with --locked
 # Cargo.lock is intentionally tracked for this workspace — see issue #1475.
 # WASM contracts are deployable binaries; committing the lockfile ensures that
 # every developer and every CI run resolves identical dependency versions and
@@ -11,6 +12,11 @@ target/
 .env.contracts.json
 -.env.contracts.snapshot
 .env.local
+.env.contracts.json
+.env.contracts.snapshot
+
+# Migration state exports (may contain player PII) -- never commit these
+migration-export/
 
 # Migration state exports (may contain player PII) -- never commit these
 -migration-export/

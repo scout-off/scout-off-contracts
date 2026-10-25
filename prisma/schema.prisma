@@ -1,3 +1,7 @@
+// SQL migrations (migrations/*.sql) are canonical; this schema mirrors them.
+// See migrations/README.md for the workflow and the CI drift check
+// (scripts/check-prisma-drift.sh).
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -8,44 +12,60 @@ datasource db {
 }
 
 model RevokedToken {
-  jti       String   @id
-  createdAt DateTime @default(now())
+  jti       String   @id @db.VarChar(128)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
+  @@index([createdAt], map: "idx_revoked_tokens_created_at")
   @@map("revoked_tokens")
 }
 
 model Player {
-  wallet      String  @unique(map: "idx_players_wallet")
-  playerId    BigInt
-  age         Int
-  position    String
-  region      String
-  nationality String
-  ipfsHashes  String[]
-  level       Int    @default(0)
-  deactivated Boolean @default(false)
-  registeredAt BigInt
-  updatedAt   BigInt
-  createdAt   DateTime @default(now())
+  playerId     BigInt   @id @map("player_id")
+  wallet       String   @unique @db.VarChar(56)
+  age          Int
+  position     String   @db.VarChar(16)
+  region       String   @db.VarChar(64)
+  nationality  String   @db.VarChar(64)
+  ipfsHashes   String[] @default([]) @map("ipfs_hashes")
+  level        Int      @default(0) @db.SmallInt
+  deactivated  Boolean  @default(false)
+  registeredAt BigInt   @map("registered_at")
+  updatedAt    BigInt   @map("updated_at")
+  createdAt    DateTime @default(now()) @map("created_db_at") @db.Timestamptz(6)
+
+  @@index([region], map: "idx_players_region")
+  @@index([position], map: "idx_players_position")
+  @@index([level], map: "idx_players_level")
+  @@index([wallet], map: "idx_players_wallet")
+  @@map("players")
 }
 
 model Scout {
-  wallet     String  @unique(map: "idx_scouts_wallet")
-  region     String
-  verified   Boolean @default(false)
-  registeredAt BigInt
-  createdAt  DateTime @default(now())
+  scoutId      BigInt   @id @map("scout_id")
+  wallet       String   @unique @db.VarChar(56)
+  region       String   @db.VarChar(128)
+  verified     Boolean  @default(false)
+  deactivated  Boolean  @default(false)
+  registeredAt BigInt   @map("registered_at")
+  createdAt    DateTime @default(now()) @map("created_db_at") @db.Timestamptz(6)
+
+  @@index([wallet], map: "idx_scouts_wallet")
+  @@map("scouts")
 }
 
 model Validator {
-  wallet      String  @id
-  credentials String
-  active      Boolean @default(true)
-  registeredAt BigInt
-  createdAt   DateTime @default(now())
+  wallet       String   @id @db.VarChar(56)
+  credentials  String
+  active       Boolean  @default(true)
+  registeredAt BigInt   @map("registered_at")
+  createdAt    DateTime @default(now()) @map("created_db_at") @db.Timestamptz(6)
+
+  @@map("validators")
 }
 
 model Admin {
-  address   String  @id
-  createdAt DateTime @default(now())
+  address   String   @id @db.VarChar(56)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("admins")
 }

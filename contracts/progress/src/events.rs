@@ -4,6 +4,11 @@ use soroban_sdk::{contractevent, Address, BytesN, Env, Symbol};
 // ── Typed contract events (issue #1370) ──────────────────────────────────────
 
 /// Emitted by `advance_level` and `reset_player_level`.
+pub const CONTRACT_UPGRADED: &str = "contract_upgraded";
+pub const MIGRATION_WINDOW_CLOSED: &str = "migration_window_closed";
+pub const MIGRATION_WINDOW_OPENED: &str = "migration_window_opened";
+pub const SCHEMA_MIGRATED: &str = "schema_migrated";
+
 #[contractevent]
 pub struct ProgressUpdated {
     #[topic]
@@ -99,7 +104,7 @@ pub fn progress_updated(
         old_level: old_level.clone(),
         new_level: new_level.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn player_level_reset(
@@ -115,7 +120,7 @@ pub fn player_level_reset(
         old_level: old_level.clone(),
         target_level: target_level.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn admin_transfer_proposed(env: &Env, old_admin: &Address, new_admin: &Address) {
@@ -123,7 +128,7 @@ pub fn admin_transfer_proposed(env: &Env, old_admin: &Address, new_admin: &Addre
         old_admin: old_admin.clone(),
         new_admin: new_admin.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn admin_transferred(env: &Env, old_admin: &Address, new_admin: &Address) {
@@ -131,7 +136,7 @@ pub fn admin_transferred(env: &Env, old_admin: &Address, new_admin: &Address) {
         old_admin: old_admin.clone(),
         new_admin: new_admin.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn wiring_updated(
@@ -147,21 +152,21 @@ pub fn wiring_updated(
         new_address: new_address.clone(),
         new_epoch,
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn contract_paused(env: &Env, admin: &Address) {
     ContractPaused {
         admin: admin.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn contract_unpaused(env: &Env, admin: &Address) {
     ContractUnpaused {
         admin: admin.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn player_level_record_restored(env: &Env, admin: &Address, player_id: u64) {
@@ -169,7 +174,7 @@ pub fn player_level_record_restored(env: &Env, admin: &Address, player_id: u64) 
         admin: admin.clone(),
         player_id,
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn player_data_purged(
@@ -185,7 +190,7 @@ pub fn player_data_purged(
         entries_removed,
         more,
     }
-    .emit(env);
+    .publish(env);
 }
 
 /// topics: (event_name, admin)  data: ()

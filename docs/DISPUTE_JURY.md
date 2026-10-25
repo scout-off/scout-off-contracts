@@ -1,7 +1,7 @@
 # Dispute Jury — Eligibility Rules
 
 This document describes who may cast a vote on a jury-required milestone dispute
-and what happens when a validator is revoked for cause while a dispute is open.
+and what happens when a validator is revoked while a dispute is open.
 
 ## Background
 
@@ -44,11 +44,12 @@ approver's record after filing do not affect an open dispute.
 institutional interest in protecting their colleague's approval.  Excluding
 them prevents bloc-voting within a single affiliation.
 
-## For-Cause Revocation Vote Removal
+## Revocation Vote Removal (both severities)
 
-When `revoke_validator` is called with `RevocationSeverity::ForCause`, the
-contract's internal helper `remove_dispute_votes_for_validator` is invoked
-immediately after the validator record is deactivated.  The helper:
+When `revoke_validator` is called — with **either** `RevocationSeverity::Routine`
+or `RevocationSeverity::ForCause` — the contract's internal helper
+`remove_dispute_votes_for_validator` is invoked immediately after the validator
+record is deactivated.  The helper:
 
 1. Iterates the `OpenDisputeIndex` (all unresolved disputes).
 2. For each dispute, checks whether a `DisputeVote` record exists for the
@@ -62,9 +63,40 @@ immediately after the validator record is deactivated.  The helper:
 itself is not removed (it remains open for further voting), only the revoked
 validator's individual vote contribution is undone.
 
-**Rationale**: a validator revoked for serious misconduct must not retain
-influence over ongoing jury decisions.  Routine (`Routine`) revocations do not
-trigger vote removal — only `ForCause` does.
+### Why both severities
+
+Previously only `ForCause` revocations removed jury votes; a `Routine`
+revocation (e.g. "validator left the academy") left the validator's votes
+counting toward quorum and outcome even though they were no longer an active
+validator and could not cast those votes now.  We now remove dispute votes for
+**both** severities, consistent with the pending-attestation handling
+(`invalidate_pending_votes_for_validator`), which already runs for both.
+
+Two threats were weighed:
+
+- **Stale votes counting (the bug).**  A revoked validator's vote keeps
+  contributing to quorum and to the majority verdict.  This is a correctness
+  problem: the tally no longer reflects the set of currently-eligible jurors,
+  and a routine revocation could silently tip an open dispute.
+- **Routine revocation as a vote-removal tool.**  If routine revocation removes
+  votes, an admin could revoke a juror whose vote they dislike to strip that
+  vote without triggering the for-cause cascade.
+
+We judge the stale-vote threat to matter more.  Revocation is an admin-only,
+accountable action that deactivates the validator entirely (they lose all
+future voting power, not just this one vote), so it is a blunt instrument for
+manipulating a single dispute.  Leaving stale votes in the tally, by contrast,
+is a silent correctness defect that any routine revocation triggers.  Removing
+votes uniformly also keeps the two severities' semantics aligned and avoids a
+subtle behavioural difference that is easy to get wrong.
+
+### Escalation is idempotent
+
+`handle_inactive_re_revoke` may later escalate a `Routine` revocation to
+`ForCause`.  Because the routine revocation already removed the validator's
+dispute votes, the escalation's `remove_dispute_votes_for_validator` call finds
+no `DisputeVote` records and is a no-op: it does not double-decrement
+`DisputeVoteCount` or the tally counters, and does not panic on missing votes.
 
 ## Error Reference
 
@@ -90,9 +122,12 @@ cast_dispute_vote(validator, ...)
   → no prior vote ?                                       else → AlreadyVoted
   → record vote, update tally
 
-revoke_validator(ForCause)
+revoke_validator(Routine | ForCause)
   → remove_dispute_votes_for_validator(wallet)
       for each open dispute: undo vote tally if this validator voted
+
+handle_inactive_re_revoke(Routine → ForCause)
+  → remove_dispute_votes_for_validator(wallet)   // idempotent no-op if already removed
 
 tally_dispute(...)
   → quorum met or deadline passed → resolve with majority verdict

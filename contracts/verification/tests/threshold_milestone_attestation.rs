@@ -17,8 +17,8 @@
 
 use scoutchain_shared_types::ProgressLevel;
 use scoutchain_verification::{
-    AttestationStatus, DataKey, RegPlayerProfile, RegPlayerVitals, RevocationSeverity,
-    VerificationContract, VerificationContractClient, VerificationError,
+    AttestationStatus, DataKey, RegPlayerProfile, RegPlayerStatus, RegPlayerVitals,
+    RevocationSeverity, VerificationContract, VerificationContractClient, VerificationError,
 };
 use soroban_sdk::{
     contract, contractimpl, contracttype,
@@ -36,10 +36,13 @@ const DEFAULT_VOTING_WINDOW_SECS: u64 = 1_209_600; // 14 days — must match lib
 fn setup() -> (Env, VerificationContractClient<'static>, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    let id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &id);
+    // Commits fail closed without a registration contract (#1622).
+    let reg_id = env.register(RegStub, ());
+    RegStubClient::new(&env, &reg_id).initialize(&Address::generate(&env));
+    client.set_registration_contract(&reg_id);
     (env, client, admin)
 }
 
@@ -504,11 +507,11 @@ fn cascade_sweep_flags_milestone_for_co_attestor() {
     );
 }
 
-/// Per-player-per-validator limits apply to every attestor, not just the
-/// primary validator: a co-attestor already at the cap blocks the commit, and
-/// a successful commit counts toward every attestor's cap.
+/// #1615: only the committing validator counts toward the per-player cap;
+/// co-attestors are not charged, so k-of-n liveness is not capped at
+/// `floor(5n/k)` milestones. The committer is still limited.
 #[test]
-fn per_validator_cap_applies_to_all_attestors() {
+fn per_validator_cap_applies_to_committer_only() {
     let (env, client, _admin) = setup();
     let v1 = register_validator(&env, &client);
     let v2 = register_validator(&env, &client);
@@ -516,7 +519,6 @@ fn per_validator_cap_applies_to_all_attestors() {
     let player_id = 300u64;
     let description = String::from_str(&env, "per-validator cap test");
 
-    // A committed milestone increments both attestors' per-player counts.
     let evidence = cid(&env, 300);
     attest_as(&env, &client, &v1, player_id, &description, &evidence);
     let r2 = attest_as(&env, &client, &v2, player_id, &description, &evidence);
@@ -532,19 +534,16 @@ fn per_validator_cap_applies_to_all_attestors() {
                 .unwrap_or(0u32)
         })
     };
-    assert_eq!(count_for(&v1), 1);
-    assert_eq!(count_for(&v2), 1);
+    assert_eq!(count_for(&v1), 0, "co-attestor is not charged");
+    assert_eq!(count_for(&v2), 1, "committer is charged");
 
-    // Push v1 (the co-attestor, not the primary) to the cap.
+    // Committer v2 at the cap: its committing vote is rejected.
     env.as_contract(&client.address, || {
         env.storage().persistent().set(
-            &DataKey::ValidatorPlayerMilestoneCount(v1.clone(), player_id),
+            &DataKey::ValidatorPlayerMilestoneCount(v2.clone(), player_id),
             &MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR,
         );
     });
-
-    // v1 votes first, v2's vote reaches the threshold; the commit is rejected
-    // because co-attestor v1 is at the cap, and nothing is committed.
     let evidence2 = cid(&env, 301);
     let r3 = attest_as(&env, &client, &v1, player_id, &description, &evidence2);
     assert_eq!(r3, AttestationStatus::Pending(1));
@@ -552,7 +551,54 @@ fn per_validator_cap_applies_to_all_attestors() {
     let r4 = client.try_attest_milestone(&v2, &player_id, &description, &evidence2);
     assert_eq!(r4, Err(Ok(VerificationError::MilestoneLimitExceeded)));
     assert_eq!(client.get_milestone_count(&player_id), 1);
-    assert_eq!(count_for(&v2), 1);
+}
+
+/// #1615: with n = k = 3 a player receives more than the old ceiling of 5
+/// milestones when the committing validator rotates.
+#[test]
+fn k_of_n_player_exceeds_five_milestones() {
+    let (env, client, _admin) = setup();
+    let vs = [
+        register_validator(&env, &client),
+        register_validator(&env, &client),
+        register_validator(&env, &client),
+    ];
+    client.set_milestone_threshold(&3u32);
+    let player_id = 310u64;
+    let description = String::from_str(&env, "rotation");
+    for m in 0..9u32 {
+        let evidence = cid(&env, 1000 + m);
+        let committer = &vs[(m % 3) as usize];
+        for v in vs.iter().filter(|v| *v != committer) {
+            attest_as(&env, &client, v, player_id, &description, &evidence);
+        }
+        let r = attest_as(&env, &client, committer, player_id, &description, &evidence);
+        assert!(matches!(r, AttestationStatus::Committed(_)));
+    }
+    assert_eq!(client.get_milestone_count(&player_id), 9);
+}
+
+/// #1615: the cap window resets after 90 days, so a single committing
+/// validator is limited per window rather than forever.
+#[test]
+fn committer_cap_resets_after_window() {
+    let (env, client, _admin) = setup();
+    let v1 = register_validator(&env, &client);
+    let player_id = 320u64;
+    let description = String::from_str(&env, "window");
+    let approve = |seed: u32| {
+        client.try_approve_milestone(&v1, &player_id, &description, &cid(&env, seed), &None)
+    };
+    for i in 0..MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR {
+        assert!(approve(2000 + i).is_ok());
+    }
+    assert_eq!(
+        approve(2100),
+        Err(Ok(VerificationError::MilestoneLimitExceeded))
+    );
+    env.ledger()
+        .with_mut(|l| l.timestamp += 90 * 24 * 60 * 60 + 1);
+    assert!(approve(2101).is_ok());
 }
 
 #[contracttype]
@@ -588,6 +634,10 @@ impl RegStub {
             updated_at: 0,
         }
     }
+
+    pub fn get_player_status(_env: Env, _player_id: u64) -> RegPlayerStatus {
+        RegPlayerStatus::Active
+    }
 }
 
 /// `cast_dispute_vote` rejects any attestor of the disputed milestone with
@@ -598,9 +648,13 @@ impl RegStub {
 fn dispute_rejects_co_attestor_with_conflict_of_interest() {
     let (env, client, _admin) = setup();
     let player_wallet = Address::generate(&env);
-    let reg_id = env.register(RegStub, ());
+    // `setup` already wired a stub; re-point its owner at the player wallet.
+    let reg_id = client
+        .get_wiring_state()
+        .registration_contract
+        .address
+        .unwrap();
     RegStubClient::new(&env, &reg_id).initialize(&player_wallet);
-    client.set_registration_contract(&reg_id);
 
     let register = |affiliation: &str| -> Address {
         let wallet = Address::generate(&env);

@@ -131,7 +131,7 @@ The tool reconstructs state from these events:
 | `progress_updated` | progress | Level progression | `old_level` must match current; transition must follow rules |
 | `player_level_reset` | progress | Level reset | Must be valid reset-to level |
 | `milestone_approved` | verification | Milestone registry | Milestone must be unique per (player, index) |
-| `milestone_disputed` | verification | Dispute state (including impact_score, jury_required, quorum, voting_deadline) | Milestone must exist |
+| `milestone_disputed` | verification | Dispute filing: `(player_id, milestone_index, reason)` only | Milestone must exist; jury parameters are **not** in this event |
 | `dispute_vote_cast` | verification | Per-validator jury vote | Dispute must be jury-required and unresolved; validator must be eligible |
 | `dispute_tallied` | verification | Jury dispute outcome | Dispute must be jury-required; votes_for+votes_against must match accumulated cast events |
 | `dispute_resolved` | verification | Admin dispute outcome | Dispute must be non-jury and in "disputed" state |
@@ -145,6 +145,9 @@ The tool reconstructs state from these events:
 | `jury_config_updated` | verification | Jury parameter change | Snapshot fields for config history; does not alter in-flight disputes |
 | `milestone_threshold_updated` | verification | k-of-n threshold change | Operators / indexers track threshold history |
 | `milestone_threshold_unreachable` | verification | Active set dropped below threshold | Health signal after revocation (or similar) |
+| `attestation_round_aborted` | verification | Revocation made an open k-of-n claim unreachable | Indexers drop the pending claim; evidence may be re-attested (#1613) |
+
+**`milestone_disputed` wire format:** topics `("milestone_disputed", player_wallet)`, data `(player_id, milestone_index, reason)`. The event does **not** include `round`, `impact_score`, `jury_required`, `quorum`, or `voting_deadline`. Those fields are stored in the `MilestoneDispute` record, not this event; a consumer requiring them needs a separate authoritative state lookup or snapshot. `get_dispute` returns the **latest** round, so it cannot be assumed to reconstruct earlier rounds during historical replay. This documentation-only correction does not change the event schema.
 
 ### Attestation key registration
 
@@ -247,3 +250,7 @@ echo "✓ Audit passed"
 - [CONTRACT_REFERENCE.md](CONTRACT_REFERENCE.md) — Full reference for contract getters
 - [RUNBOOK.md](RUNBOOK.md) — Emergency procedures and operational tasks
 
+
+## Validator specialization indexer note (#1686)
+
+`verification` emits `validator_specialization_updated` with topics `(event_name, admin)` and data `(validator_wallet, old_specializations, new_specializations)`. Indexers should replace the validator's current specialization list with `new_specializations` and may retain both lists for auditing. The event is not a player milestone or a historical snapshot for validators registered before this event was added.

@@ -10,6 +10,12 @@ pub use scoutchain_shared_types::WiringLink;
 ///
 /// `entries` contains at most 50 player IDs per page; `total` is the full
 /// number of players the scout has ever contacted.
+///
+/// NOTE: this is intentionally kept as a contract-local struct rather than
+/// migrated to `scoutchain_shared_types::U64Page`. Swapping the return type of
+/// the existing `get_scout_contacts_page` would change the spec type name in
+/// generated bindings (an ABI break). New paged getters should return
+/// `U64Page` from shared-types instead of reinventing this shape.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScoutContactsPage {
@@ -69,6 +75,30 @@ pub struct TrialOffer {
     pub details_hash: String,
     /// Ledger timestamp when the trial offer was logged, in Unix seconds.
     pub logged_at: u64,
+}
+
+/// A trial offer paired with its per-player index (the value
+/// `confirm_trial_offer` expects).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TrialOfferEntry {
+    /// 1-based per-player trial offer index.
+    pub index: u32,
+    /// The stored trial offer.
+    pub offer: TrialOffer,
+}
+
+/// A page of trial offers returned by `get_trial_offers_page`.
+///
+/// `entries` holds at most `limit` (clamped to 1..=50) offers, newest first.
+/// `total` is the player's trial-offer counter; use it to stop paging.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TrialOfferPage {
+    /// Offers in this page with their indices, newest first.
+    pub entries: soroban_sdk::Vec<TrialOfferEntry>,
+    /// Total number of trial offers logged for the player.
+    pub total: u32,
 }
 
 /// Tracks the number of contacts a Pro-tier scout has made in their current

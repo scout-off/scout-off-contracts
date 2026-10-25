@@ -532,6 +532,9 @@ Copy `.env.example` to `.env` and fill in all required values before running any
 | `DEPLOYER_SECRET` | Stellar secret key used to deploy and invoke contracts |
 | `ADMIN_ADDRESS` | Stellar G-address that will own all four contracts |
 | `XLM_TOKEN_ADDRESS` | Native XLM token contract address on the target network |
+| `STELLAR_NETWORK` | `testnet`, `mainnet` or `local` (default: `testnet`); unknown values are rejected. `local` requires `NETWORK_PASSPHRASE` |
+| `HORIZON_URL` | Stellar Horizon endpoint |
+| `SOROBAN_RPC_URL` | Soroban RPC endpoint |
 | `STELLAR_NETWORK` | Target network: `testnet` or `mainnet` (default: `testnet`) |
 | `HORIZON_URL` | Stellar Horizon endpoint for the target network |
 | `SOROBAN_RPC_URL` | Soroban RPC endpoint for the target network |
@@ -566,7 +569,7 @@ cargo test --workspace
 cargo test --workspace -- --nocapture
 
 # Lint and format check
-cargo clippy --workspace -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
@@ -781,7 +784,7 @@ Comprehensive event reference is available in [`ai.md`](ai.md#events-reference).
 | `validator_transferred` | Validator wallet address is transferred to a new address |
 | `progress_updated` | Player advances to a new level |
 | `player_level_reset` | Admin resets player progress level (dispute resolution only) |
-| `scout_subscribed` | Scout purchases a talent access subscription (legacy event, emitted alongside `subscription_created` or `subscription_renewed`) |
+| `scout_subscribed` | Scout purchases a talent access subscription (**deprecated**, removed in v3.0.0; emitted alongside `subscription_created` or `subscription_renewed`) |
 | `subscription_created` | Scout purchases their very first subscription |
 | `subscription_renewed` | Scout renews or upgrades an existing subscription |
 | `subscription_refunded` | Scout subscription refunded (e.g., downgrade or expiry) |
@@ -831,12 +834,45 @@ See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for the full guide.
 
 Quick checklist:
 - All contract tests pass: `cargo test --workspace`
-- Zero clippy warnings: `cargo clippy --workspace -- -D warnings`
+- Zero clippy warnings: `cargo clippy --workspace --all-targets -- -D warnings`
 - Formatting clean: `cargo fmt --all -- --check`
 - New functions have tests and are documented in [docs/CONTRACT_REFERENCE.md](docs/CONTRACT_REFERENCE.md)
 - Validator authorization logic changes require explicit review from a second team member
 
 ## Handsoff notes
+
+<!-- handsoff-issue-1654 -->
+- #1654: scout_access: evidence-access grants are valid for 90 days but their storage TTL covers only ~30 days and is never extended on read
+
+<!-- handsoff-issue-1656 -->
+- #1656: registration: get_player_count's doc comment is attached to get_scout_verification
+
+<!-- handsoff-issue-1666 -->
+- #1666: registration: add direct unit tests for canonicalize_region / canonicalize_position / canonicalize_nationality
+
+<!-- handsoff-issue-1674 -->
+- #1674: scout_access: remove the unreachable `effective_limit == 0` branch in get_player_access_grants
+
+<!-- handsoff-issue-1668 -->
+- #1668: progress: set_registration_contract has a merged/misplaced doc comment and skips the instance-TTL bump its siblings perform
+
+<!-- handsoff-issue-1671 -->
+- #1671: progress: extract the duplicated registration-sync block from advance_level and reset_player_level
+
+<!-- handsoff-issue-1672 -->
+- #1672: scout_access: add_to_tier_index is marked #[allow(dead_code)] but is used
+
+<!-- handsoff-issue-1673 -->
+- #1673: scout_access: admin_seed_fee_config / admin_seed_fee_config_history redefine the history cap locally
+
+<!-- handsoff-issue-1663 -->
+- #1663: shared-types: AdminError docs describe shared propose_admin/accept_admin helpers that don't exist
+
+<!-- handsoff-issue-1664 -->
+- #1664: shared-types: validate_cid docs claim dag-json ('bagu…') CIDs are accepted, but the code requires a 'baf' prefix
+
+<!-- handsoff-issue-1665 -->
+- #1665: shared-types: add exact length-boundary tests for validate_cid
 
 <!-- handsoff-issue-1642 -->
 - #1642: all contracts: record the previous WASM hash on upgrade and expose an upgrade history for rollback runbooks

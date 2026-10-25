@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import { Request, Response, NextFunction } from "express";
 import { prisma } from "../db";
+import { config } from "../config";
 
 // Extend the Express Request type so downstream handlers can access req.user
 // without casting.
@@ -43,7 +44,7 @@ export async function requireAuth(
   const token = authHeader.split(" ")[1];
 
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET!) as {
+    const payload = jwt.verify(token, config.jwtSecret, { algorithms: ["HS256"] }) as {
       sub: string;
       role: string;
       jti?: string;
