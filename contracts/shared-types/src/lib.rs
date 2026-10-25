@@ -867,6 +867,35 @@ mod tests {
         assert_eq!(ProgressLevel::EliteTier as u32, 3);
     }
 
+    const ALL_LEVELS: [ProgressLevel; 4] = [
+        ProgressLevel::Unverified,
+        ProgressLevel::VerifiedIdentity,
+        ProgressLevel::PerformanceMilestones,
+        ProgressLevel::EliteTier,
+    ];
+
+    #[test]
+    fn progress_level_derived_ord_matches_rank() {
+        for a in ALL_LEVELS.iter() {
+            for b in ALL_LEVELS.iter() {
+                assert_eq!(a.cmp(b), a.rank().cmp(&b.rank()), "{:?} vs {:?}", a, b);
+            }
+        }
+    }
+
+    #[test]
+    fn progress_level_next_is_rank_plus_one() {
+        for level in ALL_LEVELS.iter() {
+            match level.next() {
+                Some(next) => {
+                    assert_eq!(next.rank(), level.rank() + 1);
+                    assert!(next > *level);
+                }
+                None => assert_eq!(*level, ProgressLevel::EliteTier),
+            }
+        }
+    }
+
     #[test]
     fn test_validate_cid_v0_accepts_valid() {
         let env = Env::default();

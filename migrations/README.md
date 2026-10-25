@@ -38,6 +38,21 @@ model RevokedToken {
 This ensures that Prisma-generated queries target the correct table name
 regardless of the Prisma model name.
 
+Column names follow the same rule: keep camelCase field names in Prisma and map
+each to its snake_case column with `@map` (e.g. `createdAt ... @map("created_at")`),
+and carry over the SQL types with `@db.*` (`@db.VarChar(n)`, `@db.SmallInt`,
+`@db.Timestamptz(6)`; `BIGINT` is `BigInt`, `TEXT[]` is `String[]`).
+
+### Adding a column
+
+1. Write the SQL migration first (next `NNN_*.sql`, idempotent).
+2. Add the matching field to the model in `prisma/schema.prisma` with the
+   `@map` / `@db.*` attributes above.
+3. Run `scripts/check-prisma-drift.sh` against an empty Postgres database
+   (`DATABASE_URL=...`). It applies `migrations/*.sql` in order and runs
+   `prisma migrate diff` against the schema, failing on any difference for a
+   modeled table. CI runs it as the `prisma-drift` job.
+
 ## Naming and numbering convention
 
 Files must be named `NNN_description.sql` where `NNN` is a zero-padded

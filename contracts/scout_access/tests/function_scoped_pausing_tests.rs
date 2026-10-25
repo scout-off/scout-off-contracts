@@ -12,7 +12,7 @@
 mod common;
 
 use scoutchain_scout_access::{
-    FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
+    FeeConfig, ScoutAccessContract, ScoutAccessContractClient, ScoutAccessError, SubscriptionTier,
 };
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
@@ -359,5 +359,59 @@ fn test_unpause_pay_to_contact_emits_event() {
     assert!(
         !health.pay_to_contact_paused,
         "flag should be cleared after unpause"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests: batch_contact_players honours the function-scoped pause (#1616)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_batch_contact_players_blocked_by_function_scoped_pause() {
+    let h = setup();
+    let scout = Address::generate(&h.env);
+    subscribe(&h, &scout);
+    fund(&h, &scout);
+    pause_function(&h);
+
+    let ids = soroban_sdk::vec![&h.env, 1u64, 2u64];
+    let result = h.contract.try_batch_contact_players(&scout, &ids);
+    assert_eq!(
+        result.err().unwrap().unwrap(),
+        ScoutAccessError::PayToContactPaused
+    );
+    // No state change: nothing was recorded as contacted.
+    assert!(!h.contract.has_contacted(&scout, &1u64));
+}
+
+#[test]
+fn test_batch_contact_players_succeeds_after_unpause() {
+    let h = setup();
+    let scout = Address::generate(&h.env);
+    subscribe(&h, &scout);
+    fund(&h, &scout);
+    pause_function(&h);
+    unpause_function(&h);
+
+    let ids = soroban_sdk::vec![&h.env, 1u64, 2u64];
+    assert_eq!(h.contract.batch_contact_players(&scout, &ids), 2);
+}
+
+/// Error ordering: the whole-contract pause (`ContractPaused`) is checked
+/// before the function-scoped pause (`PayToContactPaused`).
+#[test]
+fn test_batch_contact_players_whole_contract_pause_takes_precedence() {
+    let h = setup();
+    let scout = Address::generate(&h.env);
+    subscribe(&h, &scout);
+    fund(&h, &scout);
+    pause_function(&h);
+    pause_contract(&h);
+
+    let ids = soroban_sdk::vec![&h.env, 1u64];
+    let result = h.contract.try_batch_contact_players(&scout, &ids);
+    assert_eq!(
+        result.err().unwrap().unwrap(),
+        ScoutAccessError::ContractPaused
     );
 }

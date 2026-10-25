@@ -127,7 +127,7 @@ ok "Both identities funded."
 # Step 3 — Build WASM (only if not already built for this Rust revision)
 # ---------------------------------------------------------------------------
 log "Step 3: Building WASM contracts..."
-cargo build --workspace --target wasm32v1-none --release \
+cargo build --workspace --target wasm32v1-none --release --locked \
   --manifest-path "$REPO_ROOT/Cargo.toml" \
   > /dev/null 2>&1
 ok "WASM build complete."
