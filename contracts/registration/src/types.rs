@@ -89,6 +89,10 @@ pub struct ScoutVerificationRecord {
     pub evidence_ref: Option<String>,
     /// Verification method label (e.g. "admin_manual", "kyc_attestation").
     pub method: Option<String>,
+    /// Ledger timestamp when verification was revoked via `unverify_scout`.
+    pub revoked_at: Option<u64>,
+    /// Admin-supplied reason for the revocation.
+    pub revoked_reason: Option<String>,
 }
 
 /// Scout profile stored on-chain
@@ -176,7 +180,16 @@ pub enum DataKey {
     ValidatorRegLastSent(Address),
     /// Cooldown in seconds between repeated registration attempts from the
     /// same wallet. 0 means no cooldown. Configurable by admin.
-    RegCooldownSecs(u64), // ── Migration ticket replay prevention ──
+    ///
+    /// The `u64` payload is a dummy discriminator: it is always `0` and carries
+    /// no meaning. Do NOT "clean it up" into a unit variant or change the `0`.
+    /// The serialized storage key is the variant tuple
+    /// `[Symbol("RegCooldownSecs"), U64(0)]`, so any change to the shape or
+    /// value produces a different key and orphans the cooldown already stored
+    /// on deployed contracts (reads would silently fall back to the default).
+    /// Pinned by the `reg_cooldown_storage_key_is_pinned` test.
+    RegCooldownSecs(u64),
+    // ── Migration ticket replay prevention ──
     /// Nonce tracking for migration authorizations. A wallet+nonce pair is
     /// stored as `true` after a migration authorization is redeemed, preventing
     /// the same authorization from being replayed.

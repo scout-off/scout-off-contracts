@@ -11,7 +11,7 @@ Ensure the following tools are installed at the specified minimum versions befor
 | **cargo** | ships with Rust stable | Verify: `cargo --version` |
 | **clippy** | ships with Rust stable | `rustup component add clippy` |
 | **rustfmt** | ships with Rust stable | `rustup component add rustfmt` |
-| **stellar-cli** | **28.0.0** (reference) <!-- Keep in sync with: scripts/generate-bindings.sh and .github/workflows/contract-ci.yml --> | See install note below |
+| **stellar-cli** | **28.0.0** (pinned in `ci/stellar-cli-version`) | See install note below |
 | **Node.js** | 20 LTS | Required only for TypeScript bindings generation — `./scripts/generate-bindings.sh` |
 | **npm** | 10+ (ships with Node 20) | Required only for building/testing bindings packages |
 
@@ -19,18 +19,22 @@ Ensure the following tools are installed at the specified minimum versions befor
 
 ### Installing stellar-cli
 
-`scripts/generate-bindings.sh` records a *reference* `stellar-cli` version (the one
-the generated bindings were last validated against) and prints a warning — not a
-hard error — when the installed version differs, since the upstream `install.sh`
-always installs the latest release regardless of the tag it is fetched from. Set
-`STRICT_STELLAR_CLI_VERSION=1` to make a mismatch fatal.
+The pinned `stellar-cli` version lives in `ci/stellar-cli-version` — the single
+source of truth read by CI, `scripts/install-stellar-cli.sh`, and
+`scripts/generate-bindings.sh`. The install script downloads the official
+release tarball and verifies its SHA-256 before installing (Linux x86_64 /
+aarch64). `generate-bindings.sh` warns — not a hard error — when the installed
+version differs; set `STRICT_STELLAR_CLI_VERSION=1` to make a mismatch fatal.
 
 ```bash
-# Keep in sync with: scripts/generate-bindings.sh and .github/workflows/contract-ci.yml
-curl -sSL https://raw.githubusercontent.com/stellar/stellar-cli/main/install.sh | bash
+./scripts/install-stellar-cli.sh            # installs to ~/.stellar/bin
+export PATH="$HOME/.stellar/bin:$PATH"
+stellar --version                           # should match ci/stellar-cli-version
 ```
 
-Reference version: `28.0.0` (`stellar --version`).
+Reference version: `28.0.0` (`stellar --version`), pinned in `ci/stellar-cli-version`.
+When bumping the version, update `ci/stellar-cli-version` and the per-platform
+checksums in `scripts/install-stellar-cli.sh` together.
 
 The `wasm32v1-none` target (not the older `wasm32-unknown-unknown`) is required for building Soroban contracts with `soroban-sdk 25.x`. Using the wrong target produces an ABI-incompatible WASM binary.
 
@@ -51,7 +55,7 @@ Reminder: `core.hooksPath` is a per-clone git config setting, so re-apply it aft
 
 ```bash
 cargo test --workspace          # all tests must pass
-cargo clippy --workspace        # zero warnings
+cargo clippy --workspace --all-targets -- -D warnings  # zero warnings, tests included
 cargo fmt --all -- --check      # formatting must be clean
 bash scripts/check-docs.sh      # documentation completeness check
 bash scripts/check-event-topic-consistency.sh  # event-topic / docs consistency
@@ -65,12 +69,13 @@ The repository defines seven CI jobs across `.github/workflows/ci.yml` and `.git
 
 | Job | File | What it checks | Required |
 |-----|------|----------------|----------|
-| `check-todos` | `ci.yml` | Scans `contracts/` for `TODO`/`FIXME`/`HACK`/`XXX` markers — fails if any are found | Yes |
+| `check-todos` | `ci.yml` | Scans `contracts/**/*.rs` plus scripts/backend sources in `scripts/`, `src/`, `testnet/` and `.github/` (`*.sh`, `*.py`, `*.js`, `*.mjs`, `*.ts`, `*.yml`, `*.yaml`) for `TODO`/`FIXME`/`HACK`/`XXX` markers — fails if any are found; also runs the database migration numbering check (`scripts/check-migration-numbering.sh`), which runs only here — `contract-ci.yml` only shellchecks that script | Yes |
 | `test` | `contract-ci.yml` | Runs `cargo test --workspace` (including each contract's `tests/cost_budget.rs` CPU-instruction cost budget), tests `scoutchain-progress`, uploads a `cpu-cost-budget-<sha>` report artifact, builds WASM release | Yes |
 | `lint` | `contract-ci.yml` | Clippy (deny warnings), `rustfmt` check, shellcheck on all tracked shell scripts, docs completeness (`scripts/check-docs.sh`), event-topic consistency (`scripts/check-event-topic-consistency.sh`), guard-ordering audit (`scripts/check-guard-ordering.sh`), cross-doc consistency (`scripts/check-cross-doc-consistency.sh`), trial-offer flow doc consistency (`scripts/check-trial-offer-flow-consistency.sh`), error-code continuity (`scripts/check-error-code-continuity.sh`), public-item docs coverage (`scripts/check-cargo-doc.sh`), and bindings template validation (`scripts/check-bindings.sh`) | Yes |
 | `bindings-smoke-test` | `contract-ci.yml` | Deploys all contracts to a local Soroban sandbox, initializes them and wires cross-contract links, verifies that wiring (`scripts/verify-cross-contract-wiring.sh`), runs `scripts/health-check.sh` and `scripts/full-readiness-check.sh`, runs `scripts/smoke-test.sh`, generates TypeScript bindings, verifies their structure, builds each binding package, **verifies that every ABI-declared function has a corresponding export in the generated binding** (fails with a clear list of missing exports if any), runs `scripts/migrate-contract-smoke-test.sh` against the already-running sandbox to continuously verify the deploy-old→seed→migrate→replay→before/after-comparison path, and re-runs `scripts/check-docs.sh` | Yes |
 | `abi-export` | `contract-ci.yml` | Exports contract ABIs to `abi/*.json` using `stellar contract info interface`, validates JSON parseability, measures each contract's optimized WASM size against `ci/wasm-size-budget.json` (failing the job if any contract is over budget), and uploads the artifacts; per `docs/VERSIONING.md` the ABI diff is how breaking changes are detected | Yes |
 | `abi-diff` | `contract-ci.yml` | Diffs the PR branch's ABI against the base branch (main/develop), classifies changes as MAJOR/MINOR/PATCH per `docs/VERSIONING.md`, and fails if a MAJOR or MINOR change lacks a matching entry in `CHANGELOG.md`'s Unreleased section and a matching row in `docs/VERSIONING.md`'s Version History table | Yes |
+| `storage-layout-compat` | `contract-ci.yml` | Runs `scripts/check-storage-layout-compat.sh` against the PR base ref for the four contracts' `types.rs` and `shared-types`, after a fixture self-test proving the checker flags `scripts/fixtures/storage_compat_breaking`. Fails on unacknowledged storage-layout breaks; to acknowledge an intentional break, commit `docs/breaking-change-ack-<PR number>.md` (see `docs/VERSIONING.md`) | Yes |
 | `budget-calibration` | `contract-ci.yml` | Downloads the `abi-export` job's ABI and CPU-cost-budget artifacts, runs `scripts/calibrate-budgets.py --headroom 0.20` to check the checked-in size/cost budgets aren't badly out of calibration with measured values, and fails if any measured value exceeds its budget | Not verifiable from this repo alone — configure via `Settings > Branches > main > Require status checks` and confirm here |
 
 > **Note on the audit:** The "What it checks" column for every job above was re-audited directly against the live job definitions in `.github/workflows/ci.yml` and `.github/workflows/contract-ci.yml`, not just against branch-protection status. The `Required` column reflects the actual branch-protection rules on `main` at the time of writing, except for `budget-calibration`, whose required-status could not be confirmed while auditing this table (see that row). Because changing branch-protection settings requires repository admin access, any future update to the required checks — including confirming `budget-calibration`'s status — must be performed by a maintainer in the repository settings (`Settings > Branches > main > Require status checks`).
@@ -96,6 +101,14 @@ Both files document their own process for intentionally raising a budget when a 
   function's `CONTRACT_REFERENCE.md` entry and a comment explaining the atomicity guarantee
 - [ ] `ai.md` is updated if shared types, events, or env vars changed
 - [ ] `docs/CONTRACT_REFERENCE.md` is updated with new functions, events, and error codes *(enforced automatically by `scripts/check-docs.sh` in the CI lint job — the PR will fail if a `pub fn` from any `#[contractimpl]` block lacks a corresponding heading in the docs)*
+
+- [ ] **Cross-contract changes:** any change to a cross-contract interface (e.g. `advance_level` signature) updates every calling contract and all integration tests
+- [ ] **Event schema changes:** any new or modified event is reflected in `CONTRACT_REFERENCE.md`, the indexer migration, and the TypeScript bindings
+- [ ] **Error code changes:** added or reordered error codes update `CONTRACT_REFERENCE.md` and the README error tables, and downstream clients are notified
+- [ ] **TTL constant changes:** reviewed for production ledger cadence impact
+- [ ] **Storage key additions:** reviewed for key collision potential and documented in the contract's `DataKey` enum comments
+
+The same checklist lives in `.github/pull_request_template.md`; the `pr-checklist` job in `.github/workflows/ci.yml` fails a PR whose description is missing any checklist item.
 
 ### Error variant ordering
 

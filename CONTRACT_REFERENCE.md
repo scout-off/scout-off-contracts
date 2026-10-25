@@ -1,20 +1,17 @@
 # Contract Reference
 
-This document lists the public error codes and reference material for the
-contracts in this repository.
+Quick reference for the `scout_access` error codes added in #1675 / #1676.
+The complete, authoritative list for every contract is in
+[docs/CONTRACT_REFERENCE.md](docs/CONTRACT_REFERENCE.md).
 
 ## scout_access
 
-### `ScoutAccessError`
+### `ScoutAccessError` (additions)
 
 | Code | Variant | Meaning |
 | ---- | ------- | ------- |
-| 1 | `Unauthorized` | Caller is not authorized for this action. |
-| 2 | `NotFound` | Requested resource does not exist. |
-| 3 | `AlreadyExists` | Resource already exists. |
-| 4 | `InvalidInput` | Caller-supplied input is invalid. |
-| 5 | `RegistrationContractNotSet` | The registration contract has not been wired into this deployment. |
-| 6 | `ProgressContractNotSet` | The progress contract has not been wired into this deployment. |
+| 50 | `NotPlayerOwner` | The caller's wallet does not own the supplied `player_id`. |
+| 51 | `ProgressContractNotSet` | The progress contract has not been wired into this deployment. |
 
 `ProgressContractNotSet` is returned by `confirm_trial_offer` when the progress
 contract is not configured. This is a deployment-wiring problem, not a problem

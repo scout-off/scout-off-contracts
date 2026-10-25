@@ -41,3 +41,24 @@ second milestone, which is the milestone eligible to advance a player to level
 This limits on-chain Sybil wallets but does not prove real-world independence:
 the administrator's affiliation verification remains the trust anchor and must
 be reviewed and audited.
+
+## Per-validator-per-player cap (#1615)
+
+`MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR` (5) now charges **only the
+committing validator** and is counted **per 90-day window**
+(`PLAYER_VALIDATOR_WINDOW_SECS`).
+
+- Previously every co-attestor was charged and counters never decayed, so in
+  k-of-n mode a player could receive at most `floor(5n/k)` milestones forever
+  (5 for n = k = 3). That trade-off came from the earlier fix that counted all
+  attestors to stop co-attestors escaping the limit.
+- Co-attestors cannot commit alone (k >= 2 distinct validators must agree), so
+  not charging them does not let one colluding validator push a player: as
+  the committer it is still limited to 5 per window.
+- Liveness bound: each validator can commit 5 milestones per player per
+  window, so throughput scales with the number of validators and never
+  reaches a permanent ceiling.
+- Diversity (`DiversityConfig`) is unaffected: it counts distinct
+  affiliations, not per-validator commits.
+- Counts written before windows existed have no window start; the first
+  commit after upgrade opens a fresh window.

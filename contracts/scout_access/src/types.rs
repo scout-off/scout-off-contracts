@@ -71,6 +71,30 @@ pub struct TrialOffer {
     pub logged_at: u64,
 }
 
+/// A trial offer paired with its per-player index (the value
+/// `confirm_trial_offer` expects).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TrialOfferEntry {
+    /// 1-based per-player trial offer index.
+    pub index: u32,
+    /// The stored trial offer.
+    pub offer: TrialOffer,
+}
+
+/// A page of trial offers returned by `get_trial_offers_page`.
+///
+/// `entries` holds at most `limit` (clamped to 1..=50) offers, newest first.
+/// `total` is the player's trial-offer counter; use it to stop paging.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TrialOfferPage {
+    /// Offers in this page with their indices, newest first.
+    pub entries: soroban_sdk::Vec<TrialOfferEntry>,
+    /// Total number of trial offers logged for the player.
+    pub total: u32,
+}
+
 /// Tracks the number of contacts a Pro-tier scout has made in their current
 /// subscription period.  `period_start` is the `subscribed_at` timestamp of
 /// the current subscription; when the scout renews, a new record is stored
