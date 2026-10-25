@@ -92,9 +92,12 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
+          # Only package.json is tracked (see .gitignore); dependencies are
+          # pinned to exact versions there.
+          cache-dependency-path: package.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Check Prisma schema against SQL migrations
         run: bash scripts/check-prisma-drift.sh
@@ -130,9 +133,12 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
+          # Only package.json is tracked (see .gitignore); dependencies are
+          # pinned to exact versions there.
+          cache-dependency-path: package.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Generate Prisma client
         run: npx prisma generate
@@ -161,5 +167,7 @@ jobs:
           for f in scripts/*.js; do
             node --check "$f"
           done
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
       - name: Run reconcile-indexer smoke test
-        run: npx --yes jest scripts/reconcile-indexer.test.js
+        run: npx jest scripts/__tests__/reconcile-indexer.test.js --roots='<rootDir>/scripts'
