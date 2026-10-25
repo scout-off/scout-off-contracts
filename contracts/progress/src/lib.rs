@@ -2500,6 +2500,7 @@ mod tests {
         let ver_admin = Address::generate(&env);
         let ver_id = env.register(scoutchain_verification::VerificationContract, (ver_admin.clone(),));
         let ver_client = scoutchain_verification::VerificationContractClient::new(&env, &ver_id);
+        ver_client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
         let mut cid_seed: u32 = 0;
         for player_id in [1u64, 2, 5, 7, 10, 20, 42, 55] {
             for _ in 0..2u32 {
@@ -3349,6 +3350,7 @@ mod tests {
         let ver_admin = Address::generate(&env);
         let ver_id = env.register(VerificationContract, (ver_admin.clone(),));
         let ver_client = VerificationContractClient::new(&env, &ver_id);
+        ver_client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
 
         // Deploy progress contract and wire the verification + scout_access addresses.
         let prog_admin = Address::generate(&env);

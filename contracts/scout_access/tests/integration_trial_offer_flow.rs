@@ -57,6 +57,7 @@ fn setup() -> Harness {
     // whitelisted caller of advance_level).
     let ver_id = env.register(VerificationContract, (admin.clone(),));
     let verification = VerificationContractClient::new(&env, &ver_id);
+    verification.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
 
     // Deploy and initialize the progress contract.
     let progress_id = env.register(ProgressContract, (admin.clone(),));

@@ -30,6 +30,7 @@ fn setup() -> (Env, VerificationContractClient<'static>) {
     let admin = Address::generate(&env);
     let contract_id = env.register(VerificationContract, (admin.clone(),));
     let client = VerificationContractClient::new(&env, &contract_id);
+    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
     (env, client)
 }
 

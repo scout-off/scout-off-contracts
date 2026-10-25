@@ -126,6 +126,7 @@ fn test_confirm_trial_offer_idempotency_nonce_prevents_replay() {
     // verification contract with one approved milestone.
     let ver_id = env.register(scoutchain_verification::VerificationContract, (admin.clone(),));
     let verification = scoutchain_verification::VerificationContractClient::new(&env, &ver_id);
+    verification.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
 
     common::wire_registration(&env, None, Some(&progress));
     progress.set_verification_contract(&ver_id);

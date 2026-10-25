@@ -59,6 +59,7 @@ fn setup() -> Harness {
     let admin = Address::generate(&env);
     let id = env.register(VerificationContract, (admin.clone(),));
     let verification = VerificationContractClient::new(&env, &id);
+    verification.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
 
     Harness { env, verification }
 }

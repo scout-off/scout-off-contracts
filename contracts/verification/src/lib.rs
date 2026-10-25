@@ -5903,7 +5903,7 @@ mod tests {
     fn test_get_validator_milestones_page_reconstructs_full_history() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -5962,7 +5962,7 @@ mod tests {
     fn test_get_milestones_by_validator_page_returns_full_records() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6155,7 +6155,7 @@ mod tests {
     fn test_validator_milestone_count() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6254,7 +6254,7 @@ mod tests {
     fn test_register_and_approve() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6285,7 +6285,7 @@ mod tests {
     fn test_multiple_milestones_same_player() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6318,7 +6318,7 @@ mod tests {
     fn test_get_milestone_returns_correct_data() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6523,7 +6523,7 @@ mod tests {
     fn test_two_validators_approve_milestones_for_same_player() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let validator1 = Address::generate(&env);
         let validator2 = Address::generate(&env);
@@ -6618,7 +6618,7 @@ mod tests {
     fn test_approve_milestone_overflow() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -7305,7 +7305,7 @@ mod tests {
     fn test_cidv0_exactly_46_chars_accepted() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
         let validator = Address::generate(&env);
         client.register_validator(
             &validator,
@@ -7353,7 +7353,7 @@ mod tests {
     fn test_cidv1_exactly_59_chars_accepted() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
         let validator = Address::generate(&env);
         client.register_validator(
             &validator,
@@ -7414,7 +7414,7 @@ mod tests {
     fn test_get_milestone_ttl_expires_without_bump() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -7463,7 +7463,7 @@ mod tests {
     fn test_get_milestone_return_value_preserved() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -7519,7 +7519,7 @@ mod tests {
     fn test_get_milestone_does_not_alter_counters() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -8173,7 +8173,7 @@ mod tests {
     fn test_transfer_validator_succeeds() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let old_wallet = Address::generate(&env);
         let credentials = String::from_str(&env, "UEFA A License");
@@ -8221,7 +8221,7 @@ mod tests {
     fn test_transfer_validator_same_address() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let wallet = Address::generate(&env);
         let credentials = String::from_str(&env, "UEFA B License");
@@ -8355,7 +8355,7 @@ mod tests {
     fn test_is_milestone_flagged_reads_second_page() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -8488,7 +8488,7 @@ mod tests {
     fn test_get_milestones_since_filters_by_approved_at() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -8571,7 +8571,7 @@ mod tests {
     fn test_get_validator_activity_report_matches_individual_queries() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let validator = Address::generate(&env);
         let player_id: u64 = 1;
@@ -8756,7 +8756,7 @@ mod tests {
     fn test_matching_specialization_allows_advance() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let validator = Address::generate(&env);
         let mut specs = Vec::new(&env);
@@ -8784,7 +8784,7 @@ mod tests {
     fn test_no_category_skips_specialization_check() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -8933,7 +8933,7 @@ mod tests {
     fn test_ring_buffer_write_head_wraps_at_boundary() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
         let validator = register_test_validator(&env, &client);
 
         // Seed the head just below the cap so the next write fills the ring.
@@ -9241,7 +9241,7 @@ mod tests {
         let env = setup_env();
         let admin = Address::generate(&env);
         let validator = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
         client.register_validator(&validator, &String::from_str(&env, "UEFA B Licence"),
             &String::from_str(&env, "Example Academy"), &Vec::new(&env));
         client.approve_milestone(&validator, &7u64, &String::from_str(&env, "Training"),
@@ -9327,7 +9327,7 @@ mod tests {
         let env = setup_env();
         let admin = Address::generate(&env);
         let validator = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
         client.register_validator(&validator, &String::from_str(&env, "UEFA B Licence"),
             &String::from_str(&env, "Example Academy"), &Vec::new(&env));
         client.approve_milestone(&validator, &7, &String::from_str(&env, "Training"),
