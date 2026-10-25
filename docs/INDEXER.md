@@ -13,7 +13,7 @@ into PostgreSQL for fast querying.  It runs as a separate process from the API.
 | `scouts` | `registration.get_scout` | Scout profiles, region, **verified** flag, **deactivated** flag |
 | `contact_records` | `scout_access.player_contacted` events | Contact audit trail |
 | `trial_offers` | `scout_access.log_trial_offer` events | Trial offer records |
-| `scout_subscriptions` | `scout_access.scout_subscribed` events | Active subscriptions |
+| `scout_subscriptions` | `scout_access.subscription_created` / `subscription_renewed` / `subscription_auto_renewed` events (not the deprecated `scout_subscribed`) | Active subscriptions |
 | `fee_withdrawals` | `scout_access.fees_withdrawn` events | Fee withdrawal audit log |
 | `milestone_flags` | `verification.milestone_flagged` / `milestone_flag_cleared` events | Milestones pending re-review due to for-cause validator revocations |
 | `revocation_records` | `verification.validator_revoked_for_cause` / `revocation_cascade_complete` events | Revoked-validator severity + cascade status |

@@ -142,13 +142,13 @@ fn test_filter_players_pagination_retrieves_all() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 4: limit=0 returns InvalidInput (no infinite paging)
+// Test 4: limit=0 is clamped to 1 (no infinite paging)
 // ---------------------------------------------------------------------------
 
-/// Regression test for Issue #1407: `limit=0` must return `InvalidInput`
-/// rather than producing a non-advancing cursor that causes infinite paging.
+/// Regression test for Issues #1407 / #1720: `limit=0` is clamped to 1, so
+/// the cursor always advances and paging cannot loop forever.
 #[test]
-fn test_filter_players_limit_zero_rejected() {
+fn test_filter_players_limit_zero_clamped_to_one() {
     let (env, client) = setup();
 
     for _ in 0..5 {
@@ -160,7 +160,7 @@ fn test_filter_players_limit_zero_rejected() {
         );
     }
 
-    let result = client.try_filter_players(
+    let result = client.filter_players(
         &String::from_str(&env, "NG"),
         &String::from_str(&env, "ST"),
         &ProgressLevel::Unverified,
@@ -168,10 +168,8 @@ fn test_filter_players_limit_zero_rejected() {
         &0u32,
     );
 
-    assert!(
-        result.is_err(),
-        "filter_players with limit=0 must return InvalidInput"
-    );
+    assert_eq!(result.profiles.len(), 1, "limit=0 must be clamped to 1");
+    assert!(result.has_more);
 }
 
 // ---------------------------------------------------------------------------

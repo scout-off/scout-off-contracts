@@ -556,6 +556,21 @@ proceed until it is verified.
 
 ---
 
+## Verify Deployed WASM Against a Release (issue #1614)
+
+After any deploy or upgrade, or when an auditor asks what code is running, run:
+
+```bash
+./scripts/verify-deployed-wasm.sh <network> <release-tag>
+```
+
+It fetches the installed code for each contract ID in `.env.contracts`, hashes
+it and compares it with the release's `wasm-hashes.json`, printing `MATCH` or
+`MISMATCH` per contract and exiting non-zero on any mismatch. A `MISMATCH` means
+the on-chain code is not the tagged build: treat it as an incident (consider the
+pause procedure above) until explained. Set `WASM_HASHES_FILE` to verify against
+a local manifest. See [DEPLOYMENT.md](DEPLOYMENT.md#reproducible-builds-and-deployed-wasm-verification-issue-1614).
+
 ## Related Documentation
 
 - [DEPLOYMENT.md](DEPLOYMENT.md) — contract deployment order and initialization

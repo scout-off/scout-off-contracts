@@ -1,6 +1,5 @@
 import express, { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-import { prisma } from "./db";
 import {
   buildChallengeTx,
   verifyChallengeTx,
@@ -8,6 +7,7 @@ import {
   issueSep10Token,
 } from "./services/sep10";
 import { requireAuth, requireRole } from "./middleware/auth";
+import { prisma } from "./db";
 
 const app = express();
 app.use(express.json());
@@ -63,38 +63,44 @@ app.post("/auth", async (req: Request, res: Response) => {
   }
 });
 
-// Revoke token endpoint (admin)
-app.post("/api/admin/tokens/revoke", requireRole(["admin"]), async (req: Request, res: Response) => {
-  const { token } = req.body;
+// Revoke token endpoint (admin only) — requireAuth must precede requireRole
+// so req.user is populated before the role check runs.
+app.post(
+  "/api/admin/tokens/revoke",
+  requireAuth,
+  requireRole(["admin"]),
+  async (req: Request, res: Response) => {
+    const { token } = req.body;
 
-  if (!token) {
-    return res.status(400).json({ error: "Token is required" });
+    if (!token) {
+      return res.status(400).json({ error: "Token is required" });
+    }
+
+    let jti: string;
+
+    try {
+      const payload = jwt.verify(token, process.env.JWT_SECRET!) as {
+        jti?: string;
+      };
+      if (!payload.jti) {
+        return res
+          .status(400)
+          .json({ error: "Token does not contain a jti claim" });
+      }
+      jti = payload.jti;
+    } catch {
+      return res.status(400).json({ error: "Invalid token" });
+    }
+
+    await prisma.revokedToken.create({
+      data: { jti },
+    });
+
+    return res.json({ revoked: true });
   }
+);
 
-  let jti: string;
-
-  try {
-    const payload: any = jwt.verify(token, process.env.JWT_SECRET!);
-    jti = payload.jti;
-  } catch {
-    return res.status(400).json({ error: "Invalid token" });
-  }
-
-  if (!jti) {
-    return res.status(400).json({ error: "Token does not contain a jti claim" });
-  }
-
-  await prisma.revokedToken.create({
-    data: { jti },
-  });
-
-  // Remove from active tokens
-  issuedTokens.delete(token);
-
-  res.json({ revoked: true });
-});
-
-// Protected route example
+// Protected route — returns the authenticated caller's token claims.
 app.get("/api/tokens/me", requireAuth, async (req: Request, res: Response) => {
   const { sub, role, jti } = req.user!;
 
@@ -104,7 +110,7 @@ app.get("/api/tokens/me", requireAuth, async (req: Request, res: Response) => {
     return res.status(401).json({ error: "Token has been revoked" });
   }
 
-  res.json({ sub, role, jti });
+  return res.json({ sub, role, jti });
 });
 
 export { app };
