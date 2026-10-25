@@ -491,7 +491,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # stable
         with:
           toolchain: stable
           targets: wasm32v1-none
