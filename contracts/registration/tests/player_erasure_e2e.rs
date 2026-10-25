@@ -161,7 +161,7 @@ fn test_full_erasure_leaves_no_readable_state() {
     // pay_to_contact requires registration wiring for verification in some
     // configurations; we call it here to create a ContactRecord.
     h.scout_access.set_registration_contract(&reg_id);
-    h.scout_access.pay_to_contact(&player_id, &scout_wallet);
+    h.scout_access.pay_to_contact(&scout_wallet, &player_id);
 
     // --- Step 4: Run paged erasure (recommended order) ---
 
@@ -254,9 +254,9 @@ fn test_erasure_blocks_on_outstanding_escrow() {
     h.scout_access
         .set_registration_contract(&h.registration.address.clone());
     h.scout_access.subscribe(&scout_wallet, &SubscriptionTier::Elite);
-    h.scout_access.pay_to_contact(&player_id, &scout_wallet);
+    h.scout_access.pay_to_contact(&scout_wallet, &player_id);
     h.scout_access
-        .log_trial_offer(&player_id, &scout_wallet, &String::from_str(env, "bafyoffer1"));
+        .log_trial_offer(&scout_wallet, &player_id, &String::from_str(env, "bafyoffer1"));
 
     // Attempt purge while escrow is outstanding — must be rejected.
     let result = h

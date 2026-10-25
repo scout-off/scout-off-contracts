@@ -396,7 +396,7 @@ pub fn batch_revoked(env: &Env, admin: &Address, count: u32, for_cause: bool) {
         count,
         for_cause,
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn validator_revoked_for_cause(env: &Env, admin: &Address, wallet: &Address, reason: &String) {
@@ -443,7 +443,7 @@ pub fn validator_specialization_updated(
         old: old.clone(),
         new: new.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn contract_paused(env: &Env, admin: &Address) {
@@ -628,7 +628,7 @@ pub fn attestation_round_aborted(
         threshold,
         active_count,
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn progress_call_failed(env: &Env, player_id: u64, error_code: u32) {
@@ -915,5 +915,5 @@ pub fn diversity_gate_unreachable(
         required,
         active_count,
     }
-    .emit(env);
+    .publish(env);
 }

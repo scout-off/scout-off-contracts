@@ -218,7 +218,7 @@ fn get_players_deduplicates_ids() {
     let (env, client) = setup();
     let wallet = Address::generate(&env);
     let vitals = dummy_vitals(&env);
-    let hashes = vec![&env, String::from_str(&env, "QmTestHashDedupePlayers1")];
+    let hashes = vec![&env, String::from_str(&env, "bafytestdedupeplayers")];
     let player_id = client.register_player(&wallet, &vitals, &hashes);
 
     let mut ids: Vec<u64> = Vec::new(&env);
@@ -228,7 +228,7 @@ fn get_players_deduplicates_ids() {
 
     let players = client.get_players(&ids);
     assert_eq!(players.len(), 1, "duplicate IDs must collapse to one entry");
-    assert_eq!(players.get(0).unwrap().id, player_id);
+    assert_eq!(players.get(0).unwrap().player_id, player_id);
 }
 
 /// `get_scouts` shares the same dedupe + partial-hit semantics as
@@ -237,9 +237,7 @@ fn get_players_deduplicates_ids() {
 fn get_scouts_deduplicates_ids() {
     let (env, client) = setup();
     let wallet = Address::generate(&env);
-    let vitals = dummy_vitals(&env);
-    let hashes = vec![&env, String::from_str(&env, "QmTestHashDedupeScouts1")];
-    let scout_id = client.register_scout(&wallet, &vitals, &hashes);
+    let scout_id = client.register_scout(&wallet, &String::from_str(&env, "EU"));
 
     let mut ids: Vec<u64> = Vec::new(&env);
     for _ in 0..20u32 {
@@ -248,5 +246,5 @@ fn get_scouts_deduplicates_ids() {
 
     let scouts = client.get_scouts(&ids);
     assert_eq!(scouts.len(), 1, "duplicate IDs must collapse to one entry");
-    assert_eq!(scouts.get(0).unwrap().id, scout_id);
+    assert_eq!(scouts.get(0).unwrap().scout_id, scout_id);
 }

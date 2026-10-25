@@ -9,7 +9,7 @@ mod events;
 mod types;
 
 use types::{
-    ContractHealth, DataKey, FilterResult, PlayerProfile, PlayerStatus, PlayerSummary,
+    ContractHealth, DataKey, FilterResult, PlayerProfile, PlayerSummary,
     ProgressLevel, RegistrationWiringState, ScoutProfile, ScoutVerificationRecord,
     StoredPlayerProfile,
 };

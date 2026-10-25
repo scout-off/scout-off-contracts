@@ -2641,19 +2641,19 @@ pre-validate input. Strictly compile-time constants; configurable values
 | Field | Type | Value |
 |---|---|---|
 | `max_validators` | u32 | 100 |
-| `max_milestones_per_player_per_validator` | u32 | 5 |
+| `max_milestones_per_player_val` | u32 | 5 |
 | `max_global_milestone_index` | u32 | 500 |
 | `min_credentials_len` / `max_credentials_len` | u32 | 10 / 256 |
 | `max_description_len` | u32 | 256 |
 | `max_specializations` | u32 | 10 |
 | `max_specialization_tag_len` | u32 | 64 |
-| `max_pending_votes_per_validator` | u32 | 25 |
+| `max_pending_votes_per_val` | u32 | 25 |
 | `max_dispute_rounds` | u32 | 3 |
 | `dispute_reopen_cooldown_secs` | u64 | 604800 |
 | `max_open_disputes_per_player` | u32 | 5 |
 | `min_voting_window_secs` / `max_voting_window_secs` | u64 | 3600 / 7776000 |
 | `min_jury_window_secs` / `max_jury_window_secs` | u64 | 86400 / 2592000 |
-| `max_attestation_future_tolerance_secs` | u64 | 3600 |
+| `max_attest_future_skew_secs` | u64 | 3600 |
 
 ```bash
 stellar contract invoke --id $VERIFICATION_CONTRACT_ID -- get_limits

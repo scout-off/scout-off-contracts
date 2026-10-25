@@ -352,7 +352,7 @@ pub fn trial_escrow_orphan_rescued(
         index,
         amount,
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn trial_escrow_admin_refunded(

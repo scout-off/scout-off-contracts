@@ -11,11 +11,13 @@
 //! in cooldown that also submits an invalid region therefore gets
 //! `RegistrationCooldown` from both `register_player` and `register_scout`.
 
-use scoutchain_registration::{RegistrationContract, RegistrationContractClient, ScoutChainError};
+use scoutchain_registration::{
+    PlayerVitals, RegistrationContract, RegistrationContractClient, ScoutChainError,
+};
 use scoutchain_shared_types::testutils::last_event_data;
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _, MockAuth, MockAuthInvoke},
-    Address, Env, IntoVal, String,
+    Address, Env, IntoVal, String, Vec,
 };
 
 const START: u64 = 1_000_000;
@@ -30,6 +32,21 @@ fn setup() -> (Env, RegistrationContractClient<'static>) {
     let admin = Address::generate(&env);
     client.initialize(&admin);
     (env, client)
+}
+
+fn valid_vitals(env: &Env) -> PlayerVitals {
+    PlayerVitals {
+        age: 20,
+        position: String::from_str(env, "ST"),
+        region: String::from_str(env, "EU"),
+        nationality: String::from_str(env, "FR"),
+    }
+}
+
+fn one_hash(env: &Env) -> Vec<String> {
+    let mut v = Vec::new(env);
+    v.push_back(String::from_str(env, "bafytestcid"));
+    v
 }
 
 #[test]
@@ -99,17 +116,17 @@ fn reg_cooldown_event_emitted() {
 fn get_scout_verification_extends_scout_ttl() {
     let (env, client) = setup();
     let scout = Address::generate(&env);
-    client.register_scout(&scout);
+    let scout_id = client.register_scout(&scout, &String::from_str(&env, "EU"));
 
     // Read only via `get_scout_verification` to exercise its TTL extension.
-    let _ = client.get_scout_verification(&scout);
+    let _ = client.get_scout_verification(&scout_id);
 
     // Advance the ledger well past the default entry TTL.
     env.ledger().with_mut(|l| l.sequence_number += 100_000);
 
     // The scout record must still be readable thanks to the extension.
-    let profile = client.get_scout(&scout);
-    assert_eq!(profile.address, scout);
+    let profile = client.get_scout(&scout_id);
+    assert_eq!(profile.wallet, scout);
 }
 
 /// A wallet in cooldown that also submits an invalid region must receive the
@@ -123,13 +140,17 @@ fn cooldown_wins_over_invalid_region_for_both_entrypoints() {
     let wallet = Address::generate(&env);
     let invalid_region = String::from_str(&env, "not-a-valid-region");
 
-    // First registration succeeds and starts the cooldown window.
-    client.register_player(&wallet, &invalid_region);
+    // First registration (valid input) succeeds and starts the cooldown window.
+    client.register_player(&wallet, &valid_vitals(&env), &one_hash(&env));
 
     // Still inside the cooldown window: cooldown must win over the invalid
     // region for both entrypoints.
+    let bad_vitals = PlayerVitals {
+        region: invalid_region.clone(),
+        ..valid_vitals(&env)
+    };
     assert_eq!(
-        client.try_register_player(&wallet, &invalid_region),
+        client.try_register_player(&wallet, &bad_vitals, &one_hash(&env)),
         Err(Ok(ScoutChainError::RegistrationCooldown))
     );
     assert_eq!(

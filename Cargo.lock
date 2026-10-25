@@ -1373,6 +1373,7 @@ version = "2.0.0"
 dependencies = [
  "ed25519-dalek 3.0.0-rc.0",
  "scoutchain-progress",
+ "scoutchain-scout-access",
  "scoutchain-shared-types",
  "scoutchain-verification",
  "soroban-sdk",

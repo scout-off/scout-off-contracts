@@ -192,7 +192,7 @@ pub fn scout_deregistered(env: &Env, scout_id: u64, wallet: &Address, admin: &Ad
         scout_id,
         wallet: wallet.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 pub fn player_deregistered(
@@ -260,7 +260,7 @@ pub fn scout_unverified(env: &Env, scout_id: u64, wallet: &Address, admin: &Addr
         scout_id,
         admin: admin.clone(),
     }
-    .emit(env);
+    .publish(env);
 }
 
 /// Emitted before `update_current_contract_wasm` — attributed to the old code version.

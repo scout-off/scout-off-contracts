@@ -3436,14 +3436,14 @@ impl VerificationContract {
     pub fn get_limits(_env: Env) -> VerificationLimits {
         VerificationLimits {
             max_validators: MAX_VALIDATORS,
-            max_milestones_per_player_per_validator: MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR,
+            max_milestones_per_player_val: MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR,
             max_global_milestone_index: MAX_GLOBAL_MILESTONE_INDEX,
             min_credentials_len: MIN_CREDENTIALS_LEN,
             max_credentials_len: MAX_CREDENTIALS_LEN,
             max_description_len: MAX_DESCRIPTION_LEN,
             max_specializations: MAX_SPECIALIZATIONS,
             max_specialization_tag_len: MAX_SPECIALIZATION_TAG_LEN,
-            max_pending_votes_per_validator: MAX_PENDING_VOTES_PER_VALIDATOR,
+            max_pending_votes_per_val: MAX_PENDING_VOTES_PER_VALIDATOR,
             max_dispute_rounds: MAX_DISPUTE_ROUNDS,
             dispute_reopen_cooldown_secs: DISPUTE_REOPEN_COOLDOWN_SECS,
             max_open_disputes_per_player: MAX_OPEN_DISPUTES_PER_PLAYER,
@@ -3451,7 +3451,7 @@ impl VerificationContract {
             max_voting_window_secs: MAX_VOTING_WINDOW_SECS,
             min_jury_window_secs: MIN_JURY_WINDOW_SECS,
             max_jury_window_secs: MAX_JURY_WINDOW_SECS,
-            max_attestation_future_tolerance_secs: MAX_ATTESTATION_FUTURE_TOLERANCE_SECS,
+            max_attest_future_skew_secs: MAX_ATTESTATION_FUTURE_TOLERANCE_SECS,
         }
     }
 
@@ -5451,14 +5451,14 @@ mod tests {
             client.get_limits(),
             VerificationLimits {
                 max_validators: MAX_VALIDATORS,
-                max_milestones_per_player_per_validator: MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR,
+                max_milestones_per_player_val: MAX_MILESTONES_PER_PLAYER_PER_VALIDATOR,
                 max_global_milestone_index: MAX_GLOBAL_MILESTONE_INDEX,
                 min_credentials_len: MIN_CREDENTIALS_LEN,
                 max_credentials_len: MAX_CREDENTIALS_LEN,
                 max_description_len: MAX_DESCRIPTION_LEN,
                 max_specializations: MAX_SPECIALIZATIONS,
                 max_specialization_tag_len: MAX_SPECIALIZATION_TAG_LEN,
-                max_pending_votes_per_validator: MAX_PENDING_VOTES_PER_VALIDATOR,
+                max_pending_votes_per_val: MAX_PENDING_VOTES_PER_VALIDATOR,
                 max_dispute_rounds: MAX_DISPUTE_ROUNDS,
                 dispute_reopen_cooldown_secs: DISPUTE_REOPEN_COOLDOWN_SECS,
                 max_open_disputes_per_player: MAX_OPEN_DISPUTES_PER_PLAYER,
@@ -5466,7 +5466,7 @@ mod tests {
                 max_voting_window_secs: MAX_VOTING_WINDOW_SECS,
                 min_jury_window_secs: MIN_JURY_WINDOW_SECS,
                 max_jury_window_secs: MAX_JURY_WINDOW_SECS,
-                max_attestation_future_tolerance_secs: MAX_ATTESTATION_FUTURE_TOLERANCE_SECS,
+                max_attest_future_skew_secs: MAX_ATTESTATION_FUTURE_TOLERANCE_SECS,
             }
         );
     }
@@ -6353,7 +6353,7 @@ mod tests {
                 (
                     client.address.clone(),
                     (
-                        Symbol::new(&env, crate::events::ATTESTATION_KEY_REGISTERED),
+                        Symbol::new(&env, "attestation_key_registered"),
                         wallet.clone(),
                     )
                         .into_val(&env),
@@ -6370,7 +6370,7 @@ mod tests {
                 (
                     client.address.clone(),
                     (
-                        Symbol::new(&env, crate::events::ATTESTATION_KEY_REGISTERED),
+                        Symbol::new(&env, "attestation_key_registered"),
                         wallet.clone(),
                     )
                         .into_val(&env),
@@ -9289,6 +9289,7 @@ mod tests {
 
     #[test]
     fn restore_milestone_renews_remaining_ledger_ttl() {
+        use soroban_sdk::testutils::storage::Persistent as _;
         let (env, client) = setup();
         let admin = Address::generate(&env);
         let validator = Address::generate(&env);
@@ -9310,6 +9311,7 @@ mod tests {
 
     #[test]
     fn restore_validator_renews_remaining_ledger_ttl() {
+        use soroban_sdk::testutils::storage::Persistent as _;
         let (env, client) = setup();
         let admin = Address::generate(&env);
         let wallet = Address::generate(&env);

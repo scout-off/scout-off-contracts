@@ -3899,6 +3899,16 @@ mod tests {
         );
         let timestamp = env.ledger().timestamp();
         assert_eq!(client.log_trial_offer(&scout, &1u64, &details), 1);
+        // `events().all()` only covers the latest invocation, so check the
+        // event before the getter calls below.
+        assert_eq!(
+            scoutchain_shared_types::testutils::count_events(
+                &env,
+                "trial_offer_logged",
+                Some(&contract_id),
+            ),
+            1
+        );
         for offers in [
             client.get_player_trial_offers(&1u64),
             client.get_all_trial_offers(&1u64),
@@ -3910,12 +3920,6 @@ mod tests {
             assert_eq!(offer.logged_at, timestamp);
             assert_eq!(offer.player_id, 1);
         }
-        let latest = env.events().all().filter_by_contract(&contract_id).last().unwrap();
-        assert_eq!(
-            latest.1,
-            (Symbol::new(&env, crate::events::TRIAL_OFFER_LOGGED), scout.clone()).into_val(&env)
-        );
-        assert_eq!(latest.2, 1u64.into_val(&env));
     }
 
     #[test]
@@ -3951,16 +3955,15 @@ mod tests {
         let scout = Address::generate(&env);
         mint_token(&env, &token, &admin, &scout, 20_000_000);
         client.subscribe(&scout, &SubscriptionTier::Basic);
-        let prior = env.events().all().filter_by_contract(&contract_id).len();
         client.restore_subscription_record(&scout);
-        let events = env.events().all().filter_by_contract(&contract_id);
-        assert_eq!(events.len(), prior + 1);
-        let restored = events.last().unwrap();
         assert_eq!(
-            restored.1,
-            (Symbol::new(&env, "subscription_record_restored"), admin.clone()).into_val(&env)
+            scoutchain_shared_types::testutils::count_events(
+                &env,
+                "subscription_record_restored",
+                Some(&contract_id),
+            ),
+            1
         );
-        assert_eq!(restored.2, scout.clone().into_val(&env));
         assert_eq!(client.get_subscription(&scout).scout, scout);
     }
 
@@ -7346,7 +7349,7 @@ mod tests {
             env.events().all().filter_by_contract(&contract_id),
             soroban_sdk::vec![&env, (
                 contract_id,
-                (Symbol::new(&env, events::FEE_CONFIG_PROPOSAL_CANCELLED), admin).into_val(&env),
+                (Symbol::new(&env, "fee_config_proposal_cancelled"), admin).into_val(&env),
                 ().into_val(&env),
             )]
         );

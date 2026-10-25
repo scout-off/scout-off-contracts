@@ -724,6 +724,7 @@ const TRIAL_TTL_THRESHOLD: u32 = 259_200;
 const TRIAL_TTL_EXTEND_TO: u32 = 518_400;
 
 fn escrow_ttl(h: &Harness, player_id: u64, index: u32) -> u32 {
+    use soroban_sdk::testutils::storage::Persistent as _;
     h.env.as_contract(&h.scout_access.address, || {
         h.env
             .storage()

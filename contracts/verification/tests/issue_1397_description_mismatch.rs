@@ -124,7 +124,7 @@ fn competing_tally_cannot_double_commit() {
 
     // A competing tally on the same evidence can no longer commit.
     let result = client.try_attest_milestone(&v3, &player, &bogus, &evidence);
-    assert_eq!(result, Err(Ok(VerificationError::EvidenceAlreadyUsed)));
+    assert_eq!(result, Err(Ok(VerificationError::DuplicateEvidence)));
 }
 
 /// Issue #1397 regression: matching descriptions still commit normally.

@@ -137,7 +137,7 @@ pub enum ScoutStatus {
 /// simple `verified: bool` flag with audit evidence so dashboards and future
 /// Sybil-mitigation features can consume the verification detail.
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ScoutVerificationRecord {
     /// Whether the scout is currently verified.
     pub verified: bool,

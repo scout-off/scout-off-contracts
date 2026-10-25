@@ -15,4 +15,5 @@ soroban-sdk = { workspace = true, features = ["testutils"] }
 scoutchain-shared-types = { path = "../shared-types", features = ["testutils"] }
 scoutchain-progress = { path = "../progress" }
 scoutchain-verification = { path = "../verification" }
+scoutchain-scout-access = { path = "../scout_access" }
 ed25519-dalek = { workspace = true }
