@@ -4,10 +4,10 @@ import { app } from "../../src/app";
 import { issueSep10Token } from "../../src/services/sep10";
 import { prisma } from "../../src/db";
 
-const TEST_SECRET = "test-secret";
+import { config } from "../../src/config";
 
-// Point the app at the test secret for every test.
-process.env.JWT_SECRET = TEST_SECRET;
+// The app verifies tokens with the secret src/config loaded at import time.
+const TEST_SECRET = config.jwtSecret;
 
 beforeEach(async () => {
   await prisma.revokedToken.deleteMany();

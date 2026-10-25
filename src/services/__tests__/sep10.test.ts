@@ -10,13 +10,44 @@
 import jwt from "jsonwebtoken";
 import { Keypair, Networks, Transaction } from "@stellar/stellar-sdk";
 
-jest.mock("../../db", () => ({
-  prisma: {
-    revokedToken: { findFirst: jest.fn().mockResolvedValue(null) },
-  },
-}));
+// In-memory stand-in for the single-use challenge store (#1606). updateMany
+// applies its `where` and mutation together, like the conditional UPDATE the
+// real database performs.
+jest.mock("../../db", () => {
+  const challenges = new Map<string, any>();
+  const matches = (row: any, where: any) =>
+    Object.entries(where).every(([k, v]: [string, any]) =>
+      v && typeof v === "object" && "gt" in v ? row[k] > v.gt : row[k] === v
+    );
+  return {
+    prisma: {
+      revokedToken: { findFirst: jest.fn().mockResolvedValue(null) },
+      sep10Challenge: {
+        create: async ({ data }: any) => {
+          challenges.set(data.hash, { consumedAt: null, ...data });
+          return data;
+        },
+        updateMany: async ({ where, data }: any) => {
+          let count = 0;
+          for (const row of challenges.values()) {
+            if (matches(row, where)) {
+              Object.assign(row, data);
+              count++;
+            }
+          }
+          return { count };
+        },
+      },
+    },
+  };
+});
 
-import { issueSep10Token, buildChallengeTx, verifyChallengeTx } from "../sep10";
+import {
+  issueSep10Token,
+  buildChallengeTx,
+  verifyChallengeTx,
+  accessTokenTtlSeconds,
+} from "../sep10";
 
 const SECRET = "test-secret";
 
@@ -32,7 +63,7 @@ afterEach(() => {
 });
 
 function signChallenge(challenge: string, kp: Keypair): string {
-  const tx = new Transaction(challenge, Networks.TESTNET_PASSPHRASE);
+  const tx = new Transaction(challenge, Networks.TESTNET);
   tx.sign(kp);
   return tx.toXDR();
 }
@@ -51,13 +82,14 @@ describe("issueSep10Token", () => {
     expect(decoded.jti).not.toHaveLength(0);
   });
 
-  it("expires after 7 days", () => {
+  it("expires after the access-token lifetime (capped at 15 minutes)", () => {
     const decoded = jwt.verify(
       issueSep10Token({ sub: "G", role: "player" }, SECRET),
       SECRET
     ) as jwt.JwtPayload;
 
-    expect(decoded.exp! - decoded.iat!).toBe(7 * 24 * 60 * 60);
+    expect(decoded.exp! - decoded.iat!).toBe(accessTokenTtlSeconds());
+    expect(accessTokenTtlSeconds()).toBeLessThanOrEqual(15 * 60);
   });
 
   it("uses a unique jti per token", () => {
@@ -70,7 +102,7 @@ describe("issueSep10Token", () => {
 describe("buildChallengeTx / verifyChallengeTx", () => {
   it("verifies a challenge signed by the account it was built for", async () => {
     const clientA = Keypair.random();
-    const signed = signChallenge(buildChallengeTx(clientA.publicKey()), clientA);
+    const signed = signChallenge(await buildChallengeTx(clientA.publicKey()), clientA);
 
     await expect(verifyChallengeTx(signed, clientA.publicKey())).resolves.toBe(
       clientA.publicKey()
@@ -80,14 +112,14 @@ describe("buildChallengeTx / verifyChallengeTx", () => {
   it("rejects a challenge built for A when verified for B", async () => {
     const clientA = Keypair.random();
     const clientB = Keypair.random();
-    const signed = signChallenge(buildChallengeTx(clientA.publicKey()), clientA);
+    const signed = signChallenge(await buildChallengeTx(clientA.publicKey()), clientA);
 
     await expect(verifyChallengeTx(signed, clientB.publicKey())).rejects.toThrow();
   });
 
   it("rejects a challenge after it has expired", async () => {
     const clientA = Keypair.random();
-    const signed = signChallenge(buildChallengeTx(clientA.publicKey()), clientA);
+    const signed = signChallenge(await buildChallengeTx(clientA.publicKey()), clientA);
 
     const later = Date.now() + 60 * 60 * 1000;
     jest.spyOn(Date, "now").mockReturnValue(later);
