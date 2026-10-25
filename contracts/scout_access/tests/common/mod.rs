@@ -20,6 +20,8 @@ pub struct ScoutVerificationRecord {
     pub verified_at: Option<u64>,
     pub evidence_ref: Option<String>,
     pub method: Option<String>,
+    pub revoked_at: Option<u64>,
+    pub revoked_reason: Option<String>,
 }
 
 #[contracttype]
@@ -43,6 +45,7 @@ pub enum StubError {
 #[contracttype]
 enum StubKey {
     PlayerId(Address),
+    Unverified,
 }
 
 #[contract]
@@ -62,6 +65,8 @@ impl RegistrationStub {
                 verified_at: None,
                 evidence_ref: None,
                 method: None,
+                revoked_at: None,
+                revoked_reason: None,
             },
             registered_at: 0,
         }
@@ -69,6 +74,22 @@ impl RegistrationStub {
 
     pub fn is_scout_deactivated(_env: Env, _scout_id: u64) -> bool {
         false
+    }
+
+    pub fn contract_kind(env: Env) -> soroban_sdk::Symbol {
+        soroban_sdk::Symbol::new(&env, "registration")
+    }
+
+    pub fn version(env: Env) -> String {
+        String::from_str(&env, "0.1.0")
+    }
+
+    pub fn is_scout_verified(env: Env, _wallet: Address) -> bool {
+        !env.storage().instance().has(&StubKey::Unverified)
+    }
+
+    pub fn unverify(env: Env) {
+        env.storage().instance().set(&StubKey::Unverified, &true);
     }
 
     pub fn set_player_level(_env: Env, _player_id: u64, _level: ProgressLevel) {}
@@ -112,6 +133,14 @@ pub struct ProgressLevelStub;
 
 #[contractimpl]
 impl ProgressLevelStub {
+    pub fn contract_kind(env: Env) -> soroban_sdk::Symbol {
+        soroban_sdk::Symbol::new(&env, "progress")
+    }
+
+    pub fn version(env: Env) -> String {
+        String::from_str(&env, "0.1.0")
+    }
+
     pub fn get_level(_env: Env, _player_id: u64) -> ProgressLevel {
         ProgressLevel::Unverified
     }

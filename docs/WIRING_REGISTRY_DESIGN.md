@@ -298,3 +298,9 @@ never invokes anything itself.
    enforced at call time — the registry approach would not add additional
    security here. (Unchanged from the original doc — still out of scope; see
    the "No new cross-contract runtime hops" constraint on issue #1041.)
+
+## On-chain peer handshake (#1610)
+
+Every `set_*_contract` / `update_*_contract` setter calls `scoutchain_shared_types::verify_peer(env, addr, expected_kind, min_major)` before `write_wiring_link`. It cross-calls the candidate's read-only `contract_kind()` (`"registration"`, `"verification"`, `"progress"`, `"scout_access"`) and `version()` and rejects the address with `InvalidPeerContract` if it is not a contract, has the wrong kind, or its major version is below `min_major` (currently 0, i.e. any well-formed semver).
+
+Deployment-order rules: only the kind/version check is mandatory, so peers can be wired in any order and back-pointers need not exist yet. The peer must be deployed (and expose `contract_kind`/`version`) before it is wired. Back-pointer (`strict`) verification is not implemented. The handshake runs only on admin wiring calls, never on user paths.

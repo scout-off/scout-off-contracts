@@ -13,11 +13,35 @@ into PostgreSQL for fast querying.  It runs as a separate process from the API.
 | `scouts` | `registration.get_scout` | Scout profiles, region, **verified** flag, **deactivated** flag |
 | `contact_records` | `scout_access.player_contacted` events | Contact audit trail |
 | `trial_offers` | `scout_access.log_trial_offer` events | Trial offer records |
-| `scout_subscriptions` | `scout_access.scout_subscribed` events | Active subscriptions |
+| `scout_subscriptions` | `scout_access.subscription_created` / `subscription_renewed` / `subscription_auto_renewed` events (not the deprecated `scout_subscribed`) | Active subscriptions |
 | `fee_withdrawals` | `scout_access.fees_withdrawn` events | Fee withdrawal audit log |
 | `milestone_flags` | `verification.milestone_flagged` / `milestone_flag_cleared` events | Milestones pending re-review due to for-cause validator revocations |
 | `revocation_records` | `verification.validator_revoked_for_cause` / `revocation_cascade_complete` events | Revoked-validator severity + cascade status |
-| `evidence_access_grants` | `scout_access.get_player_access_grants` | Per-(player, scout) grants: `granted_at`, `expires_at`, `tier_at_grant`, `revoked`, `revoked_at` |
+| `evidence_access_grants` | `scout_access.get_player_access_grants` | Per-(player, scout) grants: `granted_at`, `expires_at`, `tier_at_grant`, `revoked`, `revoked_at`. `evidence_access_renewed` / `evidence_access_reinstated` update the existing row in place (new `expires_at`, `tier_at_grant`; `revoked`/`revoked_at` cleared on reinstate) — never insert a second row |
+
+## How player IDs are enumerated
+
+`registration.get_player_count` returns the **live** count of registered
+players (it is decremented by `deregister_player`), while player IDs come from
+a monotonically-increasing `PlayerCounter` allocator.  Deriving IDs as
+`1..get_player_count()` therefore skips the highest ID after any
+deregistration and probes gaps that never existed.
+
+Instead, the reconciler enumerates player IDs as the **union** of:
+
+1. Every `player_id` present in the indexer DB `players` table, and
+2. Every `player_id` returned by a paged on-chain enumeration of the
+   registration contract's `PlayerIndex`.
+
+This covers every player that exists on-chain or in the DB, including after
+deregistrations (gaps in the ID space are simply not probed).  The enumeration
+runs whenever any per-player table is selected — `players`, `scouts`,
+`contact_records`, `trial_offers`, `scout_subscriptions`, `fee_withdrawals`,
+`milestone_flags`, `revocation_records`, or `evidence_access_grants` — so
+`--tables evidence_access_grants` reconciles grants for every player.
+
+`--sample <n>` caps the number of enumerated IDs walked and must be a positive
+integer; any other value exits with code `2` and an explanatory message.
 
 ## Reconciliation
 
@@ -122,7 +146,7 @@ Useful options:
 | `--network <name>` | Passed to `stellar contract invoke` (default: `testnet`) |
 | `--rpc-url <url>` | Enables the `indexer_cursor` ledger-lag check |
 | `--source <identity>` | Passed as `--source` to `stellar contract invoke`, if your CLI setup requires one for simulation calls |
-| `--sample <n>` | Cap the number of player/scout IDs walked, for a quick spot-check instead of a full sweep |
+| `--sample <n>` | Cap the number of enumerated player/scout IDs walked, for a quick spot-check instead of a full sweep. Must be a positive integer; invalid values exit with code `2` |
 | `--tables <a,b,c>` | Check only a subset of tables (see the table above) |
 | `--json` | Emit the report as JSON instead of text, for feeding into another tool |
 

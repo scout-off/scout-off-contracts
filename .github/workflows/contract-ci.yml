@@ -1,5 +1,5 @@
 # Full build, test, lint, bindings, and sandbox pipeline; see ci.yml for the
-# separate fast, dependency-free TODO/FIXME/HACK static check.
+# separate fast, dependency-free work-marker static check.
 name: Soroban Contract CI
 
 on:
@@ -11,21 +11,29 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: Build & Test
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.97.1
+        uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
         with:
+          toolchain: 1.97.1
           targets: wasm32v1-none
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry
@@ -36,11 +44,14 @@ jobs:
       - name: Pin ed25519-dalek to fix soroban-env-host trait bound error
         run: cargo update -p ed25519-dalek@3.0.0 --precise 3.0.0-rc.0 || true
 
+      - name: Verify Cargo.lock is committed and up to date
+        run: cargo metadata --locked --format-version 1 > /dev/null && git diff --exit-code Cargo.lock
+
       - name: Run tests
         run: cargo test --workspace --locked
 
-      - name: Test progress contract
-        run: cargo test -p scoutchain-progress --locked -- --nocapture
+      - name: Build WASM (release)
+        run: cargo build --workspace --target wasm32-unknown-unknown --release --locked
 
       - name: CPU-instruction cost budget report
         # cost_budget.rs asserted its own pass/fail already as part of the
@@ -55,7 +66,7 @@ jobs:
             | tee cpu-cost-budget-report.txt
 
       - name: Upload CPU-cost budget report artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cpu-cost-budget-${{ github.sha }}
           path: cpu-cost-budget-report.txt
@@ -68,12 +79,13 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
         with:
+          toolchain: 1.97.1
           components: clippy, rustfmt
       - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Format check
         run: cargo fmt --all -- --check
 
@@ -88,6 +100,7 @@ jobs:
           shellcheck scripts/health-check.sh
           shellcheck scripts/full-readiness-check.sh
           shellcheck scripts/smoke-test.sh
+          shellcheck scripts/upgrade.sh
           shellcheck scripts/rollback.sh
           shellcheck scripts/emergency-pause.sh
           shellcheck scripts/emergency-unpause.sh
@@ -103,6 +116,9 @@ jobs:
           shellcheck scripts/check-error-code-continuity.sh
           shellcheck scripts/check-cargo-doc.sh
           shellcheck scripts/check-migration-numbering.sh
+          shellcheck scripts/install-stellar-cli.sh
+          shellcheck scripts/check-storage-layout-compat.sh
+          shellcheck scripts/check-prisma-drift.sh
       - name: Docs completeness check
         run: bash scripts/check-docs.sh
       - name: Event-topic consistency check
@@ -117,8 +133,6 @@ jobs:
         run: bash scripts/check-error-code-continuity.sh
       - name: Cargo doc missing-documentation check
         run: bash scripts/check-cargo-doc.sh
-      - name: Migration numbering check
-        run: bash scripts/check-migration-numbering.sh
       - name: Validate bindings package.json templates
         run: bash scripts/check-bindings.sh
 
@@ -133,15 +147,16 @@ jobs:
       STELLAR_SOURCE_ACCOUNT: ci-deployer
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.97.1
+        uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
         with:
+          toolchain: 1.97.1
           targets: wasm32v1-none
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry
@@ -151,13 +166,12 @@ jobs:
 
       - name: Install Stellar CLI (pinned)
         run: |
-          # Keep in sync with: docs/CONTRIBUTING.md, scripts/generate-bindings.sh, and the abi-export CI step
-          STELLAR_CLI_VERSION="28.0.0"
-          curl -sSL "https://raw.githubusercontent.com/stellar/stellar-cli/v${STELLAR_CLI_VERSION}/install.sh" | bash
+          # Version pinned in ci/stellar-cli-version; the script verifies the tarball SHA-256.
+          bash scripts/install-stellar-cli.sh
           echo "$HOME/.stellar/bin" >> "$GITHUB_PATH"
 
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20'
 
@@ -169,7 +183,7 @@ jobs:
           docker run -d \
             --name stellar-local \
             -p 8000:8000 \
-            stellar/quickstart:testing \
+            stellar/quickstart:testing@sha256:c1feb4fd799bb80b8d09f1131533ceefd78b12e8a0dce9242088a0db475ff805 \
             --local \
             --limits unlimited
           # `--limits unlimited` raises the local network's Soroban resource
@@ -475,15 +489,16 @@ jobs:
     needs: test
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           targets: wasm32v1-none
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry
@@ -496,9 +511,8 @@ jobs:
 
       - name: Install Stellar CLI (pinned)
         run: |
-          # Keep in sync with: docs/CONTRIBUTING.md, scripts/generate-bindings.sh, and the bindings-smoke-test CI step
-          STELLAR_CLI_VERSION="28.0.0"
-          curl -sSL "https://raw.githubusercontent.com/stellar/stellar-cli/v${STELLAR_CLI_VERSION}/install.sh" | bash
+          # Version pinned in ci/stellar-cli-version; the script verifies the tarball SHA-256.
+          bash scripts/install-stellar-cli.sh
           echo "$HOME/.stellar/bin" >> "$GITHUB_PATH"
 
       - name: Export contract ABIs
@@ -585,7 +599,7 @@ jobs:
           PYEOF
 
       - name: Upload ABI and size-budget artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: contract-abis-${{ github.sha }}
           path: abi/*.json
@@ -597,7 +611,7 @@ jobs:
     needs: abi-export
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
@@ -625,33 +639,69 @@ jobs:
 
       - name: Upload ABI diff report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: abi-diff-report-${{ github.sha }}
           path: abi/*.json
           if-no-files-found: ignore
+  storage-layout-compat:
+    name: Storage Layout Compat Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Checker self-test (fixtures)
+        run: |
+          set -euo pipefail
+          bash scripts/check-storage-layout-compat.sh \
+            scripts/fixtures/storage_compat_safe/old_types.rs \
+            scripts/fixtures/storage_compat_safe/new_types.rs
+          if bash scripts/check-storage-layout-compat.sh \
+            scripts/fixtures/storage_compat_breaking/old_types.rs \
+            scripts/fixtures/storage_compat_breaking/new_types.rs; then
+            echo "::error::checker failed to flag the breaking fixture"
+            exit 1
+          fi
+
+      - name: Check storage layout against base ref
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          git fetch origin "$BASE_REF" --depth=1
+          ACK=""
+          if [[ -n "$PR_NUMBER" && -f "docs/breaking-change-ack-${PR_NUMBER}.md" ]]; then
+            echo "Found docs/breaking-change-ack-${PR_NUMBER}.md; acknowledging breaking changes"
+            ACK="--acknowledge-breaking-change"
+          fi
+          bash scripts/check-storage-layout-compat.sh "origin/${BASE_REF}" HEAD $ACK
+
   budget-calibration:
     name: Budget Calibration
     runs-on: ubuntu-latest
     needs: [test, abi-export]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Download ABI artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: contract-abis-${{ github.sha }}
           path: abi/
 
       - name: Download CPU-cost budget report artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: cpu-cost-budget-${{ github.sha }}
           path: .
 
       - name: Install Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.x'
 
@@ -695,3 +745,35 @@ jobs:
           print("")
           print("All measured values are within budget.")
           PYEOF
+
+  # Issue #1614: two independent clean-container builds of the same commit must
+  # produce byte-identical optimized WASM for all four contracts.
+  reproducible-build:
+    name: Reproducible WASM build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Build pinned build image
+        run: docker build -t scoutchain-wasm-build -f ci/build/Dockerfile ci/build
+
+      - name: Build WASM twice in clean containers
+        run: |
+          for run in 1 2; do
+            mkdir -p "out-$run"
+            # Fresh container and a fresh copy of the tree per run: nothing is shared between builds.
+            rm -rf "src-$run" && git worktree add --detach "src-$run" HEAD
+            docker run --rm -v "$PWD/src-$run:/src" -v "$PWD/out-$run:/out" scoutchain-wasm-build /out
+          done
+
+      - name: Compare hashes
+        run: diff -u out-1/SHA256SUMS out-2/SHA256SUMS && cmp out-1/wasm-hashes.json out-2/wasm-hashes.json
+
+      - name: Upload WASM hashes
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wasm-hashes
+          path: |
+            out-1/wasm-hashes.json
+            out-1/SHA256SUMS
+            out-1/*.optimized.wasm

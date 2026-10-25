@@ -25,7 +25,7 @@ category into one place so a migration operator has a single checklist.
 | 2 | **Player profiles** | `registration` | ✅ Fully replayable | `replay-state.sh` exports player payloads via `get_player_count`/`get_player` and re-seeds them through `admin_seed_player`, which bypasses the wallet-auth requirement of `register_player`. The exported payload includes the resolved `level` field from the progress contract. | — |
 | 3 | **Scout profiles** | `registration` | ✅ Fully replayable | Same path as players: `get_scout_count`/`get_scout` → `admin_seed_scout`. | — |
 | 4 | **Player progress levels** | `progress` | ✅ Fully replayable | The `level` field is captured in the player export (see row 2) and written via `admin_seed_player` on the new registration contract, then synced to the new progress contract by the cross-contract `set_player_level` call that `admin_seed_player` triggers. | — |
-| 5 | **Progress history entries** | `progress` | ✅ Fully replayable | `replay-state.sh` exports every old history entry, seeds it in order through `admin_seed_history`, and verifies the old Merkle root on the final entry. | — |
+| 5 | **Progress history entries** | `progress` | ✅ Fully replayable | `replay-state.sh` exports every old history entry, seeds it in order through `admin_seed_history`, and verifies the old Merkle root on the final entry. Which keys a seed must write: [PROGRESS_HISTORY_STORAGE.md](PROGRESS_HISTORY_STORAGE.md). | — |
 | 6 | **Milestone records** | `verification` | ✅ Fully replayable | `replay-state.sh` replays every milestone through `admin_seed_milestone`, rebuilding evidence, counters, global, and validator indexes. | — |
 | 7 | **In-flight milestone disputes** | `verification` | ✅ Fully replayable | `replay-state.sh` enumerates each old milestone's dispute and replays it through `admin_seed_dispute`, rebuilding all dispute indexes and counts. | — |
 | 8 | **Scout subscriptions** | `scout_access` | ✅ Fully replayable | `replay-state.sh` replays each active subscription through `admin_seed_subscription`, rebuilding tier and expiry indexes. XLM balances remain on-chain. | — |
@@ -94,3 +94,20 @@ Cross-linked from:
 
 - [docs/DEPLOYMENT.md — Address migration](DEPLOYMENT.md#address-migration-new-contract-id)
 - [docs/INDEXER.md — Known gaps](INDEXER.md#known-gaps-between-the-contracts-and-this-schema)
+
+## `admin_seed_history` validation rules (#1617)
+
+Each seeded entry is validated before it is written; violations write nothing:
+
+- `entry.player_id` must equal the target `player_id` (`SeedPlayerMismatch`).
+- `entry.old_level` must equal the previous entry's `new_level`
+  (`Unverified` for index 1) (`SeedLevelDiscontinuity`). Reset entries
+  (`milestone_ref == 0`) may jump `new_level` freely, but their `old_level`
+  must still continue the chain.
+- `updated_at` and `ledger_sequence` must be non-decreasing
+  (`SeedTimestampRegression`).
+
+## Migration window and seeding rules
+
+- **open → seed → close is one-way.** `close_migration_window` (progress, verification, scout_access) is only valid while the window is open; calling it before `open_migration_window`, or twice, fails with `MigrationNotActive` and changes nothing. A successful close permanently seals the window.
+- **Wallet uniqueness.** `registration.admin_seed_player` / `admin_seed_scout` (and the `redeem_migration_*` paths that delegate to them) fail with `AlreadyRegistered` and write nothing when the wallet already maps to a player/scout ID, whether seeded or organically registered. Re-seeding an existing ID is likewise rejected.

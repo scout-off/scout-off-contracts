@@ -1,140 +1,97 @@
 /**
  * src/services/__tests__/sep10.test.ts
  *
- * Unit tests for issueSep10Token / verifySep10Token.
- * Covers: expired token, wrong issuer, wrong audience, and happy path.
+ * Unit tests for the SEP-10 service: JWT issuance claims/expiry and the
+ * challenge build/verify round-trip.
  *
  * Run with: npx jest src/services/__tests__/sep10.test.ts
  */
 
 import jwt from "jsonwebtoken";
-import {
-  issueSep10Token,
-  verifySep10Token,
-  getJwtConfig,
-} from "../sep10.js";
+import { Keypair, Networks, Transaction } from "@stellar/stellar-sdk";
 
-const VALID_ADDRESS = "GABC1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ123456";
+jest.mock("../../db", () => ({
+  prisma: {
+    revokedToken: { findFirst: jest.fn().mockResolvedValue(null) },
+  },
+}));
 
-// ---------------------------------------------------------------------------
-// Helper — sign a token that fails in specific ways
-// ---------------------------------------------------------------------------
+import { issueSep10Token, buildChallengeTx, verifyChallengeTx } from "../sep10";
 
-function signCustom(
-  overrides: {
-    secret?: string;
-    iss?: string;
-    aud?: string;
-    expiresIn?: number;
-    sub?: string;
-  } = {}
-): string {
-  const config = getJwtConfig();
-  return jwt.sign(
-    { sub: overrides.sub ?? VALID_ADDRESS },
-    overrides.secret ?? config.secret,
-    {
-      expiresIn: overrides.expiresIn ?? config.ttlSeconds,
-      issuer: overrides.iss ?? config.issuer,
-      audience: overrides.aud ?? config.audience,
-    }
-  );
+const SECRET = "test-secret";
+
+beforeAll(() => {
+  process.env.SEP10_SIGNING_SECRET = Keypair.random().secret();
+  process.env.HOME_DOMAIN = "scoutoff.test";
+  process.env.WEB_AUTH_DOMAIN = "auth.scoutoff.test";
+  process.env.STELLAR_NETWORK = "testnet";
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
+});
+
+function signChallenge(challenge: string, kp: Keypair): string {
+  const tx = new Transaction(challenge, Networks.TESTNET_PASSPHRASE);
+  tx.sign(kp);
+  return tx.toXDR();
 }
 
-// ---------------------------------------------------------------------------
-// Happy path
-// ---------------------------------------------------------------------------
+describe("issueSep10Token", () => {
+  it("includes jti, sub and role claims", () => {
+    const sub = Keypair.random().publicKey();
+    const decoded = jwt.verify(
+      issueSep10Token({ sub, role: "scout" }, SECRET),
+      SECRET
+    ) as jwt.JwtPayload;
 
-describe("issueSep10Token / verifySep10Token — happy path", () => {
-  it("issues and verifies a valid token", () => {
-    const token = issueSep10Token(VALID_ADDRESS);
-    const payload = verifySep10Token(token);
-
-    expect(payload.sub).toBe(VALID_ADDRESS);
-    expect(payload.iss).toBe(getJwtConfig().issuer);
-    expect(payload.aud).toBe(getJwtConfig().audience);
-    expect(payload.exp).toBeGreaterThan(Date.now() / 1000);
+    expect(decoded.sub).toBe(sub);
+    expect(decoded.role).toBe("scout");
+    expect(typeof decoded.jti).toBe("string");
+    expect(decoded.jti).not.toHaveLength(0);
   });
 
-  it("encodes the stellar address as sub", () => {
-    const address = "GBXYZ9999999999999999999999999999999999999999999999999";
-    const token = issueSep10Token(address);
-    const payload = verifySep10Token(token);
-    expect(payload.sub).toBe(address);
+  it("expires after 7 days", () => {
+    const decoded = jwt.verify(
+      issueSep10Token({ sub: "G", role: "player" }, SECRET),
+      SECRET
+    ) as jwt.JwtPayload;
+
+    expect(decoded.exp! - decoded.iat!).toBe(7 * 24 * 60 * 60);
   });
-});
 
-// ---------------------------------------------------------------------------
-// Rejection: expired token
-// ---------------------------------------------------------------------------
-
-describe("verifySep10Token — expired token", () => {
-  it("throws TokenExpiredError for a token with expiresIn: 0", () => {
-    // Set exp to 1 second in the past by setting expiresIn to -1
-    const expiredToken = jwt.sign(
-      { sub: VALID_ADDRESS },
-      getJwtConfig().secret,
-      {
-        expiresIn: -1, // already expired
-        issuer: getJwtConfig().issuer,
-        audience: getJwtConfig().audience,
-      }
-    );
-
-    expect(() => verifySep10Token(expiredToken)).toThrow(
-      jwt.TokenExpiredError
-    );
+  it("uses a unique jti per token", () => {
+    const a = jwt.decode(issueSep10Token({ sub: "G", role: "p" }, SECRET)) as jwt.JwtPayload;
+    const b = jwt.decode(issueSep10Token({ sub: "G", role: "p" }, SECRET)) as jwt.JwtPayload;
+    expect(a.jti).not.toBe(b.jti);
   });
 });
 
-// ---------------------------------------------------------------------------
-// Rejection: wrong issuer
-// ---------------------------------------------------------------------------
+describe("buildChallengeTx / verifyChallengeTx", () => {
+  it("verifies a challenge signed by the account it was built for", async () => {
+    const clientA = Keypair.random();
+    const signed = signChallenge(buildChallengeTx(clientA.publicKey()), clientA);
 
-describe("verifySep10Token — wrong issuer", () => {
-  it("throws JsonWebTokenError when iss does not match", () => {
-    const token = signCustom({ iss: "some-other-service" });
-
-    expect(() => verifySep10Token(token)).toThrow(jwt.JsonWebTokenError);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Rejection: wrong audience
-// ---------------------------------------------------------------------------
-
-describe("verifySep10Token — wrong audience", () => {
-  it("throws JsonWebTokenError when aud does not match", () => {
-    const token = signCustom({ aud: "wrong-audience" });
-
-    expect(() => verifySep10Token(token)).toThrow(jwt.JsonWebTokenError);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Rejection: bad signature
-// ---------------------------------------------------------------------------
-
-describe("verifySep10Token — bad signature", () => {
-  it("throws JsonWebTokenError when signed with a different secret", () => {
-    const token = signCustom({ secret: "totally-different-secret" });
-
-    expect(() => verifySep10Token(token)).toThrow(jwt.JsonWebTokenError);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// issueSep10Token — input validation
-// ---------------------------------------------------------------------------
-
-describe("issueSep10Token — input validation", () => {
-  it("throws if stellarAddress does not start with G", () => {
-    expect(() => issueSep10Token("notastellaraddress")).toThrow(
-      /valid Stellar G-address/
+    await expect(verifyChallengeTx(signed, clientA.publicKey())).resolves.toBe(
+      clientA.publicKey()
     );
   });
 
-  it("throws if stellarAddress is empty string", () => {
-    expect(() => issueSep10Token("")).toThrow(/valid Stellar G-address/);
+  it("rejects a challenge built for A when verified for B", async () => {
+    const clientA = Keypair.random();
+    const clientB = Keypair.random();
+    const signed = signChallenge(buildChallengeTx(clientA.publicKey()), clientA);
+
+    await expect(verifyChallengeTx(signed, clientB.publicKey())).rejects.toThrow();
+  });
+
+  it("rejects a challenge after it has expired", async () => {
+    const clientA = Keypair.random();
+    const signed = signChallenge(buildChallengeTx(clientA.publicKey()), clientA);
+
+    const later = Date.now() + 60 * 60 * 1000;
+    jest.spyOn(Date, "now").mockReturnValue(later);
+
+    await expect(verifyChallengeTx(signed, clientA.publicKey())).rejects.toThrow();
   });
 });

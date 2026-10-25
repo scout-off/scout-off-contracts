@@ -27,6 +27,10 @@ until an operator deliberately opts into k-of-n mode.
   attestation](CONTRACT_REFERENCE.md#k-of-n-threshold-milestone-attestation)
   for the full design rationale (claim identity, bounded storage, revoke-mid-vote
   and window-expiry semantics).
+- If a revocation leaves fewer active validators than an open claim's snapshotted
+  threshold, the round is aborted (votes deleted, `attestation_round_aborted`
+  emitted) so the evidence can be re-attested; `is_pending_claim_reachable`
+  reports reachability (issue #1613).
 - Relevant functions: `attest_milestone`, `submit_attested_milestone`,
   `set_milestone_threshold`, `get_milestone_threshold`, `get_pending_claim`,
   `has_attested` — see
@@ -153,7 +157,7 @@ adjustable via `update_fee_config`.
 | `sub_duration_secs` | `u64` | duration in seconds (not a Unix timestamp) | > 0 | `2592000` (30 days) |
 | `pro_contact_limit` | `u32` | count | > 0 | `10` (10 contacts/period) |
 | `trial_offer_escrow_stroops` | `i128` | stroops | > 0 | `500000` (0.05 XLM) |
-| `trial_offer_expiry_secs` | `u64` | duration in seconds | > 0 | `3600` (1 hour) |
+| `trial_offer_expiry_secs` | `u64` | duration in seconds | 3600 – 2592000 when escrow > 0 | `3600` (1 hour) |
 
 All fields must be strictly greater than zero; `initialize` and
 `update_fee_config` return `InvalidInput` otherwise.

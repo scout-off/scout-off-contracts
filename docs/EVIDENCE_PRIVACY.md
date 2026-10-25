@@ -136,12 +136,28 @@ who can call them and the error they return on a no-op:
   `player_id`, the call is rejected with `PlayerNotVerified` (code 40).
 - Sets `revoked = true` and `revoked_at`, but **never deletes the grant
   record** — the audit trail stays intact.
-- Emits `evidence_access_revoked_by_player`.
+- Emits `evidence_revoked_by_player`.
 - **Does not** silently no-op on an already-revoked grant: it returns
   `GrantAlreadyRevoked` (code 39), so the player's frontend can surface a
   "this access was already revoked" message instead of silently succeeding.
 - **Returns `GrantNotFound`** (code 38) if no grant was ever issued for
   `(player_id, scout)`.
+
+**Renewal and reinstatement (#1607)** — grants are updated in place, never
+re-enumerated, so `get_player_access_grants` never lists a scout twice.
+
+- `renew_evidence_access(scout, player_id)` — the scout pays `contact_fee_stroops`
+  (added to `AccumulatedFees`) to extend an **expired, non-revoked** grant by 90
+  days. Requires an active subscription, a tier that may access the player's
+  level and an existing `ContactRecord`. It does **not** count toward the Pro
+  contact quota (no new player is contacted). Emits `evidence_access_renewed`.
+  Errors: `GrantNotExpired`, `GrantAlreadyRevoked`, `ContactNotFound`.
+- `reinstate_evidence_access(player, player_id, scout)` — the player re-approves
+  a grant they revoked. Only the player's authorization is required (ownership
+  verified via the registration contract); no scout consent and no fee, since
+  the scout already paid for the contact. Sets a fresh 90-day expiry and emits
+  `evidence_access_reinstated`. Errors: `GrantNotRevoked`, `PlayerNotVerified`,
+  `GrantAdminRevoked` (an admin takedown cannot be undone by the player).
 
 > **Caveat — revocation only gates future key-wrap requests.** Per "Contract
 > scope" above, the smart contracts never receive plaintext media, raw
@@ -164,3 +180,25 @@ private by adding an on-chain flag. Treat them as legacy public evidence. To
 migrate, encrypt the original media, upload the ciphertext under a new CID,
 and publish the replacement through an application-level evidence-versioning
 workflow; do not overwrite historical approval records.
+
+## Scout erasure (GDPR, issue #1641)
+
+`registration.deregister_scout(scout_id)` (admin only) is the scout
+counterpart of `deregister_player`. It removes `Scout(id)`,
+`ScoutByWallet(wallet)` and `ScoutDeactivated(id)`, decrements
+`LiveScoutCount`, and emits `scout_deregistered`. `ScoutRegLastSent` is kept so
+the per-wallet registration cooldown still applies.
+
+Cross-contract consequences:
+
+- **scout_access fails closed.** Once the registration contract is wired,
+  a wallet with no scout profile (never registered, or erased) is rejected
+  with `ScoutNotRegistered` by `subscribe`, `pay_to_contact`,
+  `batch_contact_players`, `log_trial_offer` and the other paths that
+  previously degraded gracefully on "scout not found".
+- **Retained in scout_access:** `Subscription(wallet)`, `ContactRecord`s and
+  `EvidenceAccessGrant`s are keyed by wallet and are part of the append-only
+  payment / access audit trail; they are not erased. They contain no profile
+  data beyond the wallet address.
+- **Indexer:** on `scout_deregistered` delete the `scouts` row
+  (see `migrations/013_scout_deregistration.sql`).

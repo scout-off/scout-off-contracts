@@ -18,7 +18,11 @@
 # Usage:
 #   ./scripts/upgrade.sh --contract <id> --wasm <path> [--network <net>]
 #                        [--target <version>] [--max-items <n>]
-#                        [--max-iterations <n>]
+#                        [--max-iterations <n>] [--source <identity>]
+#                        [--allow-cli-mismatch]
+#
+# --source defaults to $UPGRADE_SOURCE. Contracts without schema_version/migrate
+# are upgraded and the migration phase is skipped (exit 0).
 
 set -euo pipefail
 
@@ -28,6 +32,8 @@ NETWORK="testnet"
 TARGET_VERSION=""
 MAX_ITEMS=100
 MAX_ITERATIONS=50
+SOURCE="${UPGRADE_SOURCE:-}"
+ALLOW_CLI_MISMATCH=0
 
 usage() {
   sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
@@ -42,6 +48,8 @@ while [[ $# -gt 0 ]]; do
     --target)          TARGET_VERSION="${2:-}"; shift 2 ;;
     --max-items)       MAX_ITEMS="${2:-}"; shift 2 ;;
     --max-iterations)  MAX_ITERATIONS="${2:-}"; shift 2 ;;
+    --source)          SOURCE="${2:-}"; shift 2 ;;
+    --allow-cli-mismatch) ALLOW_CLI_MISMATCH=1; shift ;;
     -h|--help)         usage ;;
     *) echo "Unknown argument: $1" >&2; usage ;;
   esac
@@ -49,6 +57,11 @@ done
 
 if [[ -z "$CONTRACT_ID" || -z "$WASM_PATH" ]]; then
   echo "ERROR: --contract and --wasm are required." >&2
+  usage
+fi
+
+if [[ -z "$SOURCE" ]]; then
+  echo "ERROR: --source <identity> or UPGRADE_SOURCE is required." >&2
   usage
 fi
 
@@ -61,6 +74,10 @@ if ! command -v stellar >/dev/null 2>&1; then
   echo "ERROR: stellar CLI not found on PATH." >&2
   exit 1
 fi
+
+# shellcheck source=lib/check-stellar-cli.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/check-stellar-cli.sh"
+check_stellar_cli_version "$ALLOW_CLI_MISMATCH"
 
 # Read a single u32 out of an invoke result. `stellar contract invoke --output
 # json` wraps the value in {"result": ...}, and the result is itself a JSON
@@ -96,26 +113,26 @@ BEFORE=$(stellar contract invoke --id "$CONTRACT_ID" --network "$NETWORK" \
 echo "==> Schema version before upgrade: ${BEFORE:-unknown}"
 
 echo "==> Uploading WASM..."
-stellar contract upload --wasm "$WASM_PATH" --network "$NETWORK"
-
-WASM_HASH=$(stellar contract upload --wasm "$WASM_PATH" --network "$NETWORK" --source admin 2>/dev/null \
-  | grep -oE '[a-f0-9]{64}' | head -1 || true)
-
-if [[ -z "$WASM_HASH" ]]; then
-  # Older CLI shapes print the hash only once; fall back to parsing the upload
-  # output rather than failing the whole upgrade on a formatting difference.
-  WASM_HASH=$(stellar contract upload --wasm "$WASM_PATH" --network "$NETWORK" 2>&1 \
-    | grep -oE '[a-f0-9]{64}' | head -1 || true)
-fi
+UPLOAD_OUT=$(stellar contract upload --wasm "$WASM_PATH" --network "$NETWORK" --source "$SOURCE" 2>&1)
+WASM_HASH=$(printf '%s\n' "$UPLOAD_OUT" | grep -oE '[a-f0-9]{64}' | tail -1 || true)
 
 if [[ -z "$WASM_HASH" ]]; then
   echo "ERROR: could not determine the uploaded WASM hash." >&2
+  printf '%s\n' "$UPLOAD_OUT" >&2
   exit 1
 fi
 
 echo "==> Upgrading to WASM $WASM_HASH"
-stellar contract invoke --id "$CONTRACT_ID" --network "$NETWORK" --source admin \
+stellar contract invoke --id "$CONTRACT_ID" --network "$NETWORK" --source "$SOURCE" \
   -- upgrade "$WASM_HASH"
+
+# Only the progress contract (and any contract that adds it later) exposes
+# schema_version/migrate. Probe the upgraded code and skip cleanly if absent.
+if ! stellar contract invoke --id "$CONTRACT_ID" --network "$NETWORK" \
+  --output json -- schema_version >/dev/null 2>&1; then
+  echo "==> Contract has no schema_version/migrate; upgrade complete, skipping migration."
+  exit 0
+fi
 
 # With no explicit target, migrate to whatever the running code expects. The
 # contract reports that as `code`, but that is only available after a migrate
@@ -128,7 +145,7 @@ echo "==> Driving migration to version $TARGET (max $MAX_ITEMS items per call)"
 COMPLETE="false"
 for (( i = 1; i <= MAX_ITERATIONS; i++ )); do
   RESULT=$(stellar contract invoke --id "$CONTRACT_ID" --network "$NETWORK" \
-    --source admin --output json -- migrate "$TARGET" "$MAX_ITEMS" 2>/dev/null || echo "")
+    --source "$SOURCE" --output json -- migrate "$TARGET" "$MAX_ITEMS" 2>/dev/null || echo "")
 
   COMPLETE=$(printf '%s' "$RESULT" | python3 -c '
 import json, sys
@@ -147,8 +164,6 @@ if isinstance(value, str):
         pass
 print(str(bool(value.get("complete"))).lower() if isinstance(value, dict) else "false")
 ')
-
-  CURSOR=$(printf '%s' "$RESULT" | read_u32)
 
   echo "    iteration ${i}: complete=${COMPLETE}"
   if [[ "$COMPLETE" == "true" ]]; then

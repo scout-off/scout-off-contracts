@@ -18,6 +18,10 @@
 #   4. docs/CONTRACT_REFERENCE.md has a dedicated `confirm_trial_offer` doc
 #      entry (heading), and its `log_trial_offer` entry no longer claims to
 #      call `advance_level`.
+#   5. The rustdoc comment on `log_trial_offer` in lib.rs does not claim it
+#      calls `progress.advance_level` (issue #1677), and the doc comment on
+#      `confirm_trial_offer` is separated from `log_trial_offer`'s body by a
+#      blank line.
 #
 # Exit codes:
 #   0 — docs and source agree
@@ -72,6 +76,27 @@ def function_bodies(src, fn_name):
             i += 1
     return bodies
 
+def preceding_doc_comment(src, fn_name):
+    """Return the contiguous `///` doc-comment block immediately preceding the
+    first `pub fn <fn_name>(` definition, or None if there is none."""
+    m = re.search(r'\bpub fn\s+' + re.escape(fn_name) + r'\s*\(', src)
+    if not m:
+        return None
+    lines = src[:m.start()].split('\n')
+    # Drop the trailing empty string produced by the final newline.
+    if lines and lines[-1] == '':
+        lines.pop()
+    doc = []
+    for line in reversed(lines):
+        stripped = line.strip()
+        if stripped.startswith('///'):
+            doc.append(stripped)
+        else:
+            break
+    if not doc:
+        return None
+    return '\n'.join(reversed(doc))
+
 # ---------------------------------------------------------------------------
 # 1. log_trial_offer must NOT call advance_level directly.
 # ---------------------------------------------------------------------------
@@ -105,6 +130,40 @@ elif not any("advance_level" in body for body in confirm_bodies):
           "the function that advances the player to Level 3. If level advancement moved "
           "elsewhere, update README.md, ai.md, and docs/CONTRACT_REFERENCE.md to match.")
     errors += 1
+
+# ---------------------------------------------------------------------------
+# 5. Rustdoc drift: log_trial_offer's doc comment must not claim it calls
+#    progress.advance_level (issue #1677).
+# ---------------------------------------------------------------------------
+log_doc = preceding_doc_comment(lib_src, "log_trial_offer")
+if log_doc is None:
+    print("FAIL: `log_trial_offer` has no rustdoc comment — it must document its "
+          "preconditions, effects, and errors (issue #1677).")
+    errors += 1
+else:
+    if re.search(r'advance_level', log_doc):
+        print("FAIL: `log_trial_offer`'s rustdoc comment mentions `advance_level` — "
+              "level advancement happens in `confirm_trial_offer`, not here. "
+              "Update the doc comment to describe the two-step escrow flow.")
+        errors += 1
+
+# ---------------------------------------------------------------------------
+# 5b. Formatting: a blank line must separate log_trial_offer's body from the
+#     doc comment of confirm_trial_offer.
+# ---------------------------------------------------------------------------
+if log_bodies and confirm_bodies:
+    log_end = lib_src.find(log_bodies[0]) + len(log_bodies[0])
+    confirm_m = re.search(r'\bpub fn\s+confirm_trial_offer\s*\(', lib_src)
+    if confirm_m and confirm_m.start() > log_end:
+        between = lib_src[log_end:confirm_m.start()]
+        # Strip the trailing doc-comment block of confirm_trial_offer.
+        between_lines = between.split('\n')
+        while between_lines and between_lines[-1].strip().startswith('///'):
+            between_lines.pop()
+        if between_lines and between_lines[-1].strip() != '':
+            print("FAIL: no blank line between `log_trial_offer`'s body and the "
+                  "doc comment of `confirm_trial_offer` — add one for readability.")
+            errors += 1
 
 # ---------------------------------------------------------------------------
 # 3. README's Level 2 -> Level 3 transition row must mention confirm_trial_offer.
@@ -170,11 +229,10 @@ else:
         errors += 1
 
 if errors == 0:
-    print("OK: trial-offer flow docs (README.md, docs/CONTRACT_REFERENCE.md) agree with "
-          "contracts/scout_access/src/lib.rs — log_trial_offer escrows only, "
-          "confirm_trial_offer is the sole caller of advance_level.")
+    print("OK: trial-offer flow docs (README.md, docs/CONTRACT_REFERENCE.md) and "
+          "rustdoc on log_trial_offer agree with contracts/scout_access/src/lib.rs.")
     sys.exit(0)
 else:
-    print(f"\nFAIL: {errors} trial-offer flow doc/source mismatch(es) found.")
+    print(f"\n{errors} inconsistency(ies) found.")
     sys.exit(1)
 PYEOF

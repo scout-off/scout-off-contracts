@@ -38,6 +38,21 @@ model RevokedToken {
 This ensures that Prisma-generated queries target the correct table name
 regardless of the Prisma model name.
 
+Column names follow the same rule: keep camelCase field names in Prisma and map
+each to its snake_case column with `@map` (e.g. `createdAt ... @map("created_at")`),
+and carry over the SQL types with `@db.*` (`@db.VarChar(n)`, `@db.SmallInt`,
+`@db.Timestamptz(6)`; `BIGINT` is `BigInt`, `TEXT[]` is `String[]`).
+
+### Adding a column
+
+1. Write the SQL migration first (next `NNN_*.sql`, idempotent).
+2. Add the matching field to the model in `prisma/schema.prisma` with the
+   `@map` / `@db.*` attributes above.
+3. Run `scripts/check-prisma-drift.sh` against an empty Postgres database
+   (`DATABASE_URL=...`). It applies `migrations/*.sql` in order and runs
+   `prisma migrate diff` against the schema, failing on any difference for a
+   modeled table. CI runs it as the `prisma-drift` job.
+
 ## Naming and numbering convention
 
 Files must be named `NNN_description.sql` where `NNN` is a zero-padded
@@ -103,6 +118,7 @@ deployment guide.
 | `010_deactivated_scout.sql` | `deactivated` column on `scouts` |
 | `011_admins.sql` | `admins` table of addresses authorised for admin operations |
 | `012_dispute_rounds.sql` | Dispute rounds (#1396): `round` / `resolved_at_unix` on `milestone_disputes` and `round` on `dispute_votes`, with round-aware unique keys |
+| `014_sep10_sessions.sql` | SEP-10 session model (#1606): `sep10_challenges` (single-use challenge store) and `refresh_tokens` (rotating refresh tokens) |
 
 ## Related documentation
 

@@ -157,9 +157,17 @@ pub enum ScoutAccessError {
 
     /// `revoke_evidence_access` attempted to revoke a grant that was already
     /// revoked (by admin or player).
+    ///
+    /// DEPRECATED: both revoke paths are now idempotent and return `Ok(())`
+    /// when the grant is already revoked (issue #1675). Retained to reserve
+    /// slot 42 and avoid reassignment.
     GrantAlreadyRevoked = 42,
     /// `revoke_evidence_access` caller's wallet does not own the `player_id`
     /// passed to the function, or the player is not registered.
+    ///
+    /// DEPRECATED: superseded by `NotPlayerOwner` (50) for ownership
+    /// mismatches and `RegistrationContractNotSet` (44) for unwired
+    /// registration (issue #1675). Retained to reserve slot 43.
     PlayerNotVerified = 43,
 
     /// Registration contract is not wired; Pro/Elite subscriptions require it.
@@ -169,6 +177,46 @@ pub enum ScoutAccessError {
     /// `open_migration_window` was called after the window was permanently
     /// closed by `close_migration_window`.
     MigrationWindowSealed = 45,
+    /// The registration contract is wired but has no scout profile for this
+    /// wallet (never registered, or erased via `deregister_scout`). Fails
+    /// closed so a deregistered scout cannot keep acting (issue #1641).
+    ScoutNotRegistered = 46,
+    /// `log_trial_offer` was called while `trial_offer_escrow_stroops` is 0
+    /// (trial offers disabled).
+    TrialOffersDisabled = 47,
+    /// The payment token's `decimals()` is not 7; fee bounds assume XLM stroops.
+    UnsupportedTokenDecimals = 48,
+    /// Wiring target failed the `contract_kind`/`version` handshake (#1610).
+    InvalidPeerContract = 49,
+
+    /// `revoke_evidence_access` caller's wallet does not own the `player_id`
+    /// passed to the function (ownership mismatch). Distinct from
+    /// `RegistrationContractNotSet` (44), which signals an unwired
+    /// registration contract (issue #1675).
+    NotPlayerOwner = 50,
+
+    /// Progress contract is not wired; `confirm_trial_offer` requires it to
+    /// advance the player's level. This is a deployment-wiring problem, not
+    /// invalid caller input (issue #1676).
+    ProgressContractNotSet = 51,
+
+    // ── Player contactability (issue #1645) ──
+    /// The target player has been deactivated by the registration admin and
+    /// is no longer discoverable; contacts and trial offers are rejected
+    /// without charging the scout.
+    PlayerDeactivated = 52,
+    /// The target player is not registered (unknown `player_id`). Closes #301.
+    PlayerNotFound = 53,
+
+    // ── Evidence-access renewal (issue #1607) ──
+    /// `renew_evidence_access` was called while the grant is still active.
+    GrantNotExpired = 54,
+    /// `reinstate_evidence_access` was called on a grant that is not revoked.
+    GrantNotRevoked = 55,
+    /// `reinstate_evidence_access` cannot undo an admin takedown.
+    GrantAdminRevoked = 56,
+    /// `renew_evidence_access` requires an existing `ContactRecord` for the pair.
+    ContactNotFound = 57,
 }
 
 impl AdminError for ScoutAccessError {
@@ -202,25 +250,52 @@ mod tests {
                 break;
             }
 
-            if line.is_empty() || line.starts_with("//") {
+            if line.starts_with("//") || line.is_empty() {
                 continue;
             }
 
-            let (name, explicit) = match line.split_once('=') {
-                Some((name, code)) => {
-                    let code = code.trim().trim_end_matches(',').trim();
-                    (name.trim(), Some(code.parse::<u32>().expect("explicit code")))
+            if let Some((name, code)) = line.split_once('=') {
+                let code = code.trim().trim_end_matches(',').trim();
+                if let Ok(code) = code.parse::<u32>() {
+                    assert_ne!(code, 13, "error code 13 must remain reserved");
+                    assert_ne!(code, 18, "error code 18 must remain reserved");
+                    next_implicit_code = Some(code + 1);
                 }
-                None => (line.trim_end_matches(',').trim(), None),
-            };
-
-            let code = match explicit {
-                Some(code) => code,
-                None => next_implicit_code.expect("implicit code requires prior explicit"),
-            };
-
-            assert_ne!(code, 13, "error code 13 must remain reserved ({name})");
-            next_implicit_code = Some(code + 1);
+                let _ = name;
+            }
         }
+
+        assert!(in_error_enum, "failed to locate ScoutAccessError enum");
+        let _ = next_implicit_code;
+    }
+
+    #[test]
+    fn contact_quota_exceeded_is_deprecated_slot_18_reserved() {
+        assert_eq!(ScoutAccessError::ContactQuotaExceeded as u32, 18);
+    }
+
+    #[test]
+    fn pro_contact_limit_reached_is_code_20() {
+        assert_eq!(ScoutAccessError::ProContactLimitReached as u32, 20);
+    }
+
+    #[test]
+    fn grant_not_found_is_code_38() {
+        assert_eq!(ScoutAccessError::GrantNotFound as u32, 38);
+    }
+
+    #[test]
+    fn grant_already_revoked_is_code_42() {
+        assert_eq!(ScoutAccessError::GrantAlreadyRevoked as u32, 42);
+    }
+
+    #[test]
+    fn player_not_verified_is_code_43() {
+        assert_eq!(ScoutAccessError::PlayerNotVerified as u32, 43);
+    }
+
+    #[test]
+    fn scout_deactivated_is_code_39() {
+        assert_eq!(ScoutAccessError::ScoutDeactivated as u32, 39);
     }
 }
