@@ -12,7 +12,7 @@ ARG STELLAR_CLI_VERSION=28.0.0
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates git pkg-config libssl-dev libdbus-1-dev libudev-dev \
+        ca-certificates g++ git pkg-config libssl-dev libdbus-1-dev libudev-dev \
     && rm -rf /var/lib/apt/lists/*
 
 RUN rustup target add wasm32v1-none \
