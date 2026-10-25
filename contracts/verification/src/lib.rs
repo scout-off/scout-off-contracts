@@ -5519,6 +5519,15 @@ mod tests {
 
     #[contractimpl]
     impl RegStub {
+        /// Wiring handshake (#1610): report the kind of contract this stub stands in for.
+        pub fn contract_kind(env: Env) -> soroban_sdk::Symbol {
+            soroban_sdk::Symbol::new(&env, "registration")
+        }
+
+        pub fn version(env: Env) -> soroban_sdk::String {
+            soroban_sdk::String::from_str(&env, "2.0.0")
+        }
+
         pub fn initialize(env: Env, owner: Address) {
             env.storage().persistent().set(&StubKey::Owner, &owner);
         }
@@ -6688,7 +6697,7 @@ mod tests {
         let admin = Address::generate(&env);
         let client = deploy(&env, &admin);
 
-        let addr = Address::generate(&env);
+        let addr = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
         client.set_progress_contract(&addr);
 
         let result = client.try_set_progress_contract(&addr);
@@ -6701,7 +6710,7 @@ mod tests {
         let admin = Address::generate(&env);
         let client = deploy(&env, &admin);
 
-        let addr = Address::generate(&env);
+        let addr = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
         client.set_progress_contract(&addr);
 
         // set_progress_contract now emits both the legacy
@@ -6743,8 +6752,8 @@ mod tests {
         let admin = Address::generate(&env);
         let client = deploy(&env, &admin);
 
-        let addr1 = Address::generate(&env);
-        let addr2 = Address::generate(&env);
+        let addr1 = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
+        let addr2 = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
         client.set_progress_contract(&addr1);
         client.update_progress_contract(&addr2);
 
@@ -6758,7 +6767,7 @@ mod tests {
         // The legacy guard itself must still be intact: a further
         // set_progress_contract call is still rejected, only
         // update_progress_contract may re-wire past the first call.
-        let addr3 = Address::generate(&env);
+        let addr3 = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
         let result = client.try_set_progress_contract(&addr3);
         assert_eq!(result, Err(Ok(VerificationError::AlreadyConfigured)));
     }
@@ -6775,7 +6784,7 @@ mod tests {
 
         assert_eq!(client.get_progress_contract(), None);
 
-        let progress_addr = Address::generate(&env);
+        let progress_addr = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
         client.set_progress_contract(&progress_addr);
         assert_eq!(client.get_progress_contract(), Some(progress_addr));
     }
@@ -6800,8 +6809,8 @@ mod tests {
         let admin = Address::generate(&env);
         let client = deploy(&env, &admin);
 
-        let progress_addr = Address::generate(&env);
-        let reg_addr = Address::generate(&env);
+        let progress_addr = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
+        let reg_addr = scoutchain_shared_types::testutils::peer_stub(&env, "registration");
         client.set_progress_contract(&progress_addr);
         client.set_registration_contract(&reg_addr);
 
@@ -6822,7 +6831,7 @@ mod tests {
         let admin = Address::generate(&env);
         let client = deploy(&env, &admin);
 
-        let addr = Address::generate(&env);
+        let addr = scoutchain_shared_types::testutils::peer_stub(&env, "registration");
         client.set_registration_contract(&addr);
 
         let result = client.try_set_registration_contract(&addr);
@@ -6835,8 +6844,8 @@ mod tests {
         let admin = Address::generate(&env);
         let client = deploy(&env, &admin);
 
-        let addr1 = Address::generate(&env);
-        let addr2 = Address::generate(&env);
+        let addr1 = scoutchain_shared_types::testutils::peer_stub(&env, "registration");
+        let addr2 = scoutchain_shared_types::testutils::peer_stub(&env, "registration");
         client.set_registration_contract(&addr1);
         client.update_registration_contract(&addr2);
 
@@ -6851,7 +6860,7 @@ mod tests {
         let admin = Address::generate(&env);
         let client = deploy(&env, &admin);
 
-        let reg_addr = Address::generate(&env);
+        let reg_addr = scoutchain_shared_types::testutils::peer_stub(&env, "registration");
         client.set_registration_contract(&reg_addr);
 
         assert_eq!(

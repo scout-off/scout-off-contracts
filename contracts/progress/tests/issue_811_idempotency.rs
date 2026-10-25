@@ -113,7 +113,7 @@ fn setup() -> Harness {
     let id = env.register(ProgressContract, (admin.clone(),));
     let client = ProgressContractClient::new(&env, &id);
 
-    let caller = Address::generate(&env);
+    let caller = scoutchain_shared_types::testutils::peer_stub(&env, "verification");
     client.set_verification_contract(&caller);
     client.set_registration_contract(&reg_id);
     registration.set_progress_contract(&id);
@@ -466,7 +466,7 @@ fn test_secondary_caller_replay_with_unbacked_milestone_ref_is_rejected() {
     client.set_registration_contract(&reg_id);
     registration.set_progress_contract(&progress_id);
 
-    let scout_access = Address::generate(&env);
+    let scout_access = scoutchain_shared_types::testutils::peer_stub(&env, "scout_access");
     client.set_scout_access_contract(&scout_access);
 
     // Register a player in registration contract so advance_level's sync succeeds

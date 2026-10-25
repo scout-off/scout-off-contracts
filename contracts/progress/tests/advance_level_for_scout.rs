@@ -28,7 +28,7 @@ fn direct_call_by_scout_without_contract_auth_fails() {
         &env,
         &env.register(ProgressContract, (Address::generate(&env),)),
     );
-    let scout_access = Address::generate(&env);
+    let scout_access = scoutchain_shared_types::testutils::peer_stub(&env, "scout_access");
     client.set_scout_access_contract(&scout_access);
 
     // Only the scout signs — the scout_access contract's auth is missing.

@@ -2285,6 +2285,15 @@ mod tests {
 
     #[soroban_sdk::contractimpl]
     impl RegistrationStub {
+        /// Wiring handshake (#1610): report the kind of contract this stub stands in for.
+        pub fn contract_kind(env: Env) -> soroban_sdk::Symbol {
+            soroban_sdk::Symbol::new(&env, "registration")
+        }
+
+        pub fn version(env: Env) -> soroban_sdk::String {
+            soroban_sdk::String::from_str(&env, "2.0.0")
+        }
+
         pub fn set_player_level(_env: Env, _player_id: u64, _level: ProgressLevel) {}
     }
 
@@ -2427,7 +2436,7 @@ mod tests {
 
         assert_eq!(client.get_verification_contract(), None);
 
-        let peer = Address::generate(&env);
+        let peer = scoutchain_shared_types::testutils::peer_stub(&env, "verification");
         client.set_verification_contract(&peer);
         assert_eq!(client.get_verification_contract(), Some(peer));
     }
@@ -2441,7 +2450,7 @@ mod tests {
 
         assert_eq!(client.get_registration_contract(), None);
 
-        let peer = Address::generate(&env);
+        let peer = scoutchain_shared_types::testutils::peer_stub(&env, "registration");
         client.set_registration_contract(&peer);
         assert_eq!(client.get_registration_contract(), Some(peer));
     }
@@ -2455,7 +2464,7 @@ mod tests {
 
         assert_eq!(client.get_scout_access_contract(), None);
 
-        let peer = Address::generate(&env);
+        let peer = scoutchain_shared_types::testutils::peer_stub(&env, "scout_access");
         client.set_scout_access_contract(&peer);
         assert_eq!(client.get_scout_access_contract(), Some(peer));
     }
@@ -3125,7 +3134,7 @@ mod tests {
         let admin = Address::generate(&env);
         let id = env.register(ProgressContract, (admin.clone(),));
         let client = ProgressContractClient::new(&env, &id);
-        let verification = Address::generate(&env);
+        let verification = scoutchain_shared_types::testutils::peer_stub(&env, "verification");
         client.set_verification_contract(&verification);
         wire_registration_stub(&env, &client);
 
@@ -3346,7 +3355,7 @@ mod tests {
         let prog_id = env.register(ProgressContract, (prog_admin.clone(),));
         let prog_client = ProgressContractClient::new(&env, &prog_id);
         prog_client.set_verification_contract(&ver_id);
-        let scout_access = Address::generate(&env);
+        let scout_access = scoutchain_shared_types::testutils::peer_stub(&env, "scout_access");
         prog_client.set_scout_access_contract(&scout_access);
         wire_registration_stub(&env, &prog_client);
 
@@ -3388,7 +3397,7 @@ mod tests {
         let admin = Address::generate(&env);
         let prog_id = env.register(ProgressContract, (admin.clone(),));
         let prog_client = ProgressContractClient::new(&env, &prog_id);
-        let verification = Address::generate(&env);
+        let verification = scoutchain_shared_types::testutils::peer_stub(&env, "verification");
         prog_client.set_verification_contract(&verification);
         // Note: no real verification contract deployed — but the milestone
         // validation is skipped when the stored address has no milestone data
@@ -3434,7 +3443,7 @@ mod tests {
         let admin = Address::generate(&env);
         let contract_id = env.register(ProgressContract, (admin.clone(),));
         let client = ProgressContractClient::new(&env, &contract_id);
-        let verification = Address::generate(&env);
+        let verification = scoutchain_shared_types::testutils::peer_stub(&env, "verification");
         client.set_verification_contract(&verification);
 
         client.pause_contract();
@@ -3459,7 +3468,7 @@ mod tests {
         let admin = Address::generate(&env);
         let contract_id = env.register(ProgressContract, (admin.clone(),));
         let client = ProgressContractClient::new(&env, &contract_id);
-        let verification = Address::generate(&env);
+        let verification = scoutchain_shared_types::testutils::peer_stub(&env, "verification");
         client.set_verification_contract(&verification);
 
         client.pause_contract();
@@ -3867,9 +3876,9 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
         let admin = Address::generate(&env);
-        let reg_addr = Address::generate(&env);
-        let ver_addr = Address::generate(&env);
-        let sa_addr = Address::generate(&env);
+        let reg_addr = scoutchain_shared_types::testutils::peer_stub(&env, "registration");
+        let ver_addr = scoutchain_shared_types::testutils::peer_stub(&env, "verification");
+        let sa_addr = scoutchain_shared_types::testutils::peer_stub(&env, "scout_access");
         let id = env.register(ProgressContract, (admin.clone(),));
         let client = ProgressContractClient::new(&env, &id);
 
@@ -3893,8 +3902,8 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
         let admin = Address::generate(&env);
-        let reg_addr1 = Address::generate(&env);
-        let reg_addr2 = Address::generate(&env);
+        let reg_addr1 = scoutchain_shared_types::testutils::peer_stub(&env, "registration");
+        let reg_addr2 = scoutchain_shared_types::testutils::peer_stub(&env, "registration");
         let id = env.register(ProgressContract, (admin.clone(),));
         let client = ProgressContractClient::new(&env, &id);
 

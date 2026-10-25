@@ -3735,6 +3735,20 @@ mod tests {
 
     #[contractimpl]
     impl RegistrationStub {
+        /// Every scout counts as verified for the Pro/Elite re-check (#1608).
+        pub fn is_scout_verified(_env: Env, _wallet: Address) -> bool {
+            true
+        }
+
+        /// Wiring handshake (#1610): report the kind of contract this stub stands in for.
+        pub fn contract_kind(env: Env) -> soroban_sdk::Symbol {
+            soroban_sdk::Symbol::new(&env, "registration")
+        }
+
+        pub fn version(env: Env) -> soroban_sdk::String {
+            soroban_sdk::String::from_str(&env, "2.0.0")
+        }
+
         pub fn get_scout_by_wallet(
             env: Env,
             wallet: Address,
@@ -3770,6 +3784,15 @@ mod tests {
 
     #[contractimpl]
     impl ProgressStub {
+        /// Wiring handshake (#1610): report the kind of contract this stub stands in for.
+        pub fn contract_kind(env: Env) -> soroban_sdk::Symbol {
+            soroban_sdk::Symbol::new(&env, "progress")
+        }
+
+        pub fn version(env: Env) -> soroban_sdk::String {
+            soroban_sdk::String::from_str(&env, "2.0.0")
+        }
+
         pub fn get_level(_env: Env, _player_id: u64) -> scoutchain_shared_types::ProgressLevel {
             scoutchain_shared_types::ProgressLevel::Unverified
         }
@@ -3782,6 +3805,15 @@ mod tests {
 
     #[contractimpl]
     impl LevelSyncStub {
+        /// Wiring handshake (#1610): report the kind of contract this stub stands in for.
+        pub fn contract_kind(env: Env) -> soroban_sdk::Symbol {
+            soroban_sdk::Symbol::new(&env, "registration")
+        }
+
+        pub fn version(env: Env) -> soroban_sdk::String {
+            soroban_sdk::String::from_str(&env, "2.0.0")
+        }
+
         pub fn set_player_level(
             _env: Env,
             _player_id: u64,
@@ -5657,7 +5689,7 @@ mod tests {
     #[test]
     fn test_set_progress_contract_emits_event() {
         let (env, _admin, _xlm, contract_id, client) = setup();
-        let progress_addr = Address::generate(&env);
+        let progress_addr = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
 
         client.set_progress_contract(&progress_addr);
 
@@ -5690,8 +5722,8 @@ mod tests {
     #[test]
     fn test_update_progress_contract_is_alias_for_set() {
         let (env, _admin, _xlm, contract_id, client) = setup();
-        let first = Address::generate(&env);
-        let second = Address::generate(&env);
+        let first = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
+        let second = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
 
         client.set_progress_contract(&first);
         client.update_progress_contract(&second);
@@ -5716,7 +5748,7 @@ mod tests {
 
         assert_eq!(client.get_progress_contract(), None);
 
-        let progress_addr = Address::generate(&env);
+        let progress_addr = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
         client.set_progress_contract(&progress_addr);
         assert_eq!(client.get_progress_contract(), Some(progress_addr));
     }
@@ -5737,8 +5769,8 @@ mod tests {
     fn test_get_wiring_state_reflects_both_links_and_bumps_epoch() {
         let (env, _admin, _xlm, _contract_id, client) = setup_unwired();
 
-        let progress_addr = Address::generate(&env);
-        let reg_addr = Address::generate(&env);
+        let progress_addr = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
+        let reg_addr = scoutchain_shared_types::testutils::peer_stub(&env, "registration");
         client.set_progress_contract(&progress_addr);
         client.set_registration_contract(&reg_addr);
 
@@ -5751,7 +5783,7 @@ mod tests {
 
         // Freely re-settable — no first-call-only guard on either link — and
         // a second call must bump the epoch again, not reset it.
-        let new_progress_addr = Address::generate(&env);
+        let new_progress_addr = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
         client.set_progress_contract(&new_progress_addr);
         assert_eq!(
             client.get_wiring_state().progress_contract.epoch,
@@ -5763,7 +5795,7 @@ mod tests {
     #[test]
     fn test_set_registration_contract_emits_wiring_updated_event() {
         let (env, _admin, _xlm, contract_id, client) = setup_unwired();
-        let reg_addr = Address::generate(&env);
+        let reg_addr = scoutchain_shared_types::testutils::peer_stub(&env, "registration");
 
         client.set_registration_contract(&reg_addr);
 

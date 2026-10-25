@@ -94,7 +94,7 @@ fn seed(h: &Harness) -> Seeded {
 
     // Initial progress-contract wiring (sets the one-time ProgressContractSet
     // guard flag in instance storage).
-    let progress_link = Address::generate(&h.env);
+    let progress_link = scoutchain_shared_types::testutils::peer_stub(&h.env, "progress");
     h.verification.set_progress_contract(&progress_link);
 
     Seeded { validator }
@@ -130,7 +130,7 @@ fn test_verification_upgrade_preserves_state() {
     // Correct post-upgrade re-wiring: the ProgressContractSet guard survived the
     // upgrade, so we MUST use update_progress_contract (see module docs). This
     // must succeed without panicking.
-    let new_progress_link = Address::generate(&h.env);
+    let new_progress_link = scoutchain_shared_types::testutils::peer_stub(&h.env, "progress");
     h.verification.update_progress_contract(&new_progress_link);
 
     // --- Assert: persistent storage survived ---
@@ -176,7 +176,7 @@ fn test_verification_broken_upgrade_wrong_rewire_fn_is_caught() {
     rehearse_upgrade(&h);
 
     // Wrong re-wiring function post-upgrade — must not silently succeed.
-    let new_progress_link = Address::generate(&h.env);
+    let new_progress_link = scoutchain_shared_types::testutils::peer_stub(&h.env, "progress");
     h.verification.set_progress_contract(&new_progress_link);
 }
 

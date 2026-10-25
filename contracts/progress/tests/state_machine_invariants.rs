@@ -63,7 +63,7 @@ fn setup() -> Harness {
     // that check by design — the verification contract is the source of truth
     // for milestone data — so it is the right harness for level-transition
     // invariants, which are about the state machine, not milestone lookup.
-    let caller = Address::generate(&env);
+    let caller = scoutchain_shared_types::testutils::peer_stub(&env, "verification");
     client.set_verification_contract(&caller);
     client.set_registration_contract(&reg_id);
     registration.set_progress_contract(&id);

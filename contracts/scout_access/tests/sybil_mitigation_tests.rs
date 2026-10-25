@@ -249,7 +249,7 @@ fn test_set_registration_contract_requires_admin() {
     let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
     let client = ScoutAccessContractClient::new(&env, &contract_id);
 
-    let random_contract = Address::generate(&env);
+    let random_contract = scoutchain_shared_types::testutils::peer_stub(&env, "registration");
     let result = client.try_set_registration_contract(&random_contract);
     assert!(
         result.is_err(),

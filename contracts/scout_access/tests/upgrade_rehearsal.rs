@@ -102,7 +102,7 @@ fn seed(h: &Harness) -> Seeded {
     h.scout_access.subscribe(&scout, &SubscriptionTier::Elite);
     h.scout_access.pay_to_contact(&scout, &player_id);
 
-    let progress_link = Address::generate(&h.env);
+    let progress_link = scoutchain_shared_types::testutils::peer_stub(&h.env, "progress");
     h.scout_access.set_progress_contract(&progress_link);
 
     Seeded { scout, player_id }
@@ -134,7 +134,7 @@ fn test_scout_access_upgrade_preserves_state() {
     rehearse_upgrade(&h);
 
     // Re-wire the progress-contract link (plain overwrite for scout_access).
-    let new_progress_link = Address::generate(&h.env);
+    let new_progress_link = scoutchain_shared_types::testutils::peer_stub(&h.env, "progress");
     h.scout_access.set_progress_contract(&new_progress_link);
 
     // --- Assert: persistent storage survived (subscription + contact records) ---

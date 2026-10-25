@@ -46,6 +46,20 @@ struct RegStub;
 
 #[contractimpl]
 impl RegStub {
+    /// Every player counts as active for verification's #1622 check.
+    pub fn get_player_status(_env: Env, _player_id: u64) -> scoutchain_verification::RegPlayerStatus {
+        scoutchain_verification::RegPlayerStatus::Active
+    }
+
+    /// Wiring handshake (#1610): report the kind of contract this stub stands in for.
+    pub fn contract_kind(env: Env) -> soroban_sdk::Symbol {
+        soroban_sdk::Symbol::new(&env, "registration")
+    }
+
+    pub fn version(env: Env) -> soroban_sdk::String {
+        soroban_sdk::String::from_str(&env, "2.0.0")
+    }
+
     pub fn initialize(env: Env, owner: Address) {
         env.storage().persistent().set(&RegStubKey::Owner, &owner);
     }

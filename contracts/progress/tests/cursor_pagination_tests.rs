@@ -78,7 +78,7 @@ fn advance_n(h: &Harness, caller: &Address, player_id: u64, n: u32) {
 /// is independent of milestone validation, so the primary path — which skips
 /// that check by design — keeps this harness focused.
 fn setup_whitelisted_caller(h: &Harness) -> Address {
-    let caller = Address::generate(&h.env);
+    let caller = scoutchain_shared_types::testutils::peer_stub(&h.env, "verification");
     h.client.set_verification_contract(&caller);
     caller
 }

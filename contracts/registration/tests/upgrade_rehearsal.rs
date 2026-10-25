@@ -119,7 +119,7 @@ fn setup() -> Harness {
     // player's live level through its instance-storage progress-contract link.
     let progress_id = env.register(ProgressContract, (admin.clone(),));
     let progress = ProgressContractClient::new(&env, &progress_id);
-    let verifier = Address::generate(&env);
+    let verifier = scoutchain_shared_types::testutils::peer_stub(&env, "verification");
     progress.set_verification_contract(&verifier);
 
     let reg_id = env.register(RegistrationContract, (admin.clone(),));

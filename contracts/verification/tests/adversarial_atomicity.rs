@@ -87,7 +87,7 @@ fn setup_bad_wiring() -> (Env, VerificationContractClient<'static>, Address) {
     let client = VerificationContractClient::new(&env, &contract_id);
 
     // Wire a random address that has no contract — any cross-contract call will fail.
-    let bad_progress = Address::generate(&env);
+    let bad_progress = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
     client.set_progress_contract(&bad_progress);
 
     let validator = Address::generate(&env);
@@ -382,6 +382,15 @@ struct RegistrationStub;
 
 #[soroban_sdk::contractimpl]
 impl RegistrationStub {
+    /// Wiring handshake (#1610): report the kind of contract this stub stands in for.
+    pub fn contract_kind(env: Env) -> soroban_sdk::Symbol {
+        soroban_sdk::Symbol::new(&env, "registration")
+    }
+
+    pub fn version(env: Env) -> soroban_sdk::String {
+        soroban_sdk::String::from_str(&env, "2.0.0")
+    }
+
     pub fn set_player_level(
         _env: Env,
         _player_id: u64,

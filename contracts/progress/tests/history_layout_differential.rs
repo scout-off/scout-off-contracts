@@ -30,6 +30,15 @@ struct RegistrationStub;
 
 #[soroban_sdk::contractimpl]
 impl RegistrationStub {
+    /// Wiring handshake (#1610): report the kind of contract this stub stands in for.
+    pub fn contract_kind(env: Env) -> soroban_sdk::Symbol {
+        soroban_sdk::Symbol::new(&env, "registration")
+    }
+
+    pub fn version(env: Env) -> soroban_sdk::String {
+        soroban_sdk::String::from_str(&env, "2.0.0")
+    }
+
     pub fn set_player_level(_env: Env, _player_id: u64, _level: ProgressLevel) {}
 }
 
@@ -324,7 +333,7 @@ fn history_reads_agree_across_every_storage_layout() {
         let admin = Address::generate(&env);
         let id = env.register(ProgressContract, (admin.clone(),));
         let c = ProgressContractClient::new(&env, &id);
-        let caller = Address::generate(&env);
+        let caller = scoutchain_shared_types::testutils::peer_stub(&env, "verification");
         c.set_verification_contract(&caller);
         c.set_registration_contract(&env.register(RegistrationStub, ()));
         run_case(

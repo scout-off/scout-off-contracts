@@ -147,7 +147,7 @@ fn cost_set_player_level() {
     let hashes = vec![&env, String::from_str(&env, "QmTestHashSetPlayerLevel1")];
     let player_id = client.register_player(&wallet, &vitals, &hashes);
 
-    let progress_contract = Address::generate(&env);
+    let progress_contract = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
     client.set_progress_contract(&progress_contract);
 
     env.cost_estimate().budget().reset_default();
@@ -163,7 +163,7 @@ fn cost_set_player_level() {
 fn cost_set_player_level_large_bucket() {
     let (env, client) = setup();
     let region = String::from_str(&env, "NG");
-    let progress_contract = Address::generate(&env);
+    let progress_contract = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
     client.set_progress_contract(&progress_contract);
 
     // Seed 60 players at Unverified in the same region so the

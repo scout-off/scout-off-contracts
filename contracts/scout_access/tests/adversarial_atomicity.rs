@@ -128,7 +128,7 @@ fn setup_bad_progress_for_scout_access() -> Harness {
     common::wire_registration(&env, Some(&scout_access), None);
 
     // Point scout_access at a GARBAGE address — confirm_trial_offer will fail.
-    let bad_progress = Address::generate(&env);
+    let bad_progress = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
     scout_access.set_progress_contract(&bad_progress);
 
     // (Do NOT whitelist sa_id in progress — it uses a bad address anyway.)

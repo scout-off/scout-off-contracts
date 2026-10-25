@@ -57,7 +57,7 @@ fn setup() -> Harness {
     let id = env.register(ProgressContract, (admin.clone(),));
     let client = ProgressContractClient::new(&env, &id);
 
-    let caller = Address::generate(&env);
+    let caller = scoutchain_shared_types::testutils::peer_stub(&env, "verification");
     client.set_verification_contract(&caller);
     client.set_registration_contract(&reg_id);
     registration.set_progress_contract(&id);

@@ -72,7 +72,7 @@ fn test_advance_level_rejected_when_registration_unwired() {
     let prog_id = env.register(ProgressContract, (admin.clone(),));
     let progress = ProgressContractClient::new(&env, &prog_id);
 
-    let ver_id = Address::generate(&env);
+    let ver_id = scoutchain_shared_types::testutils::peer_stub(&env, "verification");
     progress.set_verification_contract(&ver_id);
 
     // Registration contract is NOT wired

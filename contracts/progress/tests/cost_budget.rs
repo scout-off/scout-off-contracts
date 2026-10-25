@@ -80,7 +80,7 @@ fn setup() -> (
     let contract_id = env.register(ProgressContract, (admin.clone(),));
     let client = ProgressContractClient::new(&env, &contract_id);
 
-    let verification = Address::generate(&env);
+    let verification = scoutchain_shared_types::testutils::peer_stub(&env, "verification");
     client.set_verification_contract(&verification);
     client.set_registration_contract(&reg_id);
     registration.set_progress_contract(&contract_id);

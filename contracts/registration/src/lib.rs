@@ -3748,7 +3748,7 @@ mod tests {
         let player_id = client.register_player(&wallet, &dummy_vitals(&env), &hashes);
 
         // Wire a progress contract
-        let progress_contract = Address::generate(&env);
+        let progress_contract = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
         client.set_progress_contract(&progress_contract);
 
         // Clear events so far
@@ -3877,7 +3877,7 @@ mod tests {
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
         let player_id = client.register_player(&wallet, &vitals, &hashes);
 
-        let progress_contract = Address::generate(&env);
+        let progress_contract = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
         client.set_progress_contract(&progress_contract);
 
         // A random address — not the registered progress contract — signs
@@ -3909,7 +3909,7 @@ mod tests {
 
         assert_eq!(client.get_progress_contract(), None);
 
-        let progress_addr = Address::generate(&env);
+        let progress_addr = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
         client.set_progress_contract(&progress_addr);
         assert_eq!(client.get_progress_contract(), Some(progress_addr));
     }
@@ -3932,7 +3932,7 @@ mod tests {
         let admin = Address::generate(&env);
         let client = deploy(&env, &admin);
 
-        let progress_addr = Address::generate(&env);
+        let progress_addr = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
         client.set_progress_contract(&progress_addr);
 
         let state = client.get_wiring_state();
@@ -3942,7 +3942,7 @@ mod tests {
 
         // Freely re-settable — no first-call-only guard — and a second call
         // must bump the epoch again, not reset it.
-        let new_progress_addr = Address::generate(&env);
+        let new_progress_addr = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
         client.set_progress_contract(&new_progress_addr);
         let state2 = client.get_wiring_state();
         assert_eq!(state2.progress_contract.address, Some(new_progress_addr));
@@ -3958,7 +3958,7 @@ mod tests {
         let admin = Address::generate(&env);
         let client = deploy(&env, &admin);
 
-        let progress_addr = Address::generate(&env);
+        let progress_addr = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
         client.set_progress_contract(&progress_addr);
 
         assert_eq!(
@@ -4950,7 +4950,7 @@ mod tests {
             })
         };
 
-        let progress_contract = Address::generate(&env);
+        let progress_contract = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
         client.set_progress_contract(&progress_contract);
 
         client.set_player_level(&player_id, &ProgressLevel::VerifiedIdentity);

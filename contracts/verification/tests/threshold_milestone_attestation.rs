@@ -613,6 +613,15 @@ struct RegStub;
 
 #[contractimpl]
 impl RegStub {
+    /// Wiring handshake (#1610): report the kind of contract this stub stands in for.
+    pub fn contract_kind(env: Env) -> soroban_sdk::Symbol {
+        soroban_sdk::Symbol::new(&env, "registration")
+    }
+
+    pub fn version(env: Env) -> soroban_sdk::String {
+        soroban_sdk::String::from_str(&env, "2.0.0")
+    }
+
     pub fn initialize(env: Env, owner: Address) {
         env.storage().persistent().set(&RegStubKey::Owner, &owner);
     }

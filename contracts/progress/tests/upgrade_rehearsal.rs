@@ -72,7 +72,7 @@ fn setup() -> Harness {
     // Whitelist a primary caller so we can advance player levels. advance_level's
     // primary-caller path does not cross-call the verification contract, so a
     // plain generated address is sufficient here.
-    let verifier = Address::generate(&env);
+    let verifier = scoutchain_shared_types::testutils::peer_stub(&env, "verification");
     progress.set_verification_contract(&verifier);
     progress.set_registration_contract(&reg_id);
     registration.set_progress_contract(&id);
@@ -174,9 +174,9 @@ fn test_progress_upgrade_preserves_state() {
     // --- Re-wire the remaining two instance-storage links (plain overwrites for
     // progress — no guard flags). These must succeed. ---
     h.progress
-        .set_registration_contract(&Address::generate(&h.env));
+        .set_registration_contract(&scoutchain_shared_types::testutils::peer_stub(&h.env, "registration"));
     h.progress
-        .set_scout_access_contract(&Address::generate(&h.env));
+        .set_scout_access_contract(&scoutchain_shared_types::testutils::peer_stub(&h.env, "scout_access"));
 }
 
 /// Deliberately-broken upgrade — proves the harness is not a no-op.
