@@ -106,7 +106,7 @@ fn base() -> (Env, VerificationContractClient<'static>, Address) {
 #[test]
 fn unwired_registration_fails_closed() {
     let (env, client, validator) = base();
-    let desc = String::from_str(&env, "ok");
+    let desc = String::from_str(&env, "Milestone ok");
     let cid = String::from_str(&env, CID);
     assert_eq!(
         client.try_approve_milestone(&validator, &42u64, &desc, &cid, &None),
@@ -132,7 +132,7 @@ fn approve_rejects_unknown_and_deactivated_when_wired() {
         client.try_approve_milestone(
             &validator,
             &99u64,
-            &String::from_str(&env, "x"),
+            &String::from_str(&env, "Milestone x"),
             &String::from_str(&env, CID),
             &None,
         ),
@@ -144,7 +144,7 @@ fn approve_rejects_unknown_and_deactivated_when_wired() {
         client.try_approve_milestone(
             &validator,
             &7u64,
-            &String::from_str(&env, "x"),
+            &String::from_str(&env, "Milestone x"),
             &String::from_str(&env, CID2),
             &None,
         ),
@@ -155,7 +155,7 @@ fn approve_rejects_unknown_and_deactivated_when_wired() {
     let idx = client.approve_milestone(
         &validator,
         &1u64,
-        &String::from_str(&env, "ok"),
+        &String::from_str(&env, "Milestone ok"),
         &String::from_str(&env, CID3),
         &None,
     );

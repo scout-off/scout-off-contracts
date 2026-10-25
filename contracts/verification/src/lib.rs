@@ -6031,21 +6031,21 @@ mod tests {
         client.approve_milestone(
             &validator,
             &1u64,
-            &String::from_str(&env, "m1"),
+            &String::from_str(&env, "Milestone m1"),
             &String::from_str(&env, VALID_CID_V0),
             &None,
         );
         client.approve_milestone(
             &validator,
             &2u64,
-            &String::from_str(&env, "m2"),
+            &String::from_str(&env, "Milestone m2"),
             &String::from_str(&env, VALID_CID_V0_2),
             &None,
         );
         client.approve_milestone(
             &validator,
             &3u64,
-            &String::from_str(&env, "m3"),
+            &String::from_str(&env, "Milestone m3"),
             &String::from_str(&env, VALID_CID_V0_3),
             &None,
         );
@@ -6077,14 +6077,14 @@ mod tests {
         client.approve_milestone(
             &validator,
             &1u64,
-            &String::from_str(&env, "m1"),
+            &String::from_str(&env, "Milestone m1"),
             &String::from_str(&env, VALID_CID_V0),
             &None,
         );
         client.approve_milestone(
             &validator,
             &1u64,
-            &String::from_str(&env, "m2"),
+            &String::from_str(&env, "Milestone m2"),
             &String::from_str(&env, VALID_CID_V1),
             &None,
         );
@@ -6121,21 +6121,21 @@ mod tests {
         client.approve_milestone(
             &v1,
             &1u64,
-            &String::from_str(&env, "m1"),
+            &String::from_str(&env, "Milestone m1"),
             &String::from_str(&env, VALID_CID_V0),
             &None,
         );
         client.approve_milestone(
             &v1,
             &2u64,
-            &String::from_str(&env, "m2"),
+            &String::from_str(&env, "Milestone m2"),
             &String::from_str(&env, VALID_CID_V0_2),
             &None,
         );
         client.approve_milestone(
             &v2,
             &3u64,
-            &String::from_str(&env, "m3"),
+            &String::from_str(&env, "Milestone m3"),
             &String::from_str(&env, VALID_CID_V0_3),
             &None,
         );
@@ -6216,7 +6216,7 @@ mod tests {
         client.approve_milestone(
             &v1,
             &1u64,
-            &String::from_str(&env, "m1"),
+            &String::from_str(&env, "Milestone m1"),
             &String::from_str(&env, VALID_CID_V0),
             &None,
         );
@@ -6224,8 +6224,8 @@ mod tests {
 
         let v0_2 = String::from_str(&env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqC");
         let v0_3 = String::from_str(&env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqD");
-        client.approve_milestone(&v1, &2u64, &String::from_str(&env, "m2"), &v0_2, &None);
-        client.approve_milestone(&v2, &3u64, &String::from_str(&env, "m3"), &v0_3, &None);
+        client.approve_milestone(&v1, &2u64, &String::from_str(&env, "Milestone m2"), &v0_2, &None);
+        client.approve_milestone(&v2, &3u64, &String::from_str(&env, "Milestone m3"), &v0_3, &None);
         assert_eq!(client.get_total_milestone_count(), 3);
 
         // per-validator counts still correct
@@ -7590,14 +7590,14 @@ mod tests {
         client.approve_milestone(
             &validator,
             &1u64,
-            &String::from_str(&env, "m1"),
+            &String::from_str(&env, "Milestone m1"),
             &String::from_str(&env, VALID_CID_V0),
             &None,
         );
         client.approve_milestone(
             &validator,
             &2u64,
-            &String::from_str(&env, "m2"),
+            &String::from_str(&env, "Milestone m2"),
             &String::from_str(&env, VALID_CID_V0_2),
             &None,
         );
@@ -7646,7 +7646,7 @@ mod tests {
         client.approve_milestone(
             &validator,
             &1u64,
-            &String::from_str(&env, "m1"),
+            &String::from_str(&env, "Milestone m1"),
             &String::from_str(&env, VALID_CID_V0),
             &None,
         );
@@ -7694,7 +7694,7 @@ mod tests {
         client.approve_milestone(
             &validator,
             &1u64,
-            &String::from_str(&env, "m1"),
+            &String::from_str(&env, "Milestone m1"),
             &String::from_str(&env, VALID_CID_V0),
             &None,
         );
@@ -7735,7 +7735,7 @@ mod tests {
         client.approve_milestone(
             &validator,
             &2u64,
-            &String::from_str(&env, "m1"),
+            &String::from_str(&env, "Milestone m1"),
             &String::from_str(&env, VALID_CID_V0),
             &None,
         );
@@ -7783,7 +7783,7 @@ mod tests {
         client.approve_milestone(
             &validator,
             &2u64,
-            &String::from_str(&env, "m1"),
+            &String::from_str(&env, "Milestone m1"),
             &String::from_str(&env, VALID_CID_V0),
             &None,
         );
@@ -7839,7 +7839,7 @@ mod tests {
         client.approve_milestone(
             &validator,
             &3u64,
-            &String::from_str(&env, "m1"),
+            &String::from_str(&env, "Milestone m1"),
             &String::from_str(&env, VALID_CID_V0),
             &None,
         );
@@ -8290,14 +8290,14 @@ mod tests {
         client.approve_milestone(
             &wallet_cause,
             &1u64,
-            &String::from_str(&env, "M1"),
+            &String::from_str(&env, "Milestone M1"),
             &String::from_str(&env, VALID_CID_V0),
             &None,
         );
         client.approve_milestone(
             &wallet_routine,
             &2u64,
-            &String::from_str(&env, "M2"),
+            &String::from_str(&env, "Milestone M2"),
             &String::from_str(&env, VALID_CID_V0_2),
             &None,
         );
@@ -8989,7 +8989,7 @@ mod tests {
         client.approve_milestone(
             &validator,
             &1u64,
-            &String::from_str(&env, "m1"),
+            &String::from_str(&env, "Milestone m1"),
             &String::from_str(&env, VALID_CID_V0),
             &None,
         );
@@ -9011,14 +9011,14 @@ mod tests {
         client.approve_milestone(
             &validator,
             &10u64,
-            &String::from_str(&env, "m1"),
+            &String::from_str(&env, "Milestone m1"),
             &String::from_str(&env, VALID_CID_V0),
             &None,
         );
         client.approve_milestone(
             &validator,
             &11u64,
-            &String::from_str(&env, "m2"),
+            &String::from_str(&env, "Milestone m2"),
             &String::from_str(&env, VALID_CID_V1),
             &None,
         );
@@ -9048,7 +9048,7 @@ mod tests {
         client.approve_milestone(
             &validator,
             &1u64,
-            &String::from_str(&env, "m1"),
+            &String::from_str(&env, "Milestone m1"),
             &String::from_str(&env, VALID_CID_V0),
             &None,
         );
