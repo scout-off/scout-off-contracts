@@ -322,9 +322,8 @@ fn history_reads_agree_across_every_storage_layout() {
         });
         env.mock_all_auths();
         let admin = Address::generate(&env);
-        let id = env.register(ProgressContract, ());
+        let id = env.register(ProgressContract, (admin.clone(),));
         let c = ProgressContractClient::new(&env, &id);
-        c.initialize(&admin);
         let caller = Address::generate(&env);
         c.set_verification_contract(&caller);
         c.set_registration_contract(&env.register(RegistrationStub, ()));

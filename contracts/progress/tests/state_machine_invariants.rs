@@ -48,13 +48,11 @@ fn setup() -> Harness {
     env.mock_all_auths();
     let admin = Address::generate(&env);
 
-    let reg_id = env.register(RegistrationContract, ());
+    let reg_id = env.register(RegistrationContract, (admin.clone(),));
     let registration = RegistrationContractClient::new(&env, &reg_id);
-    registration.initialize(&admin);
 
-    let id = env.register(ProgressContract, ());
+    let id = env.register(ProgressContract, (admin.clone(),));
     let client = ProgressContractClient::new(&env, &id);
-    client.initialize(&admin);
 
     // Whitelist a test address on the *primary* (VerificationContract) path.
     //

@@ -92,13 +92,11 @@ fn setup() -> Harness {
 
     let admin = Address::generate(&env);
 
-    let ver_id = env.register(VerificationContract, ());
+    let ver_id = env.register(VerificationContract, (admin.clone(),));
     let verification = VerificationContractClient::new(&env, &ver_id);
-    verification.initialize(&admin);
 
-    let progress_id = env.register(ProgressContract, ());
+    let progress_id = env.register(ProgressContract, (admin.clone(),));
     let progress = ProgressContractClient::new(&env, &progress_id);
-    progress.initialize(&admin);
     common::wire_registration(&env, None, Some(&progress));
     progress.set_verification_contract(&ver_id);
 
@@ -106,9 +104,8 @@ fn setup() -> Harness {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    let sa_id = env.register(ScoutAccessContract, ());
+    let sa_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
     let scout_access = ScoutAccessContractClient::new(&env, &sa_id);
-    scout_access.initialize(&admin, &xlm, &default_fees());
     common::wire_registration(&env, Some(&scout_access), None);
     scout_access.set_progress_contract(&progress_id);
     progress.set_scout_access_contract(&sa_id);

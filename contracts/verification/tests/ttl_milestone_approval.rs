@@ -26,10 +26,9 @@ fn test_commit_approved_milestone_extends_all_related_keys() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let contract_id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &contract_id);
 
     // Register two validators with different affiliations so PlayerAffiliations
     // accumulates more than one entry.

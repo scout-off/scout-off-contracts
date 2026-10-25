@@ -63,13 +63,11 @@ fn setup() -> Harness {
 
     let admin = Address::generate(&env);
 
-    let reg_id = env.register(RegistrationContract, ());
+    let reg_id = env.register(RegistrationContract, (admin.clone(),));
     let registration = RegistrationContractClient::new(&env, &reg_id);
-    registration.initialize(&admin);
 
-    let id = env.register(ProgressContract, ());
+    let id = env.register(ProgressContract, (admin.clone(),));
     let progress = ProgressContractClient::new(&env, &id);
-    progress.initialize(&admin);
 
     // Whitelist a primary caller so we can advance player levels. advance_level's
     // primary-caller path does not cross-call the verification contract, so a

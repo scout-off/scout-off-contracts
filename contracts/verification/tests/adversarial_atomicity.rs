@@ -64,10 +64,9 @@ const CID_C: &str = "QmgzsER5ykyxoTsVUSePRkKXqkEzsRVLpUv511dp4c3vAs";
 fn setup_unwired() -> (Env, VerificationContractClient<'static>, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let contract_id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &contract_id);
     let validator = Address::generate(&env);
     client.register_validator(
         &validator,
@@ -83,10 +82,9 @@ fn setup_unwired() -> (Env, VerificationContractClient<'static>, Address) {
 fn setup_bad_wiring() -> (Env, VerificationContractClient<'static>, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let contract_id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &contract_id);
 
     // Wire a random address that has no contract — any cross-contract call will fail.
     let bad_progress = Address::generate(&env);
@@ -285,15 +283,13 @@ fn test_retry_with_fresh_evidence_hash_succeeds_after_wiring_fixed() {
     env.mock_all_auths();
 
     // Deploy verification.
-    let ver_id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &ver_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let ver_id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &ver_id);
 
     // Deploy a real progress contract and wire it after initialization.
-    let prog_id = env.register(ProgressContract, ());
+    let prog_id = env.register(ProgressContract, (admin.clone(),));
     let progress = ProgressContractClient::new(&env, &prog_id);
-    progress.initialize(&admin);
     progress.set_verification_contract(&ver_id);
     // Progress requires a registration contract for level syncs (#1409).
     progress.set_registration_contract(&env.register(RegistrationStub, ()));

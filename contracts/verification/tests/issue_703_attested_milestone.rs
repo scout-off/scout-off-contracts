@@ -28,10 +28,9 @@ const CID_D: &str = "QmwsjoZwgfzgx6xPr3cXEKhzfLt5RQ87yMnWecTp1tf6p7";
 fn setup() -> (Env, VerificationContractClient<'static>, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    let id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &id);
     (env, client, admin, id)
 }
 
@@ -184,10 +183,9 @@ fn nonce_replay_rejected_with_fresh_evidence_hash() {
 #[test]
 fn cross_contract_attestation_rejected() {
     let (env, client_a, _admin_a, id_a) = setup();
-    let id_b = env.register(VerificationContract, ());
-    let client_b = VerificationContractClient::new(&env, &id_b);
     let admin_b = Address::generate(&env);
-    client_b.initialize(&admin_b);
+    let id_b = env.register(VerificationContract, (admin_b.clone(),));
+    let client_b = VerificationContractClient::new(&env, &id_b);
 
     let validator = Address::generate(&env);
     let relayer = Address::generate(&env);

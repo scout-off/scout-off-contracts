@@ -65,19 +65,16 @@ fn setup() -> Harness {
     let admin = Address::generate(&env);
 
     // Registration
-    let reg_id = env.register(RegistrationContract, ());
+    let reg_id = env.register(RegistrationContract, (admin.clone(),));
     let registration = RegistrationContractClient::new(&env, &reg_id);
-    registration.initialize(&admin);
 
     // Verification
-    let ver_id = env.register(VerificationContract, ());
+    let ver_id = env.register(VerificationContract, (admin.clone(),));
     let verification = VerificationContractClient::new(&env, &ver_id);
-    verification.initialize(&admin);
 
     // Progress
-    let prog_id = env.register(ProgressContract, ());
+    let prog_id = env.register(ProgressContract, (admin.clone(),));
     let progress = ProgressContractClient::new(&env, &prog_id);
-    progress.initialize(&admin);
     progress.set_verification_contract(&ver_id);
     progress.set_registration_contract(&reg_id);
 
@@ -87,9 +84,8 @@ fn setup() -> Harness {
         .address();
 
     // ScoutAccess
-    let sa_id = env.register(ScoutAccessContract, ());
+    let sa_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
     let scout_access = ScoutAccessContractClient::new(&env, &sa_id);
-    scout_access.initialize(&admin, &xlm, &default_fees());
     scout_access.set_progress_contract(&prog_id);
     progress.set_scout_access_contract(&sa_id);
 

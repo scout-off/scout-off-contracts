@@ -55,14 +55,12 @@ fn setup() -> Harness {
 
     // Deploy and initialize the verification contract (the primary
     // whitelisted caller of advance_level).
-    let ver_id = env.register(VerificationContract, ());
+    let ver_id = env.register(VerificationContract, (admin.clone(),));
     let verification = VerificationContractClient::new(&env, &ver_id);
-    verification.initialize(&admin);
 
     // Deploy and initialize the progress contract.
-    let progress_id = env.register(ProgressContract, ());
+    let progress_id = env.register(ProgressContract, (admin.clone(),));
     let progress = ProgressContractClient::new(&env, &progress_id);
-    progress.initialize(&admin);
     common::wire_registration(&env, None, Some(&progress));
     progress.set_verification_contract(&ver_id);
 
@@ -72,9 +70,8 @@ fn setup() -> Harness {
         .address();
 
     // Deploy and initialize the scout_access contract.
-    let sa_id = env.register(ScoutAccessContract, ());
+    let sa_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
     let scout_access = ScoutAccessContractClient::new(&env, &sa_id);
-    scout_access.initialize(&admin, &xlm, &default_fees());
     common::wire_registration(&env, Some(&scout_access), None);
 
     // Wire scout_access → progress so log_trial_offer can call advance_level.

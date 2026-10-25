@@ -37,9 +37,9 @@ fn valid_cid(env: &Env) -> String {
     String::from_str(env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB")
 }
 
-/// Deploy + initialize scout_access and a *real* progress contract wired to
-/// scout_access (progress is left uninitialized in `setup_unwired_progress`
-/// variant below).
+/// Deploy scout_access and a *real* progress contract (both initialized by
+/// their constructors). Progress is left unwired, so its `advance_level`
+/// fails until a test wires it.
 fn setup() -> (
     Env,
     Address,
@@ -56,12 +56,11 @@ fn setup() -> (
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    let sa_id = env.register(ScoutAccessContract, ());
+    let sa_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), fees(),));
     let scout_access = ScoutAccessContractClient::new(&env, &sa_id);
-    scout_access.initialize(&admin, &xlm, &fees());
     common::wire_registration(&env, Some(&scout_access), None);
 
-    let progress_id = env.register(ProgressContract, ());
+    let progress_id = env.register(ProgressContract, (admin.clone(),));
     let progress = ProgressContractClient::new(&env, &progress_id);
 
     (env, admin, xlm, scout_access, progress)
@@ -125,11 +124,9 @@ fn test_confirm_trial_offer_idempotency_nonce_prevents_replay() {
     // and whitelist scout_access as the secondary advance_level caller. The
     // milestone_ref (trial index 1) must validate, so also wire a
     // verification contract with one approved milestone.
-    let ver_id = env.register(scoutchain_verification::VerificationContract, ());
+    let ver_id = env.register(scoutchain_verification::VerificationContract, (admin.clone(),));
     let verification = scoutchain_verification::VerificationContractClient::new(&env, &ver_id);
-    verification.initialize(&admin);
 
-    progress.initialize(&admin);
     common::wire_registration(&env, None, Some(&progress));
     progress.set_verification_contract(&ver_id);
     scout_access.set_progress_contract(&progress.address);

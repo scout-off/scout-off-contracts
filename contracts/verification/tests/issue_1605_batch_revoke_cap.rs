@@ -27,10 +27,9 @@ fn cid(env: &Env, seed: u32) -> String {
 fn setup() -> (Env, VerificationContractClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let contract_id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &contract_id);
     (env, client)
 }
 

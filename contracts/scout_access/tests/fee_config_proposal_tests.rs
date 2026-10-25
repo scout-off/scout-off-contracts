@@ -62,9 +62,8 @@ fn setup() -> Harness {
     token_client.mint(&scout, &1_000_000_000);
 
     // Deploy and initialize scout_access
-    let contract_id = env.register(ScoutAccessContract, ());
+    let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
     let client = ScoutAccessContractClient::new(&env, &contract_id);
-    client.initialize(&admin, &xlm, &default_fees());
     common::wire_registration(&env, Some(&client), None);
     common::wire_progress_level_stub(&env, &client);
 
@@ -146,29 +145,12 @@ fn test_propose_fee_config_requires_admin() {
     let env = Env::default();
     env.ledger().with_mut(|l| l.timestamp = 1_000_000);
     let admin = Address::generate(&env);
-    let contract_id = env.register(ScoutAccessContract, ());
-    let client = ScoutAccessContractClient::new(&env, &contract_id);
     let xlm = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    // Mock ONLY the admin's initialize auth; no auths are mocked afterwards,
-    // so the require_admin check inside propose_fee_config fails for any caller.
-    env.mock_auths(&[MockAuth {
-        address: &admin,
-        invoke: &MockAuthInvoke {
-            contract: &contract_id,
-            fn_name: "initialize",
-            args: soroban_sdk::vec![
-                &env,
-                admin.to_val(),
-                xlm.to_val(),
-                default_fees().into_val(&env)
-            ],
-            sub_invokes: &[],
-        },
-    }]);
-    client.initialize(&admin, &xlm, &default_fees());
+    let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+    let client = ScoutAccessContractClient::new(&env, &contract_id);
 
     // Propose should reject due to missing admin auth.
     let result = client.try_propose_fee_config(&default_fees());
@@ -254,8 +236,6 @@ fn test_activate_fee_config_requires_admin() {
     let env = Env::default();
     env.ledger().with_mut(|l| l.timestamp = 1_000_000);
     let admin = Address::generate(&env);
-    let contract_id = env.register(ScoutAccessContract, ());
-    let client = ScoutAccessContractClient::new(&env, &contract_id);
     let xlm = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
@@ -264,21 +244,8 @@ fn test_activate_fee_config_requires_admin() {
     new_config.elite_sub_stroops = 10_000_000;
 
     // Mock ONLY the admin's auth for the calls that must succeed.
-    env.mock_auths(&[MockAuth {
-        address: &admin,
-        invoke: &MockAuthInvoke {
-            contract: &contract_id,
-            fn_name: "initialize",
-            args: soroban_sdk::vec![
-                &env,
-                admin.to_val(),
-                xlm.to_val(),
-                default_fees().into_val(&env)
-            ],
-            sub_invokes: &[],
-        },
-    }]);
-    client.initialize(&admin, &xlm, &default_fees());
+    let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+    let client = ScoutAccessContractClient::new(&env, &contract_id);
 
     env.mock_auths(&[MockAuth {
         address: &admin,

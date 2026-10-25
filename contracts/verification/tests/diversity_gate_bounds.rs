@@ -14,9 +14,8 @@ const MAX_VALIDATORS: u32 = 100;
 fn setup() -> (Env, Address, VerificationContractClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(VerificationContract, ());
+    let contract_id = env.register(VerificationContract, (Address::generate(&env),));
     let client = VerificationContractClient::new(&env, &contract_id);
-    client.initialize(&Address::generate(&env));
     (env, contract_id, client)
 }
 

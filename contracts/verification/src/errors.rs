@@ -240,20 +240,23 @@ mod tests {
 
     const VALID_CID_V0: &str = "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB";
 
-    fn setup() -> (Env, crate::VerificationContractClient<'static>) {
+    fn setup_env() -> Env {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register(crate::VerificationContract, ());
-        let client = crate::VerificationContractClient::new(&env, &id);
-        (env, client)
+        env
+    }
+
+    fn deploy(env: &Env, admin: &Address) -> crate::VerificationContractClient<'static> {
+        let id = env.register(crate::VerificationContract, (admin.clone(),));
+        crate::VerificationContractClient::new(env, &id)
     }
 
     #[test]
     fn test_approve_milestone_description_at_boundary_succeeds() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let validator = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         client.register_validator(
             &validator,
             &String::from_str(&env, "UEFA B License"),
@@ -271,10 +274,10 @@ mod tests {
 
     #[test]
     fn test_approve_milestone_description_over_limit_returns_invalid_input() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let validator = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         client.register_validator(
             &validator,
             &String::from_str(&env, "UEFA B License"),

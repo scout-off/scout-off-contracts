@@ -57,9 +57,8 @@ fn setup() -> Harness {
     env.ledger().with_mut(|l| l.timestamp = 1_000_000);
 
     let admin = Address::generate(&env);
-    let id = env.register(VerificationContract, ());
+    let id = env.register(VerificationContract, (admin.clone(),));
     let verification = VerificationContractClient::new(&env, &id);
-    verification.initialize(&admin);
 
     Harness { env, verification }
 }

@@ -5270,9 +5270,9 @@ mod tests {
     // #1686: validator specialization changes must be indexable and deduplicated.
     #[test]
     fn test_specialization_update_emits_old_and_new_lists() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let validator = Address::generate(&env);
         let old = soroban_sdk::vec![&env, String::from_str(&env, "physical-stats")];
         let new = soroban_sdk::vec![&env, String::from_str(&env, "identity-kyc")];
@@ -5299,8 +5299,8 @@ mod tests {
 
     #[test]
     fn test_set_specializations_rejects_duplicate_tags_and_keeps_original() {
-        let (env, client) = setup();
-        client.initialize(&Address::generate(&env));
+        let env = setup_env();
+        let client = deploy(&env, &Address::generate(&env));
         let validator = Address::generate(&env);
         client.register_validator(
             &validator,
@@ -5319,8 +5319,8 @@ mod tests {
 
     #[test]
     fn test_register_validator_rejects_duplicate_specializations() {
-        let (env, client) = setup();
-        client.initialize(&Address::generate(&env));
+        let env = setup_env();
+        let client = deploy(&env, &Address::generate(&env));
         let wallet = Address::generate(&env);
         let tag = String::from_str(&env, "physical-stats");
         let duplicate = soroban_sdk::vec![&env, tag.clone(), tag];
@@ -5338,8 +5338,8 @@ mod tests {
 
     #[test]
     fn test_batch_register_validators_rejects_duplicate_specializations() {
-        let (env, client) = setup();
-        client.initialize(&Address::generate(&env));
+        let env = setup_env();
+        let client = deploy(&env, &Address::generate(&env));
         let wallet = Address::generate(&env);
         let tag = String::from_str(&env, "physical-stats");
         let entries = soroban_sdk::vec![
@@ -5361,8 +5361,8 @@ mod tests {
     // #1687: reject empty and 1/2-byte descriptions in all three entrypoints.
     #[test]
     fn test_approve_milestone_rejects_short_descriptions() {
-        let (env, client) = setup();
-        client.initialize(&Address::generate(&env));
+        let env = setup_env();
+        let client = deploy(&env, &Address::generate(&env));
         let validator = Address::generate(&env);
         client.register_validator(
             &validator,
@@ -5387,8 +5387,8 @@ mod tests {
 
     #[test]
     fn test_attest_milestone_rejects_short_descriptions() {
-        let (env, client) = setup();
-        client.initialize(&Address::generate(&env));
+        let env = setup_env();
+        let client = deploy(&env, &Address::generate(&env));
         let validator = Address::generate(&env);
         client.register_validator(
             &validator,
@@ -5411,8 +5411,8 @@ mod tests {
 
     #[test]
     fn test_submit_attested_milestone_rejects_short_descriptions() {
-        let (env, client) = setup();
-        client.initialize(&Address::generate(&env));
+        let env = setup_env();
+        let client = deploy(&env, &Address::generate(&env));
         let validator = Address::generate(&env);
         let relayer = Address::generate(&env);
         for short in ["", "x", "xy"] {
@@ -5471,14 +5471,37 @@ mod tests {
         );
     }
 
-    fn setup() -> (Env, VerificationContractClient<'static>) {
+    fn setup_env() -> Env {
         let env = Env::default();
         env.mock_all_auths();
         env.ledger().with_mut(|l| {
             l.sequence_number = 1;
         });
-        let id = env.register(VerificationContract, ());
-        let client = VerificationContractClient::new(&env, &id);
+        env
+    }
+
+    /// Deploy with `admin` passed to the constructor (initialization is atomic
+    /// with deployment, #1369).
+    fn deploy(env: &Env, admin: &Address) -> VerificationContractClient<'static> {
+        let id = env.register(VerificationContract, (admin.clone(),));
+        VerificationContractClient::new(env, &id)
+    }
+
+    /// `deploy` plus an always-`Active` registration peer, for tests that
+    /// commit milestones but are not about registration (#1622 fails closed
+    /// when no registration contract is wired).
+    fn deploy_active(env: &Env, admin: &Address) -> VerificationContractClient<'static> {
+        let client = deploy(env, admin);
+        client.set_registration_contract(
+            &scoutchain_shared_types::testutils::active_registry_stub(env),
+        );
+        client
+    }
+
+    /// An already-initialized contract with a throwaway admin.
+    fn setup() -> (Env, VerificationContractClient<'static>) {
+        let env = setup_env();
+        let client = deploy(&env, &Address::generate(&env));
         (env, client)
     }
 
@@ -5576,10 +5599,10 @@ mod tests {
 
     // #1695 — historical unique milestone count, not active count or rounds.
     fn setup_dispute_count_scenario() -> (Env, VerificationContractClient<'static>, Address) {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let wallet = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         setup_with_registration(&env, &client, &wallet);
         let validator = Address::generate(&env);
         client.register_validator(
@@ -5601,8 +5624,8 @@ mod tests {
 
     #[test]
     fn test_get_player_dispute_count_zero_before_any_disputes() {
-        let (env, client) = setup();
-        client.initialize(&Address::generate(&env));
+        let env = setup_env();
+        let client = deploy(&env, &Address::generate(&env));
         assert_eq!(client.get_player_dispute_count(&1u64), 0);
     }
 
@@ -5661,11 +5684,11 @@ mod tests {
 
     #[test]
     fn test_admin_transfer_propose_replace_and_accept() {
-        let (env, client) = setup();
+        let env = setup_env();
         let old_admin = Address::generate(&env);
         let stale_admin = Address::generate(&env);
         let new_admin = Address::generate(&env);
-        client.initialize(&old_admin);
+        let client = deploy(&env, &old_admin);
 
         client.propose_admin(&stale_admin);
         assert_eq!(
@@ -5738,10 +5761,10 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_old_admin_loses_access_after_transfer() {
-        let (env, client) = setup();
+        let env = setup_env();
         let old_admin = Address::generate(&env);
         let new_admin = Address::generate(&env);
-        client.initialize(&old_admin);
+        let client = deploy(&env, &old_admin);
 
         client.propose_admin(&new_admin);
         env.mock_auths(&[MockAuth {
@@ -5773,11 +5796,11 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_third_party_cannot_accept_admin() {
-        let (env, client) = setup();
+        let env = setup_env();
         let old_admin = Address::generate(&env);
         let pending_admin = Address::generate(&env);
         let third_party = Address::generate(&env);
-        client.initialize(&old_admin);
+        let client = deploy(&env, &old_admin);
         client.propose_admin(&pending_admin);
 
         env.mock_auths(&[MockAuth {
@@ -5797,9 +5820,9 @@ mod tests {
     #[test]
     fn test_jury_closeout_extends_record_ttl_and_updates_indexes() {
         use soroban_sdk::testutils::storage::Persistent as _;
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         env.ledger().with_mut(|ledger| {
             ledger.sequence_number = 10;
             ledger.timestamp = 100;
@@ -5869,9 +5892,9 @@ mod tests {
 
     #[test]
     fn test_get_validator_milestones_page_reconstructs_full_history() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -5928,9 +5951,9 @@ mod tests {
 
     #[test]
     fn test_get_milestones_by_validator_page_returns_full_records() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -5978,9 +6001,9 @@ mod tests {
     /// Duplicate player IDs are not added to the index.
     #[test]
     fn test_get_validator_players_index_accuracy() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6029,9 +6052,9 @@ mod tests {
     /// player_id to the ValidatorPlayers index.
     #[test]
     fn test_get_validator_players_no_duplicates() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6067,9 +6090,9 @@ mod tests {
     /// Each validator's index must be independent and accurate.
     #[test]
     fn test_get_validator_players_two_validators_independent() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let v1 = Address::generate(&env);
         let v2 = Address::generate(&env);
@@ -6121,9 +6144,9 @@ mod tests {
 
     #[test]
     fn test_validator_milestone_count() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6159,9 +6182,9 @@ mod tests {
 
     #[test]
     fn test_total_milestone_count() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         // Initialized to 0
         assert_eq!(client.get_total_milestone_count(), 0);
@@ -6201,10 +6224,12 @@ mod tests {
         assert_eq!(client.get_validator_milestone_count(&v2), 1);
     }
 
+    /// The constructor initializes atomically with deployment (#1369), so a
+    /// freshly deployed contract already reports itself as initialized.
     #[test]
-    fn test_health_false_before_initialize() {
+    fn test_health_initialized_after_deploy() {
         let (_env, client) = setup();
-        assert!(!client.health().initialized);
+        assert!(client.health().initialized);
     }
 
     #[test]
@@ -6218,9 +6243,9 @@ mod tests {
 
     #[test]
     fn test_register_and_approve() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6249,9 +6274,9 @@ mod tests {
 
     #[test]
     fn test_multiple_milestones_same_player() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6282,9 +6307,9 @@ mod tests {
 
     #[test]
     fn test_get_milestone_returns_correct_data() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6310,9 +6335,9 @@ mod tests {
 
     #[test]
     fn test_revoke_validator() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6329,9 +6354,9 @@ mod tests {
 
     #[test]
     fn test_register_attestation_key_emits_registration_and_rotation_events() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         client.register_validator(
@@ -6382,9 +6407,9 @@ mod tests {
 
     #[test]
     fn test_register_attestation_key_rejects_inactive_validator() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         client.register_validator(
@@ -6403,9 +6428,9 @@ mod tests {
 
     #[test]
     fn test_revoke_validator_with_reason() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6423,9 +6448,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "Error(Contract, #10)")]
     fn test_revoke_validator_reason_too_long() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6443,9 +6468,9 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_revoked_validator_cannot_approve() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6470,9 +6495,9 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_unregistered_validator_cannot_approve() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let random = Address::generate(&env);
         // Should panic — not in validator registry
@@ -6487,9 +6512,9 @@ mod tests {
 
     #[test]
     fn test_two_validators_approve_milestones_for_same_player() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator1 = Address::generate(&env);
         let validator2 = Address::generate(&env);
@@ -6532,9 +6557,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "Error(Contract, #3)")]
     fn test_approve_milestone_blocked_when_paused() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6558,9 +6583,9 @@ mod tests {
 
     #[test]
     fn test_validator_accessible_after_ledger_advancement() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6582,9 +6607,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "Error(Contract, #13)")]
     fn test_approve_milestone_overflow() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6613,9 +6638,9 @@ mod tests {
 
     #[test]
     fn test_pause_unpause_events() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         client.pause_contract();
         let events = env.events().all();
@@ -6649,9 +6674,9 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_get_validator_not_found() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let unknown = Address::generate(&env);
         client.get_validator(&unknown);
@@ -6659,9 +6684,9 @@ mod tests {
 
     #[test]
     fn test_set_progress_contract_second_call_returns_already_configured() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let addr = Address::generate(&env);
         client.set_progress_contract(&addr);
@@ -6672,9 +6697,9 @@ mod tests {
 
     #[test]
     fn test_set_progress_contract_emits_event() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let addr = Address::generate(&env);
         client.set_progress_contract(&addr);
@@ -6714,9 +6739,9 @@ mod tests {
         // must remain paired with a still-functional update_progress_contract
         // escape hatch for intentional re-wiring (issue #1041 keeps this path
         // deprecated-but-functional, not removed).
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let addr1 = Address::generate(&env);
         let addr2 = Address::generate(&env);
@@ -6744,9 +6769,9 @@ mod tests {
 
     #[test]
     fn test_get_progress_contract_before_and_after_configuration() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         assert_eq!(client.get_progress_contract(), None);
 
@@ -6757,9 +6782,9 @@ mod tests {
 
     #[test]
     fn test_get_wiring_state_initially_unconfigured() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let state = client.get_wiring_state();
         assert_eq!(state.progress_contract.address, None);
@@ -6771,9 +6796,9 @@ mod tests {
 
     #[test]
     fn test_get_wiring_state_reflects_both_links() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let progress_addr = Address::generate(&env);
         let reg_addr = Address::generate(&env);
@@ -6793,9 +6818,9 @@ mod tests {
         // registration_contract carries the same first-call-only legacy
         // guard as progress_contract (both predate issue #1041) — verify it
         // is untouched by the wiring-epoch rollout.
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let addr = Address::generate(&env);
         client.set_registration_contract(&addr);
@@ -6806,9 +6831,9 @@ mod tests {
 
     #[test]
     fn test_update_registration_contract_bumps_epoch() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let addr1 = Address::generate(&env);
         let addr2 = Address::generate(&env);
@@ -6822,9 +6847,9 @@ mod tests {
 
     #[test]
     fn test_set_registration_contract_emits_wiring_updated_event() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let reg_addr = Address::generate(&env);
         client.set_registration_contract(&reg_addr);
@@ -6853,9 +6878,9 @@ mod tests {
 
     #[test]
     fn test_upgrade_preserves_admin() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6878,9 +6903,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "Error(Contract, #9)")]
     fn test_register_validator_credentials_257_bytes_fails() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         // 257 ASCII bytes — must exceed the 256-byte limit
@@ -6895,9 +6920,9 @@ mod tests {
 
     #[test]
     fn test_register_validator_credentials_256_bytes_succeeds() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         // Exactly 256 ASCII bytes — must be accepted
@@ -6914,9 +6939,9 @@ mod tests {
 
     #[test]
     fn test_initialize_emits_contract_initialized_event() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let events = env.events().all();
         assert_eq!(
@@ -6934,9 +6959,9 @@ mod tests {
 
     #[test]
     fn test_duplicate_initialize_emits_no_event() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         // Clear events after first initialize
         let _ = env.events().all();
@@ -6949,9 +6974,9 @@ mod tests {
 
     #[test]
     fn test_register_validator_cap_boundary() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         // Register exactly MAX_VALIDATORS (100) validators — all must succeed.
         for _ in 0..100 {
@@ -6977,9 +7002,9 @@ mod tests {
 
     #[test]
     fn test_get_validators_excludes_revoked() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let v1 = Address::generate(&env);
         let v2 = Address::generate(&env);
@@ -7016,9 +7041,9 @@ mod tests {
 
     #[test]
     fn test_get_active_validator_count() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         assert_eq!(client.get_active_validator_count(), 0);
 
@@ -7068,9 +7093,9 @@ mod tests {
 
     #[test]
     fn test_active_validator_count_matches_active_validator_statuses() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let assert_active_count_matches_statuses = || {
             let validators = client.get_validators();
@@ -7133,9 +7158,9 @@ mod tests {
 
     #[test]
     fn test_get_validator_count() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         // Initial state: 0 total validators
         assert_eq!(client.get_validator_count(), 0);
@@ -7201,9 +7226,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "Error(Contract, #9)")]
     fn test_cidv0_too_short_rejected() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let validator = Address::generate(&env);
         client.register_validator(
             &validator,
@@ -7224,9 +7249,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "Error(Contract, #9)")]
     fn test_cidv0_too_long_rejected() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let validator = Address::generate(&env);
         client.register_validator(
             &validator,
@@ -7247,9 +7272,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "Error(Contract, #9)")]
     fn test_cidv0_invalid_base58_char_rejected() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let validator = Address::generate(&env);
         client.register_validator(
             &validator,
@@ -7269,9 +7294,9 @@ mod tests {
 
     #[test]
     fn test_cidv0_exactly_46_chars_accepted() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let validator = Address::generate(&env);
         client.register_validator(
             &validator,
@@ -7292,9 +7317,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "Error(Contract, #9)")]
     fn test_cidv1_too_short_rejected() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let validator = Address::generate(&env);
         client.register_validator(
             &validator,
@@ -7317,9 +7342,9 @@ mod tests {
 
     #[test]
     fn test_cidv1_exactly_59_chars_accepted() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let validator = Address::generate(&env);
         client.register_validator(
             &validator,
@@ -7340,9 +7365,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "Error(Contract, #9)")]
     fn test_no_prefix_rejected() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let validator = Address::generate(&env);
         client.register_validator(
             &validator,
@@ -7378,9 +7403,9 @@ mod tests {
     /// This failure confirms the bug: reads never extend the TTL.
     #[test]
     fn test_get_milestone_ttl_expires_without_bump() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -7427,9 +7452,9 @@ mod tests {
     /// **Validates: Requirements 3.1**
     #[test]
     fn test_get_milestone_return_value_preserved() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -7466,9 +7491,9 @@ mod tests {
     /// **Validates: Requirements 3.2**
     #[test]
     fn test_get_milestone_not_found_preserved() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let result = client.try_get_milestone(&999u64, &1u32);
         assert!(result.is_err());
@@ -7483,9 +7508,9 @@ mod tests {
     /// **Validates: Requirements 3.3**
     #[test]
     fn test_get_milestone_does_not_alter_counters() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -7529,9 +7554,9 @@ mod tests {
     /// Count starts at 0 before any disputes are filed.
     #[test]
     fn test_active_disputes_count_starts_at_zero() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         assert_eq!(client.get_active_disputes_count(), 0);
     }
@@ -7539,10 +7564,10 @@ mod tests {
     /// Count increases by 1 for each new dispute on the same milestone.
     #[test]
     fn test_active_disputes_count_increments_on_dispute() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let player_wallet = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let reg_id = setup_with_registration(&env, &client, &player_wallet);
 
         let validator = Address::generate(&env);
@@ -7595,10 +7620,10 @@ mod tests {
     /// the duplicate is rejected before the counter increments.
     #[test]
     fn test_active_disputes_count_not_incremented_on_duplicate_dispute() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let player_wallet = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let reg_id = setup_with_registration(&env, &client, &player_wallet);
 
         let validator = Address::generate(&env);
@@ -7643,10 +7668,10 @@ mod tests {
 
     #[test]
     fn test_resolve_dispute_marks_resolved_and_decrements_active_count() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let player_wallet = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let reg_id = setup_with_registration(&env, &client, &player_wallet);
 
         let validator = Address::generate(&env);
@@ -7684,10 +7709,10 @@ mod tests {
 
     #[test]
     fn test_resolve_dispute_emits_event() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let player_wallet = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let reg_id = setup_with_registration(&env, &client, &player_wallet);
 
         let validator = Address::generate(&env);
@@ -7732,10 +7757,10 @@ mod tests {
 
     #[test]
     fn test_dispute_milestone_emits_event_with_reason() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let player_wallet = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let reg_id = setup_with_registration(&env, &client, &player_wallet);
 
         let validator = Address::generate(&env);
@@ -7778,9 +7803,9 @@ mod tests {
 
     #[test]
     fn test_resolve_dispute_missing_returns_milestone_not_found() {
-        let (_env, client) = setup();
+        let _env = setup_env();
         let admin = Address::generate(&_env);
-        client.initialize(&admin);
+        let client = deploy(&_env, &admin);
 
         let result = client.try_resolve_dispute(&99u64, &1u32, &false);
         assert_eq!(result, Err(Ok(VerificationError::MilestoneNotFound)));
@@ -7788,10 +7813,10 @@ mod tests {
 
     #[test]
     fn test_resolve_dispute_already_resolved_returns_error() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let player_wallet = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let reg_id = setup_with_registration(&env, &client, &player_wallet);
 
         let validator = Address::generate(&env);
@@ -7836,10 +7861,10 @@ mod tests {
     /// `true` after, mirroring the `is_active_validator` boolean-helper pattern.
     #[test]
     fn test_has_dispute_false_before_and_true_after_dispute() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let player_wallet = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let reg_id = setup_with_registration(&env, &client, &player_wallet);
 
         let validator = Address::generate(&env);
@@ -7883,10 +7908,10 @@ mod tests {
     /// that was never disputed, even when other pairs have disputes.
     #[test]
     fn test_has_dispute_false_for_undisputed_milestone() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let player_wallet = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let reg_id = setup_with_registration(&env, &client, &player_wallet);
 
         let validator = Address::generate(&env);
@@ -7936,10 +7961,10 @@ mod tests {
     /// when `get_dispute` reports `MilestoneNotFound`.
     #[test]
     fn test_has_dispute_matches_get_dispute_ok_and_milestone_not_found() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let player_wallet = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let reg_id = setup_with_registration(&env, &client, &player_wallet);
 
         let validator = Address::generate(&env);
@@ -8001,11 +8026,11 @@ mod tests {
     /// for every player_id, so `attacker_wallet` should be rejected.
     #[test]
     fn test_dispute_milestone_rejects_wrong_wallet() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let player_wallet = Address::generate(&env);
         let attacker_wallet = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let reg_id = setup_with_registration(&env, &client, &player_wallet);
 
         let validator = Address::generate(&env);
@@ -8044,10 +8069,10 @@ mod tests {
     /// happy path.
     #[test]
     fn test_dispute_milestone_accepts_correct_wallet() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let player_wallet = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let reg_id = setup_with_registration(&env, &client, &player_wallet);
 
         let validator = Address::generate(&env);
@@ -8091,9 +8116,9 @@ mod tests {
     /// **Validates: Duplicate registration check in register_validator**
     #[test]
     fn test_register_validator_already_registered_wallet_fails() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         let credentials = String::from_str(&env, "UEFA A License");
@@ -8137,9 +8162,9 @@ mod tests {
 
     #[test]
     fn test_transfer_validator_succeeds() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let old_wallet = Address::generate(&env);
         let credentials = String::from_str(&env, "UEFA A License");
@@ -8185,9 +8210,9 @@ mod tests {
 
     #[test]
     fn test_transfer_validator_same_address() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let credentials = String::from_str(&env, "UEFA B License");
@@ -8233,9 +8258,9 @@ mod tests {
 
     #[test]
     fn test_validator_reputation_mechanism() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet_cause = Address::generate(&env);
         let wallet_routine = Address::generate(&env);
@@ -8319,9 +8344,9 @@ mod tests {
 
     #[test]
     fn test_is_milestone_flagged_reads_second_page() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -8365,9 +8390,9 @@ mod tests {
     /// revoked, and never-registered wallets must all be reflected correctly.
     #[test]
     fn test_get_validator_statuses_mixed_batch() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let active_wallet = Address::generate(&env);
         let revoked_wallet = Address::generate(&env);
@@ -8414,9 +8439,9 @@ mod tests {
     /// More than 20 wallets is rejected with `InvalidInput` (#1721).
     #[test]
     fn test_get_validator_statuses_batch_cap_at_20() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         // Build a Vec of 25 distinct wallets (none registered).
         let mut wallets = soroban_sdk::Vec::new(&env);
@@ -8434,9 +8459,9 @@ mod tests {
     /// An empty input returns an empty result without error.
     #[test]
     fn test_get_validator_statuses_empty_input() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallets: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(&env);
         let statuses = client.get_validator_statuses(&wallets);
@@ -8452,9 +8477,9 @@ mod tests {
     /// contract (issue #860).
     #[test]
     fn test_get_milestones_since_filters_by_approved_at() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -8519,9 +8544,9 @@ mod tests {
     /// Player with no milestones returns an empty Vec.
     #[test]
     fn test_get_milestones_since_empty_for_unknown_player() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let result = client.get_milestones_since(&999u64, &0u64);
         assert_eq!(result.len(), 0);
@@ -8535,9 +8560,9 @@ mod tests {
     /// queries return for the same validator.
     #[test]
     fn test_get_validator_activity_report_matches_individual_queries() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         let player_id: u64 = 1;
@@ -8616,9 +8641,9 @@ mod tests {
     /// Report for an unregistered wallet returns ValidatorNotFound.
     #[test]
     fn test_get_validator_activity_report_unregistered_returns_not_found() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let unknown = Address::generate(&env);
         let result = client.try_get_validator_activity_report(&unknown);
@@ -8628,9 +8653,9 @@ mod tests {
     /// Report for a validator with no milestones has zero counts.
     #[test]
     fn test_get_validator_activity_report_zero_milestones() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -8653,9 +8678,9 @@ mod tests {
 
     #[test]
     fn test_specializations_stored_on_validator() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         let mut specs = Vec::new(&env);
@@ -8673,17 +8698,17 @@ mod tests {
 
     #[test]
     fn test_min_region_quorum_default_is_zero() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         assert_eq!(client.get_min_region_quorum(), 0);
     }
 
     #[test]
     fn test_set_and_get_min_region_quorum() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         client.set_min_region_quorum(&2u32);
         assert_eq!(client.get_min_region_quorum(), 2);
     }
@@ -8692,9 +8717,9 @@ mod tests {
     /// milestone (`SpecializationMismatch`).
     #[test]
     fn test_specialization_mismatch_rejected() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         let mut specs = Vec::new(&env);
@@ -8720,9 +8745,9 @@ mod tests {
     /// A validator with the matching category can approve a tagged milestone.
     #[test]
     fn test_matching_specialization_allows_advance() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         let mut specs = Vec::new(&env);
@@ -8748,9 +8773,9 @@ mod tests {
     /// skipped entirely — a general-purpose validator can approve.
     #[test]
     fn test_no_category_skips_specialization_check() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -8779,10 +8804,10 @@ mod tests {
     /// return `DisputeAlreadyExists` (code 32), not the generic `InvalidInput`.
     #[test]
     fn test_duplicate_dispute_returns_dispute_already_open() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let player_wallet = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let reg_id = setup_with_registration(&env, &client, &player_wallet);
 
         let validator = Address::generate(&env);
@@ -8830,9 +8855,9 @@ mod tests {
 
     #[test]
     fn test_transfer_admin_success() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let new_admin = Address::generate(&env);
         // Should not panic — current admin auth is satisfied
@@ -8842,9 +8867,9 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_old_admin_loses_access_after_transfer_admin() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let new_admin = Address::generate(&env);
         client.transfer_admin(&new_admin);
@@ -8858,9 +8883,9 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_transfer_admin_unauthorized() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let attacker = Address::generate(&env);
         // Drop mock_all_auths — only authorize attacker, not the real admin
@@ -8897,9 +8922,9 @@ mod tests {
     /// fills, and the head then stays bounded instead of counting up.
     #[test]
     fn test_ring_buffer_write_head_wraps_at_boundary() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let validator = register_test_validator(&env, &client);
 
         // Seed the head just below the cap so the next write fills the ring.
@@ -8941,9 +8966,9 @@ mod tests {
     /// growing; the slot sequence is unchanged.
     #[test]
     fn test_ring_buffer_write_head_never_exceeds_twice_cap() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let validator = register_test_validator(&env, &client);
 
         env.as_contract(&client.address, || {
@@ -8969,9 +8994,9 @@ mod tests {
     /// The global index reads back in insertion order.
     #[test]
     fn test_global_index_reads_in_insertion_order() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let validator = register_test_validator(&env, &client);
 
         client.approve_milestone(
@@ -8999,9 +9024,9 @@ mod tests {
     /// value on contracts that predate the u64 key.
     #[test]
     fn test_total_milestone_count_u64() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         let validator = register_test_validator(&env, &client);
 
         env.as_contract(&client.address, || {
@@ -9046,9 +9071,9 @@ mod tests {
 
     #[test]
     fn test_set_diversity_config_emits_old_and_new() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         client.set_diversity_config(&2u32, &1u32);
         let data = last_event_data(&env, "diversity_config_updated").unwrap();
@@ -9065,9 +9090,9 @@ mod tests {
 
     #[test]
     fn test_set_min_region_quorum_emits_event() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         client.set_min_region_quorum(&2u32);
         let data = last_event_data(&env, "min_region_quorum_updated").unwrap();
@@ -9077,9 +9102,9 @@ mod tests {
 
     #[test]
     fn test_set_milestone_threshold_emits_event() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         register_test_validator(&env, &client);
         register_test_validator(&env, &client);
 
@@ -9091,9 +9116,9 @@ mod tests {
 
     #[test]
     fn test_set_voting_window_secs_emits_event() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let old_window = client.get_voting_window_secs();
         client.set_voting_window_secs(&86_400u64);
@@ -9104,9 +9129,9 @@ mod tests {
 
     #[test]
     fn test_set_reg_cooldown_emits_event() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let old_cooldown = client.get_reg_cooldown();
         client.set_reg_cooldown(&0u64);
@@ -9117,9 +9142,9 @@ mod tests {
 
     #[test]
     fn test_set_jury_config_emits_event() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         for _ in 0..3 {
             register_test_validator(&env, &client);
         }
@@ -9142,10 +9167,10 @@ mod tests {
 
     #[test]
     fn revocation_history_routine_only_has_current_record_not_history() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let wallet = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         client.register_validator(&wallet, &String::from_str(&env, "UEFA B Licence"),
             &String::from_str(&env, "Example Academy"), &Vec::new(&env));
         client.revoke_validator(&wallet, &RevocationSeverity::Routine,
@@ -9159,10 +9184,10 @@ mod tests {
 
     #[test]
     fn revocation_history_escalation_preserves_original_routine_timestamp() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let wallet = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         client.register_validator(&wallet, &String::from_str(&env, "UEFA B Licence"),
             &String::from_str(&env, "Example Academy"), &Vec::new(&env));
         env.ledger().with_mut(|l| l.timestamp = 1_000);
@@ -9183,10 +9208,10 @@ mod tests {
 
     #[test]
     fn revocation_history_for_cause_downgrade_is_rejected_without_mutation() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let wallet = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         client.register_validator(&wallet, &String::from_str(&env, "UEFA B Licence"),
             &String::from_str(&env, "Example Academy"), &Vec::new(&env));
         client.revoke_validator(&wallet, &RevocationSeverity::ForCause,
@@ -9204,10 +9229,10 @@ mod tests {
     // -------------------------------------------------------------------------
     #[test]
     fn restore_milestone_existing_record_emits_event_and_preserves_data() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let validator = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         client.register_validator(&validator, &String::from_str(&env, "UEFA B Licence"),
             &String::from_str(&env, "Example Academy"), &Vec::new(&env));
         client.approve_milestone(&validator, &7u64, &String::from_str(&env, "Training"),
@@ -9225,18 +9250,18 @@ mod tests {
 
     #[test]
     fn restore_milestone_missing_returns_evicted_error() {
-        let (env, client) = setup();
-        client.initialize(&Address::generate(&env));
+        let env = setup_env();
+        let client = deploy(&env, &Address::generate(&env));
         assert_eq!(client.try_restore_milestone_record(&999, &1),
             Err(Ok(VerificationError::MilestoneRecordEvicted)));
     }
 
     #[test]
     fn restore_validator_existing_record_emits_event_and_preserves_data() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let wallet = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         client.register_validator(&wallet, &String::from_str(&env, "UEFA B Licence"),
             &String::from_str(&env, "Example Academy"), &Vec::new(&env));
         let original = client.get_validator(&wallet);
@@ -9255,8 +9280,8 @@ mod tests {
 
     #[test]
     fn restore_validator_missing_returns_evicted_error() {
-        let (env, client) = setup();
-        client.initialize(&Address::generate(&env));
+        let env = setup_env();
+        let client = deploy(&env, &Address::generate(&env));
         assert_eq!(client.try_restore_validator_record(&Address::generate(&env)),
             Err(Ok(VerificationError::ValidatorRecordEvicted)));
     }
@@ -9264,8 +9289,8 @@ mod tests {
     #[test]
     #[should_panic]
     fn restore_milestone_requires_admin_authorization() {
-        let (env, client) = setup();
-        client.initialize(&Address::generate(&env));
+        let env = setup_env();
+        let client = deploy(&env, &Address::generate(&env));
         let validator = Address::generate(&env);
         client.register_validator(&validator, &String::from_str(&env, "UEFA B Licence"),
             &String::from_str(&env, "Example Academy"), &Vec::new(&env));
@@ -9278,8 +9303,8 @@ mod tests {
     #[test]
     #[should_panic]
     fn restore_validator_requires_admin_authorization() {
-        let (env, client) = setup();
-        client.initialize(&Address::generate(&env));
+        let env = setup_env();
+        let client = deploy(&env, &Address::generate(&env));
         let wallet = Address::generate(&env);
         client.register_validator(&wallet, &String::from_str(&env, "UEFA B Licence"),
             &String::from_str(&env, "Example Academy"), &Vec::new(&env));
@@ -9290,10 +9315,10 @@ mod tests {
     #[test]
     fn restore_milestone_renews_remaining_ledger_ttl() {
         use soroban_sdk::testutils::storage::Persistent as _;
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let validator = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         client.register_validator(&validator, &String::from_str(&env, "UEFA B Licence"),
             &String::from_str(&env, "Example Academy"), &Vec::new(&env));
         client.approve_milestone(&validator, &7, &String::from_str(&env, "Training"),
@@ -9312,10 +9337,10 @@ mod tests {
     #[test]
     fn restore_validator_renews_remaining_ledger_ttl() {
         use soroban_sdk::testutils::storage::Persistent as _;
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
         let wallet = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         client.register_validator(&wallet, &String::from_str(&env, "UEFA B Licence"),
             &String::from_str(&env, "Example Academy"), &Vec::new(&env));
         // Keep the contract instance executable near the record's TTL threshold.

@@ -20,10 +20,9 @@ fn setup() -> (Env, RegistrationContractClient<'static>) {
     // ledger entries) would reject that much state, so disable them. The CPU
     // cost budget is asserted separately per test below.
     env.host().set_invocation_resource_limits(None).unwrap();
-    let contract_id = env.register(RegistrationContract, ());
-    let client = RegistrationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let contract_id = env.register(RegistrationContract, (admin.clone(),));
+    let client = RegistrationContractClient::new(&env, &contract_id);
     (env, client)
 }
 

@@ -36,10 +36,9 @@ fn setup() -> Harness {
     let admin = Address::generate(&env);
     let validator = Address::generate(&env);
 
-    let contract_id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &contract_id);
 
-    client.initialize(&admin);
+    let contract_id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &contract_id);
     client.register_validator(
         &validator,
         &String::from_str(&env, CREDENTIALS),
@@ -171,21 +170,9 @@ fn test_pause_approve_milestone_requires_admin() {
     let env = Env::default();
     env.ledger().with_mut(|l| l.timestamp = 1_000_000);
     let admin = Address::generate(&env);
-    let contract_id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &contract_id);
 
-    // Mock ONLY the admin's initialize auth; pause_approve_milestone's
-    // require_admin check then fails for any unauthenticated caller.
-    env.mock_auths(&[MockAuth {
-        address: &admin,
-        invoke: &MockAuthInvoke {
-            contract: &contract_id,
-            fn_name: "initialize",
-            args: soroban_sdk::vec![&env, admin.to_val()],
-            sub_invokes: &[],
-        },
-    }]);
-    client.initialize(&admin);
+    let contract_id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &contract_id);
 
     let result = client.try_pause_approve_milestone();
     assert!(
@@ -200,20 +187,10 @@ fn test_unpause_approve_milestone_requires_admin() {
     let env = Env::default();
     env.ledger().with_mut(|l| l.timestamp = 1_000_000);
     let admin = Address::generate(&env);
-    let contract_id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &contract_id);
 
     // Mock ONLY the admin's auth for the calls that must succeed.
-    env.mock_auths(&[MockAuth {
-        address: &admin,
-        invoke: &MockAuthInvoke {
-            contract: &contract_id,
-            fn_name: "initialize",
-            args: soroban_sdk::vec![&env, admin.to_val()],
-            sub_invokes: &[],
-        },
-    }]);
-    client.initialize(&admin);
+    let contract_id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &contract_id);
 
     env.mock_auths(&[MockAuth {
         address: &admin,

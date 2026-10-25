@@ -14,12 +14,12 @@ fn setup(n: u32) -> (Env, ScoutAccessContractClient<'static>) {
     let xlm = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
-    let id = env.register(ScoutAccessContract, ());
-    let client = ScoutAccessContractClient::new(&env, &id);
-    client.initialize(
-        &admin,
-        &xlm,
-        &FeeConfig {
+    let id = env.register(
+        ScoutAccessContract,
+        (
+            admin.clone(),
+            xlm.clone(),
+            FeeConfig {
             contact_fee_stroops: 100_000,
             basic_sub_stroops: 1_000_000,
             pro_sub_stroops: 3_000_000,
@@ -29,7 +29,9 @@ fn setup(n: u32) -> (Env, ScoutAccessContractClient<'static>) {
             trial_offer_escrow_stroops: 500_000,
             trial_offer_expiry_secs: 3_600,
         },
+        ),
     );
+    let client = ScoutAccessContractClient::new(&env, &id);
     let scout = Address::generate(&env);
     env.as_contract(&id, || {
         for i in 1..=n {

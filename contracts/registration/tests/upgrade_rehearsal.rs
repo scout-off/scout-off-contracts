@@ -117,15 +117,13 @@ fn setup() -> Harness {
 
     // Progress contract — used so the registration contract can resolve a
     // player's live level through its instance-storage progress-contract link.
-    let progress_id = env.register(ProgressContract, ());
+    let progress_id = env.register(ProgressContract, (admin.clone(),));
     let progress = ProgressContractClient::new(&env, &progress_id);
-    progress.initialize(&admin);
     let verifier = Address::generate(&env);
     progress.set_verification_contract(&verifier);
 
-    let reg_id = env.register(RegistrationContract, ());
+    let reg_id = env.register(RegistrationContract, (admin.clone(),));
     let registration = RegistrationContractClient::new(&env, &reg_id);
-    registration.initialize(&admin);
 
     Harness {
         env,

@@ -8,9 +8,8 @@ fn setup() -> (Env, Address, RegistrationContractClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
     let admin = Address::generate(&env);
-    let contract_id = env.register(RegistrationContract, ());
+    let contract_id = env.register(RegistrationContract, (admin.clone(),));
     let client = RegistrationContractClient::new(&env, &contract_id);
-    client.initialize(&admin);
     (env, admin, client)
 }
 

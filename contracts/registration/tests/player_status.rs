@@ -17,9 +17,8 @@ fn setup() -> Harness {
     let env = Env::default();
     env.mock_all_auths();
     let admin = Address::generate(&env);
-    let id = env.register(RegistrationContract, ());
+    let id = env.register(RegistrationContract, (admin.clone(),));
     let client = RegistrationContractClient::new(&env, &id);
-    client.initialize(&admin);
     Harness { env, client }
 }
 

@@ -64,9 +64,8 @@ fn setup() -> Harness {
     token_client.mint(&scout2, &1_000_000_000);
 
     // Deploy registration contract
-    let reg_id = env.register(RegistrationContract, ());
+    let reg_id = env.register(RegistrationContract, (admin.clone(),));
     let registration_client = RegistrationContractClient::new(&env, &reg_id);
-    registration_client.initialize(&admin);
 
     // Register scouts in registration contract
     let _scout1_id = registration_client.register_scout(&scout1, &String::from_str(&env, "US"));
@@ -74,9 +73,8 @@ fn setup() -> Harness {
     let _scout2_id = registration_client.register_scout(&scout2, &String::from_str(&env, "FR"));
 
     // Deploy scout_access contract
-    let sa_id = env.register(ScoutAccessContract, ());
+    let sa_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
     let scout_access_client = ScoutAccessContractClient::new(&env, &sa_id);
-    scout_access_client.initialize(&admin, &xlm, &default_fees());
 
     // Wire registration contract into scout_access
     scout_access_client.set_registration_contract(&reg_id);
@@ -244,29 +242,12 @@ fn test_set_registration_contract_requires_admin() {
     let env = Env::default();
     env.ledger().with_mut(|l| l.timestamp = 1_000_000);
     let admin = Address::generate(&env);
-    let contract_id = env.register(ScoutAccessContract, ());
-    let client = ScoutAccessContractClient::new(&env, &contract_id);
     let xlm = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    // Mock ONLY the admin's initialize auth; set_registration_contract's
-    // require_admin check then fails for any unauthenticated caller.
-    env.mock_auths(&[MockAuth {
-        address: &admin,
-        invoke: &MockAuthInvoke {
-            contract: &contract_id,
-            fn_name: "initialize",
-            args: soroban_sdk::vec![
-                &env,
-                admin.to_val(),
-                xlm.to_val(),
-                default_fees().into_val(&env)
-            ],
-            sub_invokes: &[],
-        },
-    }]);
-    client.initialize(&admin, &xlm, &default_fees());
+    let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+    let client = ScoutAccessContractClient::new(&env, &contract_id);
 
     let random_contract = Address::generate(&env);
     let result = client.try_set_registration_contract(&random_contract);
@@ -288,9 +269,8 @@ fn test_unwired_registration_fails_closed_for_paid_tiers() {
     token_client.mint(&scout3, &1_000_000_000);
 
     // Do NOT wire registration contract; create a new scout_access instance
-    let sa_id = h.env.register(ScoutAccessContract, ());
+    let sa_id = h.env.register(ScoutAccessContract, (h.admin.clone(), h.xlm.clone(), default_fees(),));
     let sa_client = ScoutAccessContractClient::new(&h.env, &sa_id);
-    sa_client.initialize(&h.admin, &h.xlm, &default_fees());
 
     for tier in [SubscriptionTier::Pro, SubscriptionTier::Elite] {
         assert_eq!(

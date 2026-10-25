@@ -39,8 +39,6 @@ fn setup() -> Harness {
     let xlm = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
-    let contract_id = env.register(ScoutAccessContract, ());
-    let client = ScoutAccessContractClient::new(&env, &contract_id);
     let fees = FeeConfig {
         contact_fee_stroops: 100_000,
         basic_sub_stroops: 1_000_000,
@@ -52,14 +50,8 @@ fn setup() -> Harness {
         trial_offer_expiry_secs: 3_600,
     };
 
-    auth(
-        &env,
-        &admin,
-        &contract_id,
-        "initialize",
-        vec![&env, admin.to_val(), xlm.to_val(), fees.into_val(&env)],
-    );
-    client.initialize(&admin, &xlm, &fees);
+    let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), fees.clone(),));
+    let client = ScoutAccessContractClient::new(&env, &contract_id);
 
     Harness {
         env,

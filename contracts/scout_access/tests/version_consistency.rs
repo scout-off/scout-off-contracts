@@ -1,18 +1,36 @@
 use scoutchain_progress::{ProgressContract, ProgressContractClient};
 use scoutchain_registration::{RegistrationContract, RegistrationContractClient};
-use scoutchain_scout_access::{ScoutAccessContract, ScoutAccessContractClient};
+use scoutchain_scout_access::{FeeConfig, ScoutAccessContract, ScoutAccessContractClient};
 use scoutchain_verification::{VerificationContract, VerificationContractClient};
-use soroban_sdk::{Env, String};
+use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
 #[test]
 fn test_all_contracts_version_consistency() {
     let env = Env::default();
 
     // Deploy all four contracts
-    let reg_id = env.register(RegistrationContract, ());
-    let ver_id = env.register(VerificationContract, ());
-    let prog_id = env.register(ProgressContract, ());
-    let sa_id = env.register(ScoutAccessContract, ());
+    let admin = Address::generate(&env);
+    let xlm = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let reg_id = env.register(RegistrationContract, (admin.clone(),));
+    let ver_id = env.register(VerificationContract, (admin.clone(),));
+    let prog_id = env.register(ProgressContract, (admin.clone(),));
+    let sa_id = env.register(
+        ScoutAccessContract,
+        (
+            admin,
+            xlm,
+            FeeConfig {
+                contact_fee_stroops: 100_000,
+                basic_sub_stroops: 1_000_000,
+                pro_sub_stroops: 3_000_000,
+                elite_sub_stroops: 7_000_000,
+                sub_duration_secs: 30 * 24 * 60 * 60,
+                pro_contact_limit: 10,
+                trial_offer_escrow_stroops: 500_000,
+                trial_offer_expiry_secs: 3_600,
+            },
+        ),
+    );
 
     let reg_client = RegistrationContractClient::new(&env, &reg_id);
     let ver_client = VerificationContractClient::new(&env, &ver_id);

@@ -33,17 +33,8 @@ fn auth(env: &Env, address: &Address, contract_id: &Address, fn_name: &str, args
 fn setup() -> Harness {
     let env = Env::default();
     let admin = Address::generate(&env);
-    let contract_id = env.register(RegistrationContract, ());
+    let contract_id = env.register(RegistrationContract, (admin.clone(),));
     let client = RegistrationContractClient::new(&env, &contract_id);
-
-    auth(
-        &env,
-        &admin,
-        &contract_id,
-        "initialize",
-        vec![&env, admin.to_val()],
-    );
-    client.initialize(&admin);
 
     Harness {
         env,

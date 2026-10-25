@@ -81,11 +81,10 @@ const REASON: &str = "Milestone was approved in error";
 fn setup() -> (Env, VerificationContractClient<'static>, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    let id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &id);
     let admin = Address::generate(&env);
     let player = Address::generate(&env);
-    client.initialize(&admin);
+    let id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &id);
     // Wire a minimal registration stub so `dispute_milestone` can verify
     // wallet→player_id ownership.  The stub returns `player` for every lookup.
     let reg_id = env.register(RegStub, ());

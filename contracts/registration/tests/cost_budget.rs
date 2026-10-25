@@ -36,10 +36,9 @@ const SET_PLAYER_LEVEL_LARGE_BUCKET_MEM_BUDGET: u64 = 360_000;
 fn setup() -> (Env, RegistrationContractClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(RegistrationContract, ());
-    let client = RegistrationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let contract_id = env.register(RegistrationContract, (admin.clone(),));
+    let client = RegistrationContractClient::new(&env, &contract_id);
     (env, client)
 }
 

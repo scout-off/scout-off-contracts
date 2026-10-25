@@ -19,17 +19,15 @@ fn test_approve_milestone_progress_call_failed_reverts_all_state() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let verification_id = env.register(VerificationContract, ());
-    let verification_client = VerificationContractClient::new(&env, &verification_id);
-
-    let progress_id = env.register(scoutchain_progress::ProgressContract, ());
-    let progress_client = scoutchain_progress::ProgressContractClient::new(&env, &progress_id);
 
     let admin = Address::generate(&env);
+    let progress_id = env.register(scoutchain_progress::ProgressContract, (admin.clone(),));
+    let progress_client = scoutchain_progress::ProgressContractClient::new(&env, &progress_id);
     let validator = Address::generate(&env);
     let player_id = 1u64;
 
-    verification_client.initialize(&admin);
+    let verification_id = env.register(VerificationContract, (admin.clone(),));
+    let verification_client = VerificationContractClient::new(&env, &verification_id);
     verification_client.set_progress_contract(&progress_id);
     verification_client.register_validator(
         &validator,
@@ -38,7 +36,6 @@ fn test_approve_milestone_progress_call_failed_reverts_all_state() {
         &soroban_sdk::Vec::new(&env),
     );
 
-    progress_client.initialize(&admin);
 
     // Call approve_milestone — the progress contract is initialized but
     // has no registration contract linked, so advance_level will fail with
@@ -104,14 +101,13 @@ fn test_approve_milestone_duplicate_evidence_prevents_double_commit_on_retry() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let verification_id = env.register(VerificationContract, ());
-    let verification_client = VerificationContractClient::new(&env, &verification_id);
 
     let admin = Address::generate(&env);
     let validator = Address::generate(&env);
     let player_id = 1u64;
 
-    verification_client.initialize(&admin);
+    let verification_id = env.register(VerificationContract, (admin.clone(),));
+    let verification_client = VerificationContractClient::new(&env, &verification_id);
     verification_client.register_validator(
         &validator,
         &String::from_str(&env, "UEFA-B-License-2026"),

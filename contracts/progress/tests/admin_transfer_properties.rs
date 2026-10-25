@@ -30,9 +30,8 @@ fn setup() -> Harness {
     let env = Env::default();
     env.mock_all_auths();
     let admin = Address::generate(&env);
-    let contract_id = env.register(ProgressContract, ());
+    let contract_id = env.register(ProgressContract, (admin.clone(),));
     let client = ProgressContractClient::new(&env, &contract_id);
-    client.initialize(&admin);
     Harness { env, admin, client }
 }
 

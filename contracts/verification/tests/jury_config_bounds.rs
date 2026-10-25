@@ -11,9 +11,8 @@ const MAX_WINDOW: u64 = 2_592_000; // 30 days
 fn setup() -> (Env, VerificationContractClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(VerificationContract, ());
+    let contract_id = env.register(VerificationContract, (Address::generate(&env),));
     let client = VerificationContractClient::new(&env, &contract_id);
-    client.initialize(&Address::generate(&env));
     (env, client)
 }
 

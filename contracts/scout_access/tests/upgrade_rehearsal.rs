@@ -81,9 +81,8 @@ fn setup() -> Harness {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    let id = env.register(ScoutAccessContract, ());
+    let id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
     let scout_access = ScoutAccessContractClient::new(&env, &id);
-    scout_access.initialize(&admin, &xlm, &default_fees());
     common::wire_registration(&env, Some(&scout_access), None);
 
     Harness {

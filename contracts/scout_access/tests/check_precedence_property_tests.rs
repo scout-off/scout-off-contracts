@@ -13,7 +13,7 @@
 mod common;
 
 use scoutchain_scout_access::{
-    FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
+    DataKey, FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
 };
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
@@ -63,16 +63,19 @@ fn setup_initialized() -> Harness {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    let id = env.register(ScoutAccessContract, ());
+    let id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
     let contract = ScoutAccessContractClient::new(&env, &id);
-    contract.initialize(&admin, &xlm, &default_fees());
     common::wire_registration(&env, Some(&contract), None);
     common::wire_progress_level_stub(&env, &contract);
 
     Harness { env, xlm, contract }
 }
 
-/// Build a harness where initialize has NOT been called.
+/// Build a harness whose contract reports itself as uninitialized.
+///
+/// Deployment now initializes atomically via the constructor (#1369), so the
+/// `Initialized` marker is cleared from storage to exercise the contract's
+/// `NotInitialized` guard and its place in the check order.
 fn setup_uninitialized() -> Harness {
     let env = Env::default();
     env.mock_all_auths();
@@ -83,9 +86,11 @@ fn setup_uninitialized() -> Harness {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    let id = env.register(ScoutAccessContract, ());
+    let id = env.register(ScoutAccessContract, (admin, xlm.clone(), default_fees()));
+    env.as_contract(&id, || {
+        env.storage().instance().remove(&DataKey::Initialized);
+    });
     let contract = ScoutAccessContractClient::new(&env, &id);
-    // deliberately skip initialize
 
     Harness { env, xlm, contract }
 }

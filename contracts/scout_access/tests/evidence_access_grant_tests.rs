@@ -62,9 +62,8 @@ fn setup() -> Harness {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    let id = env.register(ScoutAccessContract, ());
+    let id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
     let contract = ScoutAccessContractClient::new(&env, &id);
-    contract.initialize(&admin, &xlm, &default_fees());
     common::wire_registration(&env, Some(&contract), None);
     common::wire_progress_level_stub(&env, &contract);
 
@@ -531,9 +530,16 @@ fn admin_revoke_evidence_access_requires_initialized_contract() {
     env.mock_all_auths();
     let admin = Address::generate(&env);
     let scout = Address::generate(&env);
-    let id = env.register(ScoutAccessContract, ());
+    let xlm = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    // Deployment initializes via the constructor (#1369); clear the marker to
+    // exercise the uninitialized guard.
+    let id = env.register(ScoutAccessContract, (admin, xlm, default_fees()));
+    env.as_contract(&id, || {
+        env.storage()
+            .instance()
+            .remove(&scoutchain_scout_access::DataKey::Initialized);
+    });
     let contract = ScoutAccessContractClient::new(&env, &id);
-    let _ = admin;
 
     let result = contract.try_admin_revoke_evidence_access(&1u64, &scout);
     let err = result.expect_err("uninitialized contract has no admin to authorize the call");

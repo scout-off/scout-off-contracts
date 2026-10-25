@@ -34,15 +34,14 @@ fn setup() -> (Env, ScoutAccessContractClient<'static>, Address) {
     env.ledger().with_mut(|li| {
         li.timestamp = 1_700_000_000;
     });
-    let id = env.register(ScoutAccessContract, ());
-    let client = ScoutAccessContractClient::new(&env, &id);
     let admin = Address::generate(&env);
 
     // Register native XLM token for fee config.
     let xlm_id = env.register_stellar_asset_contract_v2(admin.clone());
     let xlm_addr = xlm_id.address();
 
-    client.initialize(&admin, &xlm_addr, &make_fee_config());
+    let id = env.register(ScoutAccessContract, (admin.clone(), xlm_addr.clone(), make_fee_config(),));
+    let client = ScoutAccessContractClient::new(&env, &id);
     (env, client, admin)
 }
 

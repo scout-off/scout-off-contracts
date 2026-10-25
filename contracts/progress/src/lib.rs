@@ -2328,9 +2328,8 @@ mod tests {
     fn test_get_history_since_far_future_reads_one_page() {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register(ProgressContract, ());
+        let id = env.register(ProgressContract, (Address::generate(&env),));
         let client = ProgressContractClient::new(&env, &id);
-        client.initialize(&Address::generate(&env));
         seed_history(&env, &id, 1, 80);
         // Remove every page but the newest: an early return must not touch them.
         env.as_contract(&id, || {
@@ -2347,9 +2346,8 @@ mod tests {
     fn test_get_history_since_newest_first_and_stops_at_older() {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register(ProgressContract, ());
+        let id = env.register(ProgressContract, (Address::generate(&env),));
         let client = ProgressContractClient::new(&env, &id);
-        client.initialize(&Address::generate(&env));
         seed_history(&env, &id, 1, 20);
         // updated_at 100..=119; since 117 -> 119,118,117.
         let r = client.get_history_since_v2(&1, &117, &50);
@@ -2364,9 +2362,8 @@ mod tests {
     fn test_get_history_since_reports_truncation() {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register(ProgressContract, ());
+        let id = env.register(ProgressContract, (Address::generate(&env),));
         let client = ProgressContractClient::new(&env, &id);
-        client.initialize(&Address::generate(&env));
         seed_history(&env, &id, 1, 100);
         // 100 matching entries; limit caps at 50.
         let r = client.get_history_since_v2(&1, &0, &50);
@@ -2382,9 +2379,8 @@ mod tests {
     fn test_get_level_unverified_for_new_player() {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register(ProgressContract, ());
+        let id = env.register(ProgressContract, (Address::generate(&env),));
         let client = ProgressContractClient::new(&env, &id);
-        client.initialize(&Address::generate(&env));
 
         // A player that has never had advance_level called should be Unverified
         let player_id = 42u64;
@@ -2395,9 +2391,8 @@ mod tests {
     fn test_get_history_entry_out_of_range_returns_history_entry_not_found() {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register(ProgressContract, ());
+        let id = env.register(ProgressContract, (Address::generate(&env),));
         let client = ProgressContractClient::new(&env, &id);
-        client.initialize(&Address::generate(&env));
 
         let player_id = 99u64;
         // No advances made — index 1 does not exist
@@ -2409,9 +2404,8 @@ mod tests {
     fn test_advance_level_blocked_when_paused() {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register(ProgressContract, ());
+        let id = env.register(ProgressContract, (Address::generate(&env),));
         let client = ProgressContractClient::new(&env, &id);
-        client.initialize(&Address::generate(&env));
 
         // Pause the contract
         client.pause_contract();
@@ -2428,12 +2422,11 @@ mod tests {
     fn test_get_verification_contract_before_and_after_configuration() {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register(ProgressContract, ());
+        let id = env.register(ProgressContract, (Address::generate(&env),));
         let client = ProgressContractClient::new(&env, &id);
 
         assert_eq!(client.get_verification_contract(), None);
 
-        client.initialize(&Address::generate(&env));
         let peer = Address::generate(&env);
         client.set_verification_contract(&peer);
         assert_eq!(client.get_verification_contract(), Some(peer));
@@ -2443,12 +2436,11 @@ mod tests {
     fn test_get_registration_contract_before_and_after_configuration() {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register(ProgressContract, ());
+        let id = env.register(ProgressContract, (Address::generate(&env),));
         let client = ProgressContractClient::new(&env, &id);
 
         assert_eq!(client.get_registration_contract(), None);
 
-        client.initialize(&Address::generate(&env));
         let peer = Address::generate(&env);
         client.set_registration_contract(&peer);
         assert_eq!(client.get_registration_contract(), Some(peer));
@@ -2458,12 +2450,11 @@ mod tests {
     fn test_get_scout_access_contract_before_and_after_configuration() {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register(ProgressContract, ());
+        let id = env.register(ProgressContract, (Address::generate(&env),));
         let client = ProgressContractClient::new(&env, &id);
 
         assert_eq!(client.get_scout_access_contract(), None);
 
-        client.initialize(&Address::generate(&env));
         let peer = Address::generate(&env);
         client.set_scout_access_contract(&peer);
         assert_eq!(client.get_scout_access_contract(), Some(peer));
@@ -2487,10 +2478,9 @@ mod tests {
     fn setup() -> (Env, ProgressContractClient<'static>, Address) {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register(ProgressContract, ());
-        let client = ProgressContractClient::new(&env, &id);
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let id = env.register(ProgressContract, (admin.clone(),));
+        let client = ProgressContractClient::new(&env, &id);
 
         // Wire a real verification contract so advance_level's on-chain
         // milestone_ref validation (#457) has something to query. Pre-approve
@@ -2498,10 +2488,9 @@ mod tests {
         // caps each validator at 5) for every player_id used across this test
         // suite so existing level-progression tests (unrelated to milestone
         // validation itself) keep passing.
-        let ver_id = env.register(scoutchain_verification::VerificationContract, ());
-        let ver_client = scoutchain_verification::VerificationContractClient::new(&env, &ver_id);
         let ver_admin = Address::generate(&env);
-        ver_client.initialize(&ver_admin);
+        let ver_id = env.register(scoutchain_verification::VerificationContract, (ver_admin.clone(),));
+        let ver_client = scoutchain_verification::VerificationContractClient::new(&env, &ver_id);
         let mut cid_seed: u32 = 0;
         for player_id in [1u64, 2, 5, 7, 10, 20, 42, 55] {
             for _ in 0..2u32 {
@@ -2546,10 +2535,9 @@ mod tests {
     fn setup_for_storage_tests() -> (Env, ProgressContractClient<'static>, Address) {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register(ProgressContract, ());
-        let client = ProgressContractClient::new(&env, &id);
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let id = env.register(ProgressContract, (admin.clone(),));
+        let client = ProgressContractClient::new(&env, &id);
         wire_registration_stub(&env, &client);
         (env, client, id)
     }
@@ -2678,28 +2666,12 @@ mod tests {
     }
 
     #[test]
-    fn test_advance_level_not_initialized() {
-        let env = Env::default();
-        env.mock_all_auths();
-        // Register the contract but deliberately skip initialize()
-        let id = env.register(ProgressContract, ());
-        let client = ProgressContractClient::new(&env, &id);
-
-        let caller = Address::generate(&env);
-        let result = client.try_advance_level(&caller, &99u64, &1u32);
-
-        // Contract is not initialized, so NotInitialized is returned.
-        assert_eq!(result, Err(Ok(ProgressError::NotInitialized)));
-    }
-
-    #[test]
     fn test_advance_level_without_verification_contract() {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register(ProgressContract, ());
-        let client = ProgressContractClient::new(&env, &id);
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let id = env.register(ProgressContract, (admin.clone(),));
+        let client = ProgressContractClient::new(&env, &id);
         // Deliberately skip set_verification_contract
 
         let caller = Address::generate(&env);
@@ -2888,12 +2860,11 @@ mod tests {
     fn test_admin_transfer_propose_replace_and_accept() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register(ProgressContract, ());
-        let client = ProgressContractClient::new(&env, &contract_id);
         let old_admin = Address::generate(&env);
         let stale_admin = Address::generate(&env);
         let new_admin = Address::generate(&env);
-        client.initialize(&old_admin);
+        let contract_id = env.register(ProgressContract, (old_admin.clone(),));
+        let client = ProgressContractClient::new(&env, &contract_id);
 
         client.propose_admin(&stale_admin);
         assert_eq!(
@@ -2972,11 +2943,10 @@ mod tests {
     fn test_transfer_admin_alias_creates_proposal() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register(ProgressContract, ());
-        let client = ProgressContractClient::new(&env, &contract_id);
         let old_admin = Address::generate(&env);
         let new_admin = Address::generate(&env);
-        client.initialize(&old_admin);
+        let contract_id = env.register(ProgressContract, (old_admin.clone(),));
+        let client = ProgressContractClient::new(&env, &contract_id);
         client.transfer_admin(&new_admin);
 
         env.as_contract(&contract_id, || {
@@ -3011,11 +2981,10 @@ mod tests {
     fn test_transfer_admin_called_by_non_admin_is_rejected() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register(ProgressContract, ());
-        let client = ProgressContractClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         let new_admin = Address::generate(&env);
-        client.initialize(&admin);
+        let contract_id = env.register(ProgressContract, (admin.clone(),));
+        let client = ProgressContractClient::new(&env, &contract_id);
 
         // No authorizations are mocked for this call, so the stored admin's
         // `require_auth()` inside `require_admin` cannot be satisfied.
@@ -3040,12 +3009,11 @@ mod tests {
     fn test_third_party_cannot_accept_admin() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register(ProgressContract, ());
-        let client = ProgressContractClient::new(&env, &contract_id);
         let old_admin = Address::generate(&env);
         let pending_admin = Address::generate(&env);
         let third_party = Address::generate(&env);
-        client.initialize(&old_admin);
+        let contract_id = env.register(ProgressContract, (old_admin.clone(),));
+        let client = ProgressContractClient::new(&env, &contract_id);
         client.propose_admin(&pending_admin);
 
         env.mock_auths(&[MockAuth {
@@ -3094,18 +3062,16 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
 
-        let id = env.register(ProgressContract, ());
-        let client = ProgressContractClient::new(&env, &id);
 
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let id = env.register(ProgressContract, (admin.clone(),));
+        let client = ProgressContractClient::new(&env, &id);
 
         // Wire a real verification contract with one approved milestone so
         // advance_level's on-chain milestone_ref validation (#457) succeeds.
-        let ver_id = env.register(scoutchain_verification::VerificationContract, ());
-        let ver_client = scoutchain_verification::VerificationContractClient::new(&env, &ver_id);
         let ver_admin = Address::generate(&env);
-        ver_client.initialize(&ver_admin);
+        let ver_id = env.register(scoutchain_verification::VerificationContract, (ver_admin.clone(),));
+        let ver_client = scoutchain_verification::VerificationContractClient::new(&env, &ver_id);
         let milestone_validator = Address::generate(&env);
         ver_client.register_validator(
             &milestone_validator,
@@ -3156,10 +3122,9 @@ mod tests {
         // test_advance_level_sequence via setup().
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register_contract(None, ProgressContract);
-        let client = ProgressContractClient::new(&env, &id);
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let id = env.register(ProgressContract, (admin.clone(),));
+        let client = ProgressContractClient::new(&env, &id);
         let verification = Address::generate(&env);
         client.set_verification_contract(&verification);
         wire_registration_stub(&env, &client);
@@ -3372,16 +3337,14 @@ mod tests {
         env.mock_all_auths();
 
         // Deploy verification contract and register a validator + milestone.
-        let ver_id = env.register(VerificationContract, ());
-        let ver_client = VerificationContractClient::new(&env, &ver_id);
         let ver_admin = Address::generate(&env);
-        ver_client.initialize(&ver_admin);
+        let ver_id = env.register(VerificationContract, (ver_admin.clone(),));
+        let ver_client = VerificationContractClient::new(&env, &ver_id);
 
         // Deploy progress contract and wire the verification + scout_access addresses.
-        let prog_id = env.register(ProgressContract, ());
-        let prog_client = ProgressContractClient::new(&env, &prog_id);
         let prog_admin = Address::generate(&env);
-        prog_client.initialize(&prog_admin);
+        let prog_id = env.register(ProgressContract, (prog_admin.clone(),));
+        let prog_client = ProgressContractClient::new(&env, &prog_id);
         prog_client.set_verification_contract(&ver_id);
         let scout_access = Address::generate(&env);
         prog_client.set_scout_access_contract(&scout_access);
@@ -3422,10 +3385,9 @@ mod tests {
         // accepted (backward-compatible behaviour).
         let env = Env::default();
         env.mock_all_auths();
-        let prog_id = env.register(ProgressContract, ());
-        let prog_client = ProgressContractClient::new(&env, &prog_id);
         let admin = Address::generate(&env);
-        prog_client.initialize(&admin);
+        let prog_id = env.register(ProgressContract, (admin.clone(),));
+        let prog_client = ProgressContractClient::new(&env, &prog_id);
         let verification = Address::generate(&env);
         prog_client.set_verification_contract(&verification);
         // Note: no real verification contract deployed — but the milestone
@@ -3435,10 +3397,9 @@ mod tests {
         // set_verification_contract.
         let env2 = Env::default();
         env2.mock_all_auths();
-        let prog_id2 = env2.register(ProgressContract, ());
-        let prog_client2 = ProgressContractClient::new(&env2, &prog_id2);
         let admin2 = Address::generate(&env2);
-        prog_client2.initialize(&admin2);
+        let prog_id2 = env2.register(ProgressContract, (admin2.clone(),));
+        let prog_client2 = ProgressContractClient::new(&env2, &prog_id2);
         // No set_verification_contract call here — should error NotInitialized
         // (no VerificationContract key means advance_level rejects).
         let caller = Address::generate(&env2);
@@ -3470,10 +3431,9 @@ mod tests {
     fn test_pause_contract_emits_contract_paused_event() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register(ProgressContract, ());
-        let client = ProgressContractClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let contract_id = env.register(ProgressContract, (admin.clone(),));
+        let client = ProgressContractClient::new(&env, &contract_id);
         let verification = Address::generate(&env);
         client.set_verification_contract(&verification);
 
@@ -3496,10 +3456,9 @@ mod tests {
     fn test_unpause_contract_emits_contract_unpaused_event() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register(ProgressContract, ());
-        let client = ProgressContractClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let contract_id = env.register(ProgressContract, (admin.clone(),));
+        let client = ProgressContractClient::new(&env, &contract_id);
         let verification = Address::generate(&env);
         client.set_verification_contract(&verification);
 
@@ -3888,10 +3847,9 @@ mod tests {
     fn test_get_wiring_state_initially_unconfigured() {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register(ProgressContract, ());
-        let client = ProgressContractClient::new(&env, &id);
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let id = env.register(ProgressContract, (admin.clone(),));
+        let client = ProgressContractClient::new(&env, &id);
 
         let state = client.get_wiring_state();
         // All three links must be unconfigured (no address, epoch == 0).
@@ -3908,13 +3866,12 @@ mod tests {
     fn test_get_wiring_state_reflects_wiring_link_fields() {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register(ProgressContract, ());
-        let client = ProgressContractClient::new(&env, &id);
         let admin = Address::generate(&env);
         let reg_addr = Address::generate(&env);
         let ver_addr = Address::generate(&env);
         let sa_addr = Address::generate(&env);
-        client.initialize(&admin);
+        let id = env.register(ProgressContract, (admin.clone(),));
+        let client = ProgressContractClient::new(&env, &id);
 
         client.set_registration_contract(&reg_addr);
         client.set_verification_contract(&ver_addr);
@@ -3935,12 +3892,11 @@ mod tests {
     fn test_get_wiring_state_epoch_increments_on_rewire() {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register(ProgressContract, ());
-        let client = ProgressContractClient::new(&env, &id);
         let admin = Address::generate(&env);
         let reg_addr1 = Address::generate(&env);
         let reg_addr2 = Address::generate(&env);
-        client.initialize(&admin);
+        let id = env.register(ProgressContract, (admin.clone(),));
+        let client = ProgressContractClient::new(&env, &id);
 
         client.set_registration_contract(&reg_addr1);
         assert_eq!(client.get_wiring_state().registration_contract.epoch, 1);

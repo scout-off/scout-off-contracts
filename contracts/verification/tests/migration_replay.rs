@@ -17,10 +17,9 @@ const VALID_CID_3: &str = "QmNLei78zWmzUdbeRB3CiUfAizWUrbeeZh5K1rhAQKCh51";
 fn setup() -> (Env, VerificationContractClient<'static>, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    let id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &id);
     (env, client, admin)
 }
 

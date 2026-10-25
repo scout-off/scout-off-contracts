@@ -2166,9 +2166,9 @@ mod tests {
     #[test]
     fn test_restore_scout_record_success_emits_event_and_preserves_profile() {
         use soroban_sdk::testutils::{storage::Persistent as _, Ledger};
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         env.ledger().with_mut(|l| {
             l.sequence_number = 100;
             l.max_entry_ttl = PERSISTENT_TTL_MAX + 1;
@@ -2200,8 +2200,8 @@ mod tests {
 
     #[test]
     fn test_restore_scout_record_missing_returns_evicted() {
-        let (env, client) = setup();
-        client.initialize(&Address::generate(&env));
+        let env = setup_env();
+        let client = deploy(&env, &Address::generate(&env));
         assert_eq!(
             client.try_restore_scout_record(&999u64),
             Err(Ok(ScoutChainError::ScoutRecordEvicted))
@@ -2210,8 +2210,8 @@ mod tests {
 
     #[test]
     fn test_restore_scout_record_rejects_non_admin() {
-        let (env, client) = setup();
-        client.initialize(&Address::generate(&env));
+        let env = setup_env();
+        let client = deploy(&env, &Address::generate(&env));
         let id = client.register_scout(&Address::generate(&env), &String::from_str(&env, "FR"));
         env.mock_auths(&[]);
         assert!(client.try_restore_scout_record(&id).is_err());
@@ -2224,11 +2224,23 @@ mod tests {
         vec, Env, IntoVal, String, Symbol,
     };
 
-    fn setup() -> (Env, RegistrationContractClient<'static>) {
+    fn setup_env() -> Env {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register(RegistrationContract, ());
-        let client = RegistrationContractClient::new(&env, &contract_id);
+        env
+    }
+
+    /// Deploy with `admin` passed to the constructor (initialization is atomic
+    /// with deployment, #1369).
+    fn deploy(env: &Env, admin: &Address) -> RegistrationContractClient<'static> {
+        let contract_id = env.register(RegistrationContract, (admin.clone(),));
+        RegistrationContractClient::new(env, &contract_id)
+    }
+
+    /// An already-initialized contract with a throwaway admin.
+    fn setup() -> (Env, RegistrationContractClient<'static>) {
+        let env = setup_env();
+        let client = deploy(&env, &Address::generate(&env));
         (env, client)
     }
 
@@ -2293,19 +2305,19 @@ mod tests {
 
     #[test]
     fn test_initialize_and_health() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         assert!(client.health().initialized);
     }
 
     #[test]
     fn test_admin_transfer_propose_replace_and_accept() {
-        let (env, client) = setup();
+        let env = setup_env();
         let old_admin = Address::generate(&env);
         let stale_admin = Address::generate(&env);
         let new_admin = Address::generate(&env);
-        client.initialize(&old_admin);
+        let client = deploy(&env, &old_admin);
 
         client.propose_admin(&stale_admin);
         assert_eq!(
@@ -2380,10 +2392,10 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_old_admin_loses_access_after_transfer() {
-        let (env, client) = setup();
+        let env = setup_env();
         let old_admin = Address::generate(&env);
         let new_admin = Address::generate(&env);
-        client.initialize(&old_admin);
+        let client = deploy(&env, &old_admin);
 
         client.propose_admin(&new_admin);
         env.mock_auths(&[MockAuth {
@@ -2415,11 +2427,11 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_third_party_cannot_accept_admin() {
-        let (env, client) = setup();
+        let env = setup_env();
         let old_admin = Address::generate(&env);
         let pending_admin = Address::generate(&env);
         let third_party = Address::generate(&env);
-        client.initialize(&old_admin);
+        let client = deploy(&env, &old_admin);
         client.propose_admin(&pending_admin);
 
         env.mock_auths(&[MockAuth {
@@ -2445,9 +2457,9 @@ mod tests {
 
     #[test]
     fn test_register_player() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
@@ -2463,9 +2475,9 @@ mod tests {
 
     #[test]
     fn test_get_player_summary_exposes_no_wallet_or_ipfs_hashes_fields() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
@@ -2494,9 +2506,9 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_duplicate_registration_fails() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
@@ -2510,9 +2522,9 @@ mod tests {
     /// Scout regions are canonicalized like player regions (#1541).
     #[test]
     fn test_register_scout_region_is_canonicalized() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let scout_id = client.register_scout(&wallet, &String::from_str(&env, " ng-la "));
@@ -2529,9 +2541,9 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_register_player_position_too_long() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let long = String::from_str(&env, &"A".repeat(65));
@@ -2550,9 +2562,9 @@ mod tests {
     /// enforcement so a silent regression cannot go undetected.
     #[test]
     fn test_register_player_position_65_bytes_returns_invalid_input() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         // 65 ASCII bytes — one over the MAX_STRING_LEN = 64 limit
@@ -2577,9 +2589,9 @@ mod tests {
     /// length is rejected.
     #[test]
     fn test_register_player_position_free_text_rejected() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
@@ -2602,9 +2614,9 @@ mod tests {
     /// age = 0 must return ScoutChainError::InvalidInput
     #[test]
     fn test_register_player_age_zero_returns_invalid_input() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
@@ -2621,9 +2633,9 @@ mod tests {
     /// age below MIN_PLAYER_AGE must return ScoutChainError::InvalidInput
     #[test]
     fn test_register_player_age_below_min_returns_invalid_input() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
@@ -2640,9 +2652,9 @@ mod tests {
     /// age = MIN_PLAYER_AGE must register successfully
     #[test]
     fn test_register_player_age_at_min_succeeds() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
@@ -2666,9 +2678,9 @@ mod tests {
     /// Vitals are trimmed and uppercased before validation and storage (#1541).
     #[test]
     fn test_register_player_vitals_are_canonicalized() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
@@ -2689,9 +2701,9 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_register_player_region_too_long() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         // 129 bytes — beyond MAX_REGION_LEN (100)
@@ -2713,9 +2725,9 @@ mod tests {
     /// A 101-byte region string must be rejected with InvalidInput.
     #[test]
     fn test_register_player_region_101_bytes_returns_invalid_input() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let region_101 = String::from_str(&env, &"A".repeat(101));
@@ -2734,9 +2746,9 @@ mod tests {
     /// Regions must be ISO 3166 codes (#1541); long free text is rejected.
     #[test]
     fn test_register_player_region_free_text_rejected() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
@@ -2755,9 +2767,9 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_register_player_nationality_too_long() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let long = String::from_str(&env, &"A".repeat(65));
@@ -2778,9 +2790,9 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_register_player_empty_hashes_fails() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
@@ -2790,9 +2802,9 @@ mod tests {
 
     #[test]
     fn test_register_player_exactly_10_hashes_succeeds() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
@@ -2820,9 +2832,9 @@ mod tests {
 
     #[test]
     fn test_register_player_11_hashes_fails_with_invalid_input() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
@@ -2849,9 +2861,9 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_register_player_too_many_hashes_fails() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
@@ -2876,9 +2888,9 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_update_profile_empty_hashes_fails() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
@@ -2891,9 +2903,9 @@ mod tests {
 
     #[test]
     fn test_update_profile_rejects_11_hashes_and_accepts_10() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
@@ -2950,9 +2962,9 @@ mod tests {
 
     #[test]
     fn test_update_profile_valid_hashes_persisted() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
@@ -2977,9 +2989,9 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_register_scout_region_too_long() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let region = String::from_str(&env, &"a".repeat(101));
@@ -2988,9 +3000,9 @@ mod tests {
 
     #[test]
     fn test_register_scout_region_free_text_rejected() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let region = String::from_str(&env, &"A".repeat(100));
@@ -3005,11 +3017,10 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
 
-        let contract_id = env.register(RegistrationContract, ());
-        let client = RegistrationContractClient::new(&env, &contract_id);
 
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let contract_id = env.register(RegistrationContract, (admin.clone(),));
+        let client = RegistrationContractClient::new(&env, &contract_id);
 
         // Register a player so we confirm persistent data also survives
         let wallet = Address::generate(&env);
@@ -3031,24 +3042,15 @@ mod tests {
         assert_eq!(client.get_player(&player_id).player_id, player_id);
     }
 
-    #[test]
-    #[should_panic]
-    fn test_register_scout_uninitialized_returns_not_initialized() {
-        let (env, client) = setup();
-        let wallet = Address::generate(&env);
-        let region = String::from_str(&env, "FR");
-        client.register_scout(&wallet, &region);
-    }
-
     // -------------------------------------------------------------------------
     // Issue #34: Dual-role wallet policy (player + scout same wallet)
     // -------------------------------------------------------------------------
 
     #[test]
     fn test_same_wallet_can_register_as_player_and_scout() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
@@ -3079,9 +3081,9 @@ mod tests {
 
     #[test]
     fn test_get_player_count_after_registrations() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let vitals = dummy_vitals(&env);
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
@@ -3096,9 +3098,9 @@ mod tests {
 
     #[test]
     fn test_get_scout_count_after_registrations() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let region = String::from_str(&env, "FR");
 
@@ -3116,9 +3118,9 @@ mod tests {
 
     #[test]
     fn test_filter_players_by_region_and_position() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
 
@@ -3168,9 +3170,9 @@ mod tests {
 
     #[test]
     fn test_filter_players_pagination() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
 
@@ -3239,9 +3241,9 @@ mod tests {
     /// players from that region and exclude all others.
     #[test]
     fn test_filter_players_region_only_returns_correct_players() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
 
@@ -3300,9 +3302,9 @@ mod tests {
     /// filter_players with a region that has no registered players returns empty.
     #[test]
     fn test_filter_players_region_only_empty_region_returns_empty() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
 
@@ -3336,9 +3338,9 @@ mod tests {
     /// Deactivated players must NOT appear in filter_players results.
     #[test]
     fn test_deactivated_player_excluded_from_filter() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
 
@@ -3389,9 +3391,9 @@ mod tests {
     /// get_player still returns the profile for a deactivated player (data preserved).
     #[test]
     fn test_deactivated_player_profile_preserved_via_get_player() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
@@ -3410,9 +3412,9 @@ mod tests {
     /// After reactivation, the player appears in filter_players results again.
     #[test]
     fn test_reactivate_player_restores_filter_visibility() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
@@ -3467,9 +3469,9 @@ mod tests {
     /// so this gap cannot occur.
     #[test]
     fn test_filter_players_pagination_cursor_no_gaps() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
 
@@ -3564,9 +3566,9 @@ mod tests {
 
     #[test]
     fn test_admin_seed_player_persists_profile_and_status() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
@@ -3595,9 +3597,9 @@ mod tests {
 
     #[test]
     fn test_admin_seed_player_rejects_wallet_already_mapped() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
@@ -3619,9 +3621,9 @@ mod tests {
 
     #[test]
     fn test_admin_seed_scout_rejects_wallet_already_mapped() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let region = String::from_str(&env, "FR");
@@ -3634,9 +3636,9 @@ mod tests {
 
     #[test]
     fn test_admin_seed_scout_persists_profile() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let scout_id = client.admin_seed_scout(
@@ -3661,9 +3663,9 @@ mod tests {
     fn test_deactivate_player_emits_event() {
         use soroban_sdk::testutils::Events;
         use soroban_sdk::IntoVal;
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
@@ -3696,9 +3698,9 @@ mod tests {
     fn test_reactivate_player_emits_event() {
         use soroban_sdk::testutils::Events;
         use soroban_sdk::IntoVal;
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
@@ -3733,9 +3735,9 @@ mod tests {
     fn test_set_player_level_emits_event_with_level() {
         use soroban_sdk::testutils::Events;
         use soroban_sdk::IntoVal;
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         // Register a player
         let wallet = Address::generate(&env);
@@ -3780,9 +3782,9 @@ mod tests {
 
     #[test]
     fn test_newly_registered_scout_not_verified() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let region = String::from_str(&env, "FR");
@@ -3794,9 +3796,9 @@ mod tests {
 
     #[test]
     fn test_admin_can_verify_scout() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let region = String::from_str(&env, "FR");
@@ -3815,9 +3817,9 @@ mod tests {
     #[test]
     fn test_verify_scout_emits_event_with_wallet() {
         use soroban_sdk::testutils::Events;
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let region = String::from_str(&env, "FR");
@@ -3846,9 +3848,9 @@ mod tests {
 
     #[test]
     fn test_verify_scout_non_admin_unauthorized() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let region = String::from_str(&env, "FR");
@@ -3866,9 +3868,9 @@ mod tests {
     /// only succeeds for an authorization entry matching the stored address.
     #[test]
     fn test_set_player_level_rejects_non_progress_contract_caller() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
@@ -3901,9 +3903,9 @@ mod tests {
 
     #[test]
     fn test_get_progress_contract_before_and_after_configuration() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         assert_eq!(client.get_progress_contract(), None);
 
@@ -3914,9 +3916,9 @@ mod tests {
 
     #[test]
     fn test_get_wiring_state_initially_unconfigured() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let state = client.get_wiring_state();
         assert_eq!(state.progress_contract.address, None);
@@ -3926,9 +3928,9 @@ mod tests {
 
     #[test]
     fn test_get_wiring_state_reflects_link_and_bumps_epoch() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let progress_addr = Address::generate(&env);
         client.set_progress_contract(&progress_addr);
@@ -3952,9 +3954,9 @@ mod tests {
 
     #[test]
     fn test_set_progress_contract_emits_wiring_updated_event() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let progress_addr = Address::generate(&env);
         client.set_progress_contract(&progress_addr);
@@ -3983,9 +3985,9 @@ mod tests {
 
     #[test]
     fn test_register_player_while_paused_returns_contract_paused() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         client.pause_contract();
 
         let wallet = Address::generate(&env);
@@ -3998,9 +4000,9 @@ mod tests {
 
     #[test]
     fn test_register_scout_while_paused_returns_contract_paused() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
         client.pause_contract();
 
         let wallet = Address::generate(&env);
@@ -4012,9 +4014,9 @@ mod tests {
 
     #[test]
     fn test_update_profile_while_paused_returns_contract_paused() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         // Register the player before pausing so the player exists.
         let wallet = Address::generate(&env);
@@ -4031,9 +4033,9 @@ mod tests {
 
     #[test]
     fn test_admin_functions_succeed_while_paused() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         // Register a player and a scout before pausing.
         let player_wallet = Address::generate(&env);
@@ -4057,9 +4059,9 @@ mod tests {
     #[test]
     fn test_deregister_player_cleans_all_indexes() {
         use soroban_sdk::testutils::storage::Persistent as _;
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
@@ -4195,9 +4197,9 @@ mod tests {
     /// Deregistering a previously deactivated player also clears the flag.
     #[test]
     fn test_deregister_clears_deactivation_flag() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
@@ -4236,9 +4238,9 @@ mod tests {
 
     #[test]
     fn test_register_player_succeeds_after_unpause() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         client.pause_contract();
 
@@ -4264,9 +4266,9 @@ mod tests {
 
     #[test]
     fn test_full_player_registration_and_update_flow() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
@@ -4330,19 +4332,16 @@ mod tests {
         let admin = Address::generate(&env);
 
         // 1. Deploy registration contract
-        let reg_id = env.register(RegistrationContract, ());
+        let reg_id = env.register(RegistrationContract, (admin.clone(),));
         let reg_client = RegistrationContractClient::new(&env, &reg_id);
-        reg_client.initialize(&admin);
 
         // 2. Deploy progress contract
-        let prog_id = env.register(ProgressContract, ());
+        let prog_id = env.register(ProgressContract, (admin.clone(),));
         let prog_client = ProgressContractClient::new(&env, &prog_id);
-        prog_client.initialize(&admin);
 
         // 3. Deploy verification contract
-        let ver_id = env.register(VerificationContract, ());
+        let ver_id = env.register(VerificationContract, (admin.clone(),));
         let ver_client = VerificationContractClient::new(&env, &ver_id);
-        ver_client.initialize(&admin);
 
         // 4. Wire verification -> progress
         ver_client.set_progress_contract(&prog_id);
@@ -4394,9 +4393,8 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
         let admin = Address::generate(&env);
-        let reg_id = env.register(RegistrationContract, ());
+        let reg_id = env.register(RegistrationContract, (admin.clone(),));
         let client = RegistrationContractClient::new(&env, &reg_id);
-        client.initialize(&admin);
 
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
@@ -4426,9 +4424,8 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
         let admin = Address::generate(&env);
-        let reg_id = env.register(RegistrationContract, ());
+        let reg_id = env.register(RegistrationContract, (admin.clone(),));
         let client = RegistrationContractClient::new(&env, &reg_id);
-        client.initialize(&admin);
 
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
@@ -4460,21 +4457,8 @@ mod tests {
     fn test_admin_seed_scout_rejects_non_admin() {
         let env = Env::default();
         let admin = Address::generate(&env);
-        let reg_id = env.register(RegistrationContract, ());
+        let reg_id = env.register(RegistrationContract, (admin.clone(),));
         let client = RegistrationContractClient::new(&env, &reg_id);
-
-        // Mock only the admin's initialize auth; do NOT mock seed auths, so
-        // `admin_seed_scout`'s require_admin check fails for any caller.
-        env.mock_auths(&[MockAuth {
-            address: &admin,
-            invoke: &MockAuthInvoke {
-                contract: &reg_id,
-                fn_name: "initialize",
-                args: vec![&env, admin.to_val()],
-                sub_invokes: &[],
-            },
-        }]);
-        client.initialize(&admin);
 
         let wallet = Address::generate(&env);
 
@@ -4503,9 +4487,9 @@ mod tests {
     fn test_get_player_ttl_expires_without_bump() {
         use soroban_sdk::testutils::Ledger;
 
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         // Start at a known ledger sequence so the advance is deterministic.
         env.ledger().with_mut(|l| {
@@ -4632,9 +4616,9 @@ mod tests {
     fn test_get_scouts_extends_persistent_ttl() {
         use soroban_sdk::testutils::{storage::Persistent as _, Ledger};
 
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         env.ledger().with_mut(|ledger| {
             ledger.sequence_number = 100;
@@ -4672,9 +4656,9 @@ mod tests {
     /// An age of MAX_PLAYER_AGE (100) must be accepted.
     #[test]
     fn test_register_player_age_at_max_succeeds() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
@@ -4692,9 +4676,9 @@ mod tests {
     /// An age of MAX_PLAYER_AGE + 1 (101) must be rejected with InvalidInput.
     #[test]
     fn test_register_player_age_above_max_returns_invalid_input() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
@@ -4712,9 +4696,9 @@ mod tests {
     /// An implausibly large age (999) must also be rejected with InvalidInput.
     #[test]
     fn test_register_player_implausible_age_returns_invalid_input() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = PlayerVitals {
@@ -4738,9 +4722,9 @@ mod tests {
     /// and confirming vitals fields are write-once and immutable post-registration.
     #[test]
     fn test_vitals_length_limits_and_immutability_audit() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         // 1. Confirm register_player rejects oversized position (> 64 bytes)
         let wallet1 = Address::generate(&env);
@@ -4814,9 +4798,9 @@ mod tests {
 
     #[test]
     fn test_verify_scout_populates_structured_record() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let region = String::from_str(&env, "FR");
@@ -4841,9 +4825,9 @@ mod tests {
 
     #[test]
     fn test_get_scout_verification_exposes_record() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let region = String::from_str(&env, "FR");
@@ -4864,10 +4848,9 @@ mod tests {
     fn test_pause_contract_emits_contract_paused_event() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register(RegistrationContract, ());
-        let client = RegistrationContractClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let contract_id = env.register(RegistrationContract, (admin.clone(),));
+        let client = RegistrationContractClient::new(&env, &contract_id);
 
         client.pause_contract();
 
@@ -4888,10 +4871,9 @@ mod tests {
     fn test_unpause_contract_emits_contract_unpaused_event() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register(RegistrationContract, ());
-        let client = RegistrationContractClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let contract_id = env.register(RegistrationContract, (admin.clone(),));
+        let client = RegistrationContractClient::new(&env, &contract_id);
 
         client.pause_contract();
         client.unpause_contract();
@@ -4943,9 +4925,9 @@ mod tests {
     /// place the player correctly in the new level's buckets.
     #[test]
     fn test_set_player_level_fallback_full_sweep() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
@@ -5020,9 +5002,9 @@ mod tests {
     /// call returns Ok(()) silently.
     #[test]
     fn test_deactivate_player_idempotent() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
@@ -5047,9 +5029,9 @@ mod tests {
     /// emit an event; the call returns Ok(()) silently.
     #[test]
     fn test_reactivate_player_idempotent() {
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
@@ -5085,9 +5067,9 @@ mod tests {
     fn test_register_scout_extends_scout_by_wallet_ttl() {
         use soroban_sdk::testutils::Ledger;
 
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         env.ledger().with_mut(|l| {
             l.sequence_number = 100;
@@ -5119,9 +5101,9 @@ mod tests {
     fn test_admin_seed_scout_extends_both_ttls() {
         use soroban_sdk::testutils::Ledger;
 
-        let (env, client) = setup();
+        let env = setup_env();
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let client = deploy(&env, &admin);
 
         env.ledger().with_mut(|l| {
             l.sequence_number = 100;
@@ -5160,9 +5142,8 @@ mod issue_1641_tests {
     fn setup() -> (Env, Address, RegistrationContractClient<'static>) {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register(RegistrationContract, ());
+        let contract_id = env.register(RegistrationContract, (Address::generate(&env),));
         let client = RegistrationContractClient::new(&env, &contract_id);
-        client.initialize(&Address::generate(&env));
         (env, contract_id, client)
     }
 

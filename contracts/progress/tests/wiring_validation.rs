@@ -44,17 +44,14 @@ fn setup_full_stack() -> (
 
     let admin = Address::generate(&env);
 
-    let reg_id = env.register(RegistrationContract, ());
+    let reg_id = env.register(RegistrationContract, (admin.clone(),));
     let registration = RegistrationContractClient::new(&env, &reg_id);
-    registration.initialize(&admin);
 
-    let prog_id = env.register(ProgressContract, ());
+    let prog_id = env.register(ProgressContract, (admin.clone(),));
     let progress = ProgressContractClient::new(&env, &prog_id);
-    progress.initialize(&admin);
 
-    let ver_id = env.register(VerificationContract, ());
+    let ver_id = env.register(VerificationContract, (admin.clone(),));
     let verification = VerificationContractClient::new(&env, &ver_id);
-    verification.initialize(&admin);
 
     // Wire progress -> verification (primary caller)
     progress.set_verification_contract(&ver_id);
@@ -72,9 +69,8 @@ fn test_advance_level_rejected_when_registration_unwired() {
     env.mock_all_auths();
     let admin = Address::generate(&env);
 
-    let prog_id = env.register(ProgressContract, ());
+    let prog_id = env.register(ProgressContract, (admin.clone(),));
     let progress = ProgressContractClient::new(&env, &prog_id);
-    progress.initialize(&admin);
 
     let ver_id = Address::generate(&env);
     progress.set_verification_contract(&ver_id);
@@ -100,9 +96,8 @@ fn test_reset_player_level_rejected_when_registration_unwired() {
     env.mock_all_auths();
     let admin = Address::generate(&env);
 
-    let prog_id = env.register(ProgressContract, ());
+    let prog_id = env.register(ProgressContract, (admin.clone(),));
     let progress = ProgressContractClient::new(&env, &prog_id);
-    progress.initialize(&admin);
 
     let player_id: u64 = 1;
 

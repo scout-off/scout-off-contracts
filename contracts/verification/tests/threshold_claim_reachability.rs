@@ -14,9 +14,8 @@ use soroban_sdk::{
 fn setup() -> (Env, VerificationContractClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
-    let id = env.register(VerificationContract, ());
+    let id = env.register(VerificationContract, (Address::generate(&env),));
     let client = VerificationContractClient::new(&env, &id);
-    client.initialize(&Address::generate(&env));
     (env, client)
 }
 

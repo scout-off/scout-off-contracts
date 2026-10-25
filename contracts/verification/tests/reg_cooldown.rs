@@ -20,10 +20,9 @@ fn setup() -> (Env, VerificationContractClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().with_mut(|l| l.timestamp = START);
-    let contract_id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let contract_id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &contract_id);
     // Enable the cooldown (default is 0 = disabled).
     client.set_reg_cooldown(&COOLDOWN_SECS);
     (env, client)
@@ -229,9 +228,8 @@ fn set_reg_cooldown_rejects_above_max() {
 fn reg_cooldown_storage_key_is_pinned() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(VerificationContract, ());
+    let contract_id = env.register(VerificationContract, (Address::generate(&env),));
     let client = VerificationContractClient::new(&env, &contract_id);
-    client.initialize(&Address::generate(&env));
     client.set_reg_cooldown(&1_234);
     let key = (soroban_sdk::Symbol::new(&env, "RegCooldownSecs"), 0u64);
     let stored: Option<u64> =

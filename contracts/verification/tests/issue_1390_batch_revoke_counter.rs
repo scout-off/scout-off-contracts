@@ -31,9 +31,8 @@ fn setup(n: usize) -> (Env, Address, Vec<Address>) {
     let env = Env::default();
     env.mock_all_auths();
 
-    let verification_id = env.register(VerificationContract, ());
+    let verification_id = env.register(VerificationContract, (Address::generate(&env),));
     let client = VerificationContractClient::new(&env, &verification_id);
-    client.initialize(&Address::generate(&env));
 
     let mut wallets = Vec::new(&env);
     for i in 0..n {

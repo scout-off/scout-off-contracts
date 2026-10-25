@@ -27,10 +27,9 @@ fn setup() -> (Env, RegistrationContractClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().with_mut(|l| l.timestamp = START);
-    let contract_id = env.register(RegistrationContract, ());
-    let client = RegistrationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let contract_id = env.register(RegistrationContract, (admin.clone(),));
+    let client = RegistrationContractClient::new(&env, &contract_id);
     (env, client)
 }
 
@@ -167,9 +166,8 @@ fn cooldown_wins_over_invalid_region_for_both_entrypoints() {
 fn reg_cooldown_storage_key_is_pinned() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(RegistrationContract, ());
+    let contract_id = env.register(RegistrationContract, (Address::generate(&env),));
     let client = RegistrationContractClient::new(&env, &contract_id);
-    client.initialize(&Address::generate(&env));
     client.set_reg_cooldown(&1_234);
     let key = (soroban_sdk::Symbol::new(&env, "RegCooldownSecs"), 0u64);
     let stored: Option<u64> =

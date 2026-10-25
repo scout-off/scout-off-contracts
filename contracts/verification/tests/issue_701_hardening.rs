@@ -42,10 +42,9 @@ const DEFAULT_VOTING_WINDOW_SECS: u64 = 1_209_600; // 14 days — must match lib
 fn setup() -> (Env, VerificationContractClient<'static>, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    let id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &id);
     (env, client, admin, id)
 }
 

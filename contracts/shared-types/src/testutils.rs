@@ -55,3 +55,72 @@ pub fn last_event_data(env: &Env, name: &str) -> Option<Val> {
             ContractEventBody::V0(v0) => Val::try_from_val(env, &v0.data).unwrap(),
         })
 }
+
+/// Minimal peer contract for wiring tests: it only answers the wiring
+/// handshake (`contract_kind` / `version`, see `verify_peer`) as the kind it
+/// was deployed with. Use it wherever a test needs a peer address but not the
+/// peer's behaviour.
+#[soroban_sdk::contract]
+pub struct PeerStub;
+
+#[soroban_sdk::contracttype]
+enum PeerStubKey {
+    Kind,
+}
+
+#[soroban_sdk::contractimpl]
+impl PeerStub {
+    pub fn __constructor(env: Env, kind: soroban_sdk::Symbol) {
+        env.storage().instance().set(&PeerStubKey::Kind, &kind);
+    }
+
+    pub fn contract_kind(env: Env) -> soroban_sdk::Symbol {
+        env.storage().instance().get(&PeerStubKey::Kind).unwrap()
+    }
+
+    pub fn version(env: Env) -> soroban_sdk::String {
+        soroban_sdk::String::from_str(&env, "2.0.0")
+    }
+}
+
+/// Deploy a [`PeerStub`] that passes the wiring handshake as `kind`
+/// (`"registration"`, `"verification"`, `"progress"` or `"scout_access"`).
+pub fn peer_stub(env: &Env, kind: &str) -> Address {
+    env.register(PeerStub, (soroban_sdk::Symbol::new(env, kind),))
+}
+
+/// Mirrors registration's `PlayerStatus` (same variant names, so it is
+/// interchangeable on the wire).
+#[soroban_sdk::contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub enum StubPlayerStatus {
+    Active,
+    Deactivated,
+}
+
+/// Registration peer that reports every player as `Active`. Wire it into
+/// verification (`set_registration_contract`) in tests that commit milestones
+/// but are not about registration itself: since #1622 verification fails
+/// closed with `RegistrationNotConfigured` when no registration is wired.
+#[soroban_sdk::contract]
+pub struct ActiveRegistryStub;
+
+#[soroban_sdk::contractimpl]
+impl ActiveRegistryStub {
+    pub fn contract_kind(env: Env) -> soroban_sdk::Symbol {
+        soroban_sdk::Symbol::new(&env, "registration")
+    }
+
+    pub fn version(env: Env) -> soroban_sdk::String {
+        soroban_sdk::String::from_str(&env, "2.0.0")
+    }
+
+    pub fn get_player_status(_env: Env, _player_id: u64) -> StubPlayerStatus {
+        StubPlayerStatus::Active
+    }
+}
+
+/// Deploy an [`ActiveRegistryStub`].
+pub fn active_registry_stub(env: &Env) -> Address {
+    env.register(ActiveRegistryStub, ())
+}

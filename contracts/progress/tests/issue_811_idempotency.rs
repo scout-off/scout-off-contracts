@@ -69,7 +69,7 @@ use scoutchain_progress::{
 };
 use scoutchain_registration::{PlayerVitals, RegistrationContract, RegistrationContractClient};
 use scoutchain_shared_types::ProgressLevel;
-use scoutchain_verification::{VerificationContract, VerificationContractClient};
+use scoutchain_verification::VerificationContract;
 use soroban_sdk::{testutils::Address as _, Address, Bytes, Env, String, Vec};
 
 fn valid_vitals(env: &Env) -> PlayerVitals {
@@ -107,13 +107,11 @@ fn setup() -> Harness {
 
     let admin = Address::generate(&env);
 
-    let reg_id = env.register(RegistrationContract, ());
+    let reg_id = env.register(RegistrationContract, (admin.clone(),));
     let registration = RegistrationContractClient::new(&env, &reg_id);
-    registration.initialize(&admin);
 
-    let id = env.register(ProgressContract, ());
+    let id = env.register(ProgressContract, (admin.clone(),));
     let client = ProgressContractClient::new(&env, &id);
-    client.initialize(&admin);
 
     let caller = Address::generate(&env);
     client.set_verification_contract(&caller);
@@ -394,9 +392,8 @@ fn test_replay_requires_a_wired_and_authorized_caller() {
     let env = Env::default();
     env.mock_all_auths();
     let admin = Address::generate(&env);
-    let id = env.register(ProgressContract, ());
+    let id = env.register(ProgressContract, (admin.clone(),));
     let client = ProgressContractClient::new(&env, &id);
-    client.initialize(&admin);
 
     let stranger = Address::generate(&env);
     assert_eq!(
@@ -455,20 +452,17 @@ fn test_secondary_caller_replay_with_unbacked_milestone_ref_is_rejected() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let progress_id = env.register(ProgressContract, ());
+    let progress_id = env.register(ProgressContract, (admin.clone(),));
     let client = ProgressContractClient::new(&env, &progress_id);
-    client.initialize(&admin);
 
     // A real verification contract, so the #457 milestone-existence cross-call
     // resolves. No milestones are approved, so its count stays 0.
-    let verification_id = env.register(VerificationContract, ());
-    VerificationContractClient::new(&env, &verification_id).initialize(&admin);
+    let verification_id = env.register(VerificationContract, (admin.clone(),));
     client.set_verification_contract(&verification_id);
 
     // Also wire registration contract for the secondary path check.
-    let reg_id = env.register(RegistrationContract, ());
+    let reg_id = env.register(RegistrationContract, (admin.clone(),));
     let registration = RegistrationContractClient::new(&env, &reg_id);
-    registration.initialize(&admin);
     client.set_registration_contract(&reg_id);
     registration.set_progress_contract(&progress_id);
 

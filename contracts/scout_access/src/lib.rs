@@ -3806,9 +3806,8 @@ mod tests {
         env.mock_all_auths();
         let admin = Address::generate(&env);
         let xlm = create_token(&env, &admin);
-        let contract_id = env.register(ScoutAccessContract, ());
+        let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
         let client = ScoutAccessContractClient::new(&env, &contract_id);
-        client.initialize(&admin, &xlm, &default_fees());
         (env, admin, xlm, contract_id, client)
     }
 
@@ -4007,10 +4006,9 @@ mod tests {
         env.mock_all_auths();
         let admin = Address::generate(&env);
         let xlm = create_token(&env, &admin);
-        let contract_id = env.register(ScoutAccessContract, ());
-        let client = ScoutAccessContractClient::new(&env, &contract_id);
 
-        client.initialize(&admin, &xlm, &default_fees());
+        let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+        let client = ScoutAccessContractClient::new(&env, &contract_id);
 
         assert_eq!(
             env.events().all().filter_by_contract(&contract_id),
@@ -4041,50 +4039,66 @@ mod tests {
 
     #[test]
     fn test_initialize_accepts_real_token_contract() {
-        // A registered SAC exposes decimals() and must pass the probe.
+        // A registered SAC exposes decimals() and must pass the probe, so the
+        // constructor succeeds and the contract is initialized on deploy.
         let env = Env::default();
         env.mock_all_auths();
         let admin = Address::generate(&env);
         let xlm = create_token(&env, &admin);
-        let contract_id = env.register(ScoutAccessContract, ());
+        let contract_id = env.register(ScoutAccessContract, (admin, xlm, default_fees()));
         let client = ScoutAccessContractClient::new(&env, &contract_id);
+        assert!(client.health().initialized);
+    }
 
-        let res = client.try_initialize(&admin, &xlm, &default_fees());
-        assert!(res.is_ok(), "real token contract should be accepted");
+    /// Run the constructor's decimals() probe against `token` inside a real
+    /// scout_access contract context.
+    fn probe_xlm_token(env: &Env, token: &Address) -> Result<(), ScoutAccessError> {
+        let admin = Address::generate(env);
+        let xlm = create_token(env, &admin);
+        let contract_id = env.register(ScoutAccessContract, (admin, xlm, default_fees()));
+        env.as_contract(&contract_id, || {
+            ScoutAccessContract::require_xlm_decimals(env, token)
+        })
     }
 
     #[test]
     fn test_initialize_rejects_plain_account_as_xlm_token() {
         // A generated Address is a plain account, not a contract. The
-        // decimals() probe must fail and initialize must return InvalidInput
-        // with no storage side effects.
+        // decimals() probe must fail with InvalidInput.
         let env = Env::default();
         env.mock_all_auths();
-        let admin = Address::generate(&env);
         let not_a_token = Address::generate(&env);
-        let contract_id = env.register(ScoutAccessContract, ());
-        let client = ScoutAccessContractClient::new(&env, &contract_id);
-
-        let res = client.try_initialize(&admin, &not_a_token, &default_fees());
-        assert_eq!(res, Err(Ok(ScoutAccessError::InvalidInput)));
-        assert!(!client.health().initialized);
+        assert_eq!(
+            probe_xlm_token(&env, &not_a_token),
+            Err(ScoutAccessError::InvalidInput)
+        );
     }
 
     #[test]
     fn test_initialize_rejects_non_token_contract_as_xlm_token() {
         // A registered contract that does not expose decimals() must also be
-        // rejected. We register a fresh contract (the scout_access contract
-        // itself) which has no decimals() method.
+        // rejected. Another scout_access instance has no decimals() method.
         let env = Env::default();
         env.mock_all_auths();
         let admin = Address::generate(&env);
-        let not_a_token = env.register(ScoutAccessContract, ());
-        let contract_id = env.register(ScoutAccessContract, ());
-        let client = ScoutAccessContractClient::new(&env, &contract_id);
+        let xlm = create_token(&env, &admin);
+        let not_a_token = env.register(ScoutAccessContract, (admin, xlm, default_fees()));
+        assert_eq!(
+            probe_xlm_token(&env, &not_a_token),
+            Err(ScoutAccessError::InvalidInput)
+        );
+    }
 
-        let res = client.try_initialize(&admin, &not_a_token, &default_fees());
-        assert_eq!(res, Err(Ok(ScoutAccessError::InvalidInput)));
-        assert!(!client.health().initialized);
+    /// The constructor refuses to deploy with a non-token payment address, so
+    /// a misconfigured contract can never exist.
+    #[test]
+    #[should_panic]
+    fn test_constructor_rejects_plain_account_as_xlm_token() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let not_a_token = Address::generate(&env);
+        env.register(ScoutAccessContract, (admin, not_a_token, default_fees()));
     }
 
     #[test]
@@ -4416,8 +4430,6 @@ mod tests {
         env.mock_all_auths();
         let admin = Address::generate(&env);
         let xlm = create_token(&env, &admin);
-        let contract_id = env.register(ScoutAccessContract, ());
-        let client = ScoutAccessContractClient::new(&env, &contract_id);
         let fees = FeeConfig {
             contact_fee_stroops: 100_000,
             basic_sub_stroops: 1_000_000,
@@ -4428,7 +4440,8 @@ mod tests {
             trial_offer_escrow_stroops: 500_000,
             trial_offer_expiry_secs: 3_600,
         };
-        client.initialize(&admin, &xlm, &fees);
+        let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), fees.clone(),));
+        let client = ScoutAccessContractClient::new(&env, &contract_id);
         client.set_registration_contract(&env.register(RegistrationStub, ()));
         wire_progress_stub(&env, &client);
 
@@ -4453,8 +4466,6 @@ mod tests {
         env.mock_all_auths();
         let admin = Address::generate(&env);
         let xlm = create_token(&env, &admin);
-        let contract_id = env.register(ScoutAccessContract, ());
-        let client = ScoutAccessContractClient::new(&env, &contract_id);
         let fees = FeeConfig {
             contact_fee_stroops: 100_000,
             basic_sub_stroops: 1_000_000,
@@ -4465,7 +4476,8 @@ mod tests {
             trial_offer_escrow_stroops: 500_000,
             trial_offer_expiry_secs: 3_600,
         };
-        client.initialize(&admin, &xlm, &fees);
+        let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), fees.clone(),));
+        let client = ScoutAccessContractClient::new(&env, &contract_id);
         client.set_registration_contract(&env.register(RegistrationStub, ()));
 
         let scout = Address::generate(&env);
@@ -4486,8 +4498,6 @@ mod tests {
         env.mock_all_auths();
         let admin = Address::generate(&env);
         let xlm = create_token(&env, &admin);
-        let contract_id = env.register(ScoutAccessContract, ());
-        let client = ScoutAccessContractClient::new(&env, &contract_id);
         let period_secs: u64 = 30 * 24 * 60 * 60;
         let fees = FeeConfig {
             contact_fee_stroops: 100_000,
@@ -4499,7 +4509,8 @@ mod tests {
             trial_offer_escrow_stroops: 500_000,
             trial_offer_expiry_secs: 3_600,
         };
-        client.initialize(&admin, &xlm, &fees);
+        let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), fees.clone(),));
+        let client = ScoutAccessContractClient::new(&env, &contract_id);
         client.set_registration_contract(&env.register(RegistrationStub, ()));
         wire_progress_stub(&env, &client);
 
@@ -4533,11 +4544,6 @@ mod tests {
     fn test_validate_fee_config_rejects_zero_pro_contact_limit() {
         let env = Env::default();
         env.mock_all_auths();
-        let admin = Address::generate(&env);
-        let xlm = create_token(&env, &admin);
-        let contract_id = env.register(ScoutAccessContract, ());
-        let client = ScoutAccessContractClient::new(&env, &contract_id);
-
         let bad_fees = FeeConfig {
             contact_fee_stroops: 100_000,
             basic_sub_stroops: 1_000_000,
@@ -4548,8 +4554,8 @@ mod tests {
             trial_offer_escrow_stroops: 500_000,
             trial_offer_expiry_secs: 3_600,
         };
-        let res = client.try_initialize(&admin, &xlm, &bad_fees);
-        assert_eq!(res, Err(Ok(ScoutAccessError::InvalidInput)));
+        let res = ScoutAccessContract::validate_fee_config(&bad_fees);
+        assert_eq!(res, Err(ScoutAccessError::InvalidInput));
     }
 
     #[test]
@@ -5070,86 +5076,69 @@ mod tests {
     // validate_fee_config tests
     // -------------------------------------------------------------------------
 
-    fn make_contract() -> (Env, Address, Address, ScoutAccessContractClient<'static>) {
-        let env = Env::default();
-        env.mock_all_auths();
-        let admin = Address::generate(&env);
-        let xlm = create_token(&env, &admin);
-        let contract_id = env.register(ScoutAccessContract, ());
-        let client = ScoutAccessContractClient::new(&env, &contract_id);
-        (env, admin, xlm, client)
-    }
-
     #[test]
     fn test_initialize_zero_contact_fee_returns_invalid_input() {
-        let (_env, admin, xlm, client) = make_contract();
         let bad_fees = FeeConfig {
             contact_fee_stroops: 0,
             ..default_fees()
         };
-        let result = client.try_initialize(&admin, &xlm, &bad_fees);
-        assert_eq!(result, Err(Ok(ScoutAccessError::InvalidInput)));
+        let result = ScoutAccessContract::validate_fee_config(&bad_fees);
+        assert_eq!(result, Err(ScoutAccessError::InvalidInput));
     }
 
     #[test]
     fn test_initialize_zero_basic_sub_returns_invalid_input() {
-        let (_env, admin, xlm, client) = make_contract();
         let bad_fees = FeeConfig {
             basic_sub_stroops: 0,
             ..default_fees()
         };
-        let result = client.try_initialize(&admin, &xlm, &bad_fees);
-        assert_eq!(result, Err(Ok(ScoutAccessError::InvalidInput)));
+        let result = ScoutAccessContract::validate_fee_config(&bad_fees);
+        assert_eq!(result, Err(ScoutAccessError::InvalidInput));
     }
 
     #[test]
     fn test_initialize_zero_pro_sub_returns_invalid_input() {
-        let (_env, admin, xlm, client) = make_contract();
         let bad_fees = FeeConfig {
             pro_sub_stroops: 0,
             ..default_fees()
         };
-        let result = client.try_initialize(&admin, &xlm, &bad_fees);
-        assert_eq!(result, Err(Ok(ScoutAccessError::InvalidInput)));
+        let result = ScoutAccessContract::validate_fee_config(&bad_fees);
+        assert_eq!(result, Err(ScoutAccessError::InvalidInput));
     }
 
     #[test]
     fn test_initialize_zero_elite_sub_returns_invalid_input() {
-        let (_env, admin, xlm, client) = make_contract();
         let bad_fees = FeeConfig {
             elite_sub_stroops: 0,
             ..default_fees()
         };
-        let result = client.try_initialize(&admin, &xlm, &bad_fees);
-        assert_eq!(result, Err(Ok(ScoutAccessError::InvalidInput)));
+        let result = ScoutAccessContract::validate_fee_config(&bad_fees);
+        assert_eq!(result, Err(ScoutAccessError::InvalidInput));
     }
 
     #[test]
     fn test_initialize_zero_sub_duration_returns_invalid_input() {
-        let (_env, admin, xlm, client) = make_contract();
         let bad_fees = FeeConfig {
             sub_duration_secs: 0,
             ..default_fees()
         };
-        let result = client.try_initialize(&admin, &xlm, &bad_fees);
-        assert_eq!(result, Err(Ok(ScoutAccessError::InvalidInput)));
+        let result = ScoutAccessContract::validate_fee_config(&bad_fees);
+        assert_eq!(result, Err(ScoutAccessError::InvalidInput));
     }
 
     #[test]
     fn test_initialize_negative_fee_returns_invalid_input() {
-        let (_env, admin, xlm, client) = make_contract();
         let bad_fees = FeeConfig {
             contact_fee_stroops: -1,
             ..default_fees()
         };
-        let result = client.try_initialize(&admin, &xlm, &bad_fees);
-        assert_eq!(result, Err(Ok(ScoutAccessError::InvalidInput)));
+        let result = ScoutAccessContract::validate_fee_config(&bad_fees);
+        assert_eq!(result, Err(ScoutAccessError::InvalidInput));
     }
 
     #[test]
     fn test_initialize_valid_fee_config_succeeds() {
-        let (_env, admin, xlm, client) = make_contract();
-        let result = client.try_initialize(&admin, &xlm, &default_fees());
+        let result = ScoutAccessContract::validate_fee_config(&default_fees());
         assert!(result.is_ok());
     }
 
@@ -5274,13 +5263,12 @@ mod tests {
     #[test]
     fn test_trial_config_bounds() {
         let ok = |escrow: i128, expiry: u64| {
-            let (_env, admin, xlm, client) = make_contract();
             let fees = FeeConfig {
                 trial_offer_escrow_stroops: escrow,
                 trial_offer_expiry_secs: expiry,
                 ..default_fees()
             };
-            client.try_initialize(&admin, &xlm, &fees) == Ok(Ok(()))
+            ScoutAccessContract::validate_fee_config(&fees).is_ok()
         };
         assert!(ok(MAX_TRIAL_ESCROW_STROOPS, MIN_TRIAL_EXPIRY_SECS));
         assert!(!ok(MAX_TRIAL_ESCROW_STROOPS + 1, MIN_TRIAL_EXPIRY_SECS));
@@ -5293,34 +5281,31 @@ mod tests {
     /// A zero escrow is valid and disables trial offers (#1421).
     #[test]
     fn test_initialize_zero_trial_escrow_disables_trial_offers() {
-        let (_env, admin, xlm, client) = make_contract();
         let fees = FeeConfig {
             trial_offer_escrow_stroops: 0,
             ..default_fees()
         };
-        assert_eq!(client.try_initialize(&admin, &xlm, &fees), Ok(Ok(())));
+        assert_eq!(ScoutAccessContract::validate_fee_config(&fees), Ok(()));
     }
 
     #[test]
     fn test_initialize_zero_trial_expiry_returns_invalid_input() {
-        let (_env, admin, xlm, client) = make_contract();
         let bad_fees = FeeConfig {
             trial_offer_expiry_secs: 0,
             ..default_fees()
         };
-        let result = client.try_initialize(&admin, &xlm, &bad_fees);
-        assert_eq!(result, Err(Ok(ScoutAccessError::InvalidInput)));
+        let result = ScoutAccessContract::validate_fee_config(&bad_fees);
+        assert_eq!(result, Err(ScoutAccessError::InvalidInput));
     }
 
     #[test]
     fn test_initialize_negative_trial_escrow_returns_invalid_input() {
-        let (_env, admin, xlm, client) = make_contract();
         let bad_fees = FeeConfig {
             trial_offer_escrow_stroops: -1,
             ..default_fees()
         };
-        let result = client.try_initialize(&admin, &xlm, &bad_fees);
-        assert_eq!(result, Err(Ok(ScoutAccessError::InvalidInput)));
+        let result = ScoutAccessContract::validate_fee_config(&bad_fees);
+        assert_eq!(result, Err(ScoutAccessError::InvalidInput));
     }
 
     #[test]
@@ -5826,25 +5811,22 @@ mod tests {
         env.mock_all_auths();
 
         // --- deploy verification contract ---
-        let ver_id = env.register(VerificationContract, ());
-        let ver_client = VerificationContractClient::new(&env, &ver_id);
         let ver_admin = Address::generate(&env);
-        ver_client.initialize(&ver_admin);
+        let ver_id = env.register(VerificationContract, (ver_admin.clone(),));
+        let ver_client = VerificationContractClient::new(&env, &ver_id);
 
         // --- deploy progress contract ---
-        let progress_id = env.register(ProgressContract, ());
-        let progress_client = ProgressContractClient::new(&env, &progress_id);
         let progress_admin = Address::generate(&env);
-        progress_client.initialize(&progress_admin);
+        let progress_id = env.register(ProgressContract, (progress_admin.clone(),));
+        let progress_client = ProgressContractClient::new(&env, &progress_id);
         progress_client.set_verification_contract(&ver_id);
         progress_client.set_registration_contract(&env.register(LevelSyncStub, ()));
 
         // --- deploy scout_access contract ---
         let admin = Address::generate(&env);
         let xlm = create_token(&env, &admin);
-        let scout_access_id = env.register(ScoutAccessContract, ());
+        let scout_access_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
         let client = ScoutAccessContractClient::new(&env, &scout_access_id);
-        client.initialize(&admin, &xlm, &default_fees());
         client.set_registration_contract(&env.register(RegistrationStub, ()));
 
         // Wire scout_access → progress
@@ -5946,25 +5928,22 @@ mod tests {
         env.mock_all_auths();
 
         // --- deploy verification contract ---
-        let ver_id = env.register(VerificationContract, ());
-        let ver_client = VerificationContractClient::new(&env, &ver_id);
         let ver_admin = Address::generate(&env);
-        ver_client.initialize(&ver_admin);
+        let ver_id = env.register(VerificationContract, (ver_admin.clone(),));
+        let ver_client = VerificationContractClient::new(&env, &ver_id);
 
         // --- deploy progress contract ---
-        let progress_id = env.register(ProgressContract, ());
-        let progress_client = ProgressContractClient::new(&env, &progress_id);
         let progress_admin = Address::generate(&env);
-        progress_client.initialize(&progress_admin);
+        let progress_id = env.register(ProgressContract, (progress_admin.clone(),));
+        let progress_client = ProgressContractClient::new(&env, &progress_id);
         progress_client.set_verification_contract(&ver_id);
         progress_client.set_registration_contract(&env.register(LevelSyncStub, ()));
 
         // --- deploy scout_access contract ---
         let admin = Address::generate(&env);
         let xlm = create_token(&env, &admin);
-        let scout_access_id = env.register(ScoutAccessContract, ());
+        let scout_access_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
         let client = ScoutAccessContractClient::new(&env, &scout_access_id);
-        client.initialize(&admin, &xlm, &default_fees());
         client.set_registration_contract(&env.register(RegistrationStub, ()));
 
         // Wire scout_access → progress
@@ -6681,13 +6660,12 @@ mod tests {
         env.mock_all_auths();
         let admin = Address::generate(&env);
         let xlm = create_token(&env, &admin);
-        let contract_id = env.register(ScoutAccessContract, ());
-        let client = ScoutAccessContractClient::new(&env, &contract_id);
         let fees = FeeConfig {
             pro_contact_limit: 1,
             ..default_fees()
         };
-        client.initialize(&admin, &xlm, &fees);
+        let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), fees.clone(),));
+        let client = ScoutAccessContractClient::new(&env, &contract_id);
         client.set_registration_contract(&env.register(RegistrationStub, ()));
 
         let scout = Address::generate(&env);

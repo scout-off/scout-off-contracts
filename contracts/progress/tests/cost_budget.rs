@@ -74,13 +74,11 @@ fn setup() -> (
     env.mock_all_auths();
     let admin = Address::generate(&env);
 
-    let reg_id = env.register(RegistrationContract, ());
+    let reg_id = env.register(RegistrationContract, (admin.clone(),));
     let registration = RegistrationContractClient::new(&env, &reg_id);
-    registration.initialize(&admin);
 
-    let contract_id = env.register(ProgressContract, ());
+    let contract_id = env.register(ProgressContract, (admin.clone(),));
     let client = ProgressContractClient::new(&env, &contract_id);
-    client.initialize(&admin);
 
     let verification = Address::generate(&env);
     client.set_verification_contract(&verification);

@@ -11,9 +11,8 @@ const SEED_500TH_ENTRY_CPU_BUDGET: u64 = 15_000_000;
 fn setup() -> (Env, ProgressContractClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
-    let id = env.register(ProgressContract, ());
+    let id = env.register(ProgressContract, (Address::generate(&env),));
     let client = ProgressContractClient::new(&env, &id);
-    client.initialize(&Address::generate(&env));
     client.open_migration_window();
     (env, client)
 }
