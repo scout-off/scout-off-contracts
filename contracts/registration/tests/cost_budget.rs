@@ -13,7 +13,7 @@
 
 use scoutchain_registration::{PlayerVitals, RegistrationContract, RegistrationContractClient};
 use scoutchain_shared_types::ProgressLevel;
-use soroban_sdk::{testutils::Address as _, vec, Address, Env, String};
+use soroban_sdk::{testutils::Address as _, vec, Address, Env, String, Vec};
 
 const REGISTER_PLAYER_CPU_BUDGET: u64 = 452_787;
 const UPDATE_PROFILE_CPU_BUDGET: u64 = 193_686;
@@ -172,4 +172,46 @@ fn cost_set_player_level_large_bucket() {
         "set_player_level_large_bucket",
         SET_PLAYER_LEVEL_LARGE_BUCKET_CPU_BUDGET,
     );
+}
+
+/// Duplicate IDs in a batch getter must collapse to a single entry and a
+/// single load. `get_players` deduplicates its input (preserving
+/// first-occurrence order) and silently skips misses, so a batch of 20
+/// copies of the same ID returns exactly one profile.
+#[test]
+fn get_players_deduplicates_ids() {
+    let (env, client) = setup();
+    let wallet = Address::generate(&env);
+    let vitals = dummy_vitals(&env);
+    let hashes = vec![&env, String::from_str(&env, "QmTestHashDedupePlayers1")];
+    let player_id = client.register_player(&wallet, &vitals, &hashes);
+
+    let mut ids: Vec<u64> = Vec::new(&env);
+    for _ in 0..20u32 {
+        ids.push_back(player_id);
+    }
+
+    let players = client.get_players(&ids);
+    assert_eq!(players.len(), 1, "duplicate IDs must collapse to one entry");
+    assert_eq!(players.get(0).unwrap().id, player_id);
+}
+
+/// `get_scouts` shares the same dedupe + partial-hit semantics as
+/// `get_players`: repeated IDs yield a single entry.
+#[test]
+fn get_scouts_deduplicates_ids() {
+    let (env, client) = setup();
+    let wallet = Address::generate(&env);
+    let vitals = dummy_vitals(&env);
+    let hashes = vec![&env, String::from_str(&env, "QmTestHashDedupeScouts1")];
+    let scout_id = client.register_scout(&wallet, &vitals, &hashes);
+
+    let mut ids: Vec<u64> = Vec::new(&env);
+    for _ in 0..20u32 {
+        ids.push_back(scout_id);
+    }
+
+    let scouts = client.get_scouts(&ids);
+    assert_eq!(scouts.len(), 1, "duplicate IDs must collapse to one entry");
+    assert_eq!(scouts.get(0).unwrap().id, scout_id);
 }

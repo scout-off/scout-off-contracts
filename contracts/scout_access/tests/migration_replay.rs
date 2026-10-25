@@ -571,3 +571,22 @@ fn test_migration_window_events_emitted() {
         "migration_window_closed event must be emitted"
     );
 }
+
+#[test]
+fn close_without_open_fails_and_does_not_seal() {
+    let (_env, client, _admin) = setup();
+    let res = client.try_close_migration_window();
+    assert_eq!(res, Err(Ok(ScoutAccessError::MigrationNotActive)));
+    // Not sealed: the window can still be opened afterwards.
+    client.open_migration_window();
+    assert!(client.migration_window_is_open());
+}
+
+#[test]
+fn close_twice_fails_the_second_time() {
+    let (_env, client, _admin) = setup();
+    client.open_migration_window();
+    client.close_migration_window();
+    let res = client.try_close_migration_window();
+    assert_eq!(res, Err(Ok(ScoutAccessError::MigrationNotActive)));
+}

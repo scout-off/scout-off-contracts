@@ -6,7 +6,8 @@ const MAX_MIGRATION_NONCES: u32 = 1024;
 
 /// ISO 3166-1 alpha-2 country codes (249 assigned codes), sorted ascending.
 /// Source: ISO 3166-1:2020 (published 2020-08), plus the widely used
-/// exceptional code "XK" (Kosovo) appended at the end of the sorted list.
+/// exceptional code "XK" (Kosovo), kept in sorted position so the binary
+/// search below finds it.
 /// Kept as a compact `&[[u8; 2]]` table so validation is a binary search
 /// costing well under 1 KB of WASM.
 pub const ISO_3166_ALPHA2: &[[u8; 2]] = &[
@@ -34,7 +35,7 @@ pub const ISO_3166_ALPHA2: &[[u8; 2]] = &[
     *b"SX", *b"SY", *b"SZ", *b"TC", *b"TD", *b"TF", *b"TG", *b"TH", *b"TJ", *b"TK",
     *b"TL", *b"TM", *b"TN", *b"TO", *b"TR", *b"TT", *b"TV", *b"TW", *b"TZ", *b"UA",
     *b"UG", *b"UM", *b"US", *b"UY", *b"UZ", *b"VA", *b"VC", *b"VE", *b"VG", *b"VI",
-    *b"VN", *b"VU", *b"WF", *b"WS", *b"YE", *b"YT", *b"ZA", *b"ZM", *b"ZW", *b"XK",
+    *b"VN", *b"VU", *b"WF", *b"WS", *b"XK", *b"YE", *b"YT", *b"ZA", *b"ZM", *b"ZW",
 ];
 
 /// Returns `true` when `code` is a known ISO 3166-1 alpha-2 code (or an
@@ -96,6 +97,25 @@ pub struct FilterResult {
     pub has_more: bool,
 }
 
+/// Paginated response from filter_player_summaries.
+/// Mirrors `FilterResult` but carries lightweight `PlayerSummary` entries
+/// (no IPFS hashes or wallet) for discovery UIs.
+/// `next_cursor` is `0` when there are no more results.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct SummaryFilterResult {
+    /// Page of player summaries matching the supplied filter criteria.
+    pub summaries: Vec<PlayerSummary>,
+    /// Pass this value as `offset` in the next call to continue pagination.
+    /// A value of `0` means there are no further results.
+    pub next_cursor: u64,
+    /// Whether more results exist after this page.
+    /// When `false`, the client has reached the end of the result set
+    /// and should stop paging even if `next_cursor` is non-zero
+    /// (which can happen if the underlying data changed between pages).
+    pub has_more: bool,
+}
+
 /// Direct status for a registered player.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -129,6 +149,10 @@ pub struct ScoutVerificationRecord {
     pub evidence_ref: Option<String>,
     /// Verification method label (e.g. "admin_manual", "kyc_attestation").
     pub method: Option<String>,
+    /// Ledger timestamp when verification was revoked via `unverify_scout`.
+    pub revoked_at: Option<u64>,
+    /// Admin-supplied reason for the revocation.
+    pub revoked_reason: Option<String>,
 }
 
 /// Scout profile stored on-chain
@@ -216,7 +240,16 @@ pub enum DataKey {
     ValidatorRegLastSent(Address),
     /// Cooldown in seconds between repeated registration attempts from the
     /// same wallet. 0 means no cooldown. Configurable by admin.
-    RegCooldownSecs(u64), // ── Migration ticket replay prevention ──
+    ///
+    /// The `u64` payload is a dummy discriminator: it is always `0` and carries
+    /// no meaning. Do NOT "clean it up" into a unit variant or change the `0`.
+    /// The serialized storage key is the variant tuple
+    /// `[Symbol("RegCooldownSecs"), U64(0)]`, so any change to the shape or
+    /// value produces a different key and orphans the cooldown already stored
+    /// on deployed contracts (reads would silently fall back to the default).
+    /// Pinned by the `reg_cooldown_storage_key_is_pinned` test.
+    RegCooldownSecs(u64),
+    // ── Migration ticket replay prevention ──
     /// Nonce tracking for migration authorizations. A wallet+nonce pair is
     /// stored as `true` after a migration authorization is redeemed, preventing
     /// the same authorization from being replayed.
@@ -224,6 +257,21 @@ pub enum DataKey {
 
     // ── Scout deactivation ──
     /// Deactivation flag for a scout. When present and `true`, the scout is
-    /// hidden from scout discovery resu
+    /// hidden from scout discovery results. Set by `deactivate_scout`,
+    /// cleared by `reactivate_scout`.
+    ScoutDeactivated(u64),
+}
 
-/* … truncated 511 chars — edit only what you need near the top … */
+/// Snapshot of the single cross-contract peer address pointer held by the
+/// registration contract (progress), with its address and re-wiring epoch.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct RegistrationWiringState {
+    pub progress_contract: WiringLink,
+}
+
+impl RegistrationWiringState {
+    pub fn is_fully_wired(&self) -> bool {
+        self.progress_contract.is_configured()
+    }
+}

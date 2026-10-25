@@ -206,6 +206,22 @@ pub enum VerificationError {
     /// `open_migration_window` was called after the window was permanently
     /// closed by `close_migration_window`.
     MigrationWindowSealed = 58,
+
+    // ── Diversity / region gate bounds (issue #1632) ──
+    /// `set_min_region_quorum` was given a value above `MAX_VALIDATORS`.
+    InvalidRegionQuorum = 59,
+    /// `set_diversity_config` was given `required_distinct_affiliations`
+    /// outside `[1, MAX_VALIDATORS]` or `starting_milestone_index == 0`.
+    InvalidDiversityConfig = 60,
+    // ── Cooldown config (issue #1633) ──
+    /// Cooldown value exceeds the maximum allowed (7 days).
+    InvalidCooldown = 61,
+    // ── Registration wiring (issue #1622) ──
+    /// The registration contract is not wired (`set_registration_contract`);
+    /// milestone commits fail closed rather than skipping the player check.
+    RegistrationNotConfigured = 62,
+    /// Wiring target failed the `contract_kind`/`version` handshake (#1610).
+    InvalidPeerContract = 63,
 }
 
 impl AdminError for VerificationError {

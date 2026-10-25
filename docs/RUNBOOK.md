@@ -556,6 +556,21 @@ proceed until it is verified.
 
 ---
 
+## Verify Deployed WASM Against a Release (issue #1614)
+
+After any deploy or upgrade, or when an auditor asks what code is running, run:
+
+```bash
+./scripts/verify-deployed-wasm.sh <network> <release-tag>
+```
+
+It fetches the installed code for each contract ID in `.env.contracts`, hashes
+it and compares it with the release's `wasm-hashes.json`, printing `MATCH` or
+`MISMATCH` per contract and exiting non-zero on any mismatch. A `MISMATCH` means
+the on-chain code is not the tagged build: treat it as an incident (consider the
+pause procedure above) until explained. Set `WASM_HASHES_FILE` to verify against
+a local manifest. See [DEPLOYMENT.md](DEPLOYMENT.md#reproducible-builds-and-deployed-wasm-verification-issue-1614).
+
 ## Related Documentation
 
 - [DEPLOYMENT.md](DEPLOYMENT.md) — contract deployment order and initialization
@@ -563,3 +578,13 @@ proceed until it is verified.
 - [GLOSSARY.md](GLOSSARY.md) — domain term definitions
 - [Issue #609](https://github.com/scout-off/scout-off-contracts/issues/609) — multisig/timelock admin authorization (the preventive fix for this section)
 - [Issue #617](https://github.com/scout-off/scout-off-contracts/issues/617) — tooling for the address-migration procedure this section relies on
+
+## Migration window sequence and `scripts/upgrade.sh`
+
+Migration state replay must run in order: `open_migration_window` → `admin_seed_*` → `close_migration_window`. Closing is **irreversible** (it seals the window), so it is rejected with `MigrationNotActive` unless the window is currently open.
+
+`scripts/upgrade.sh` uploads the WASM once and signs every call with `--source <identity>` (or `UPGRADE_SOURCE`). Contracts without `schema_version`/`migrate` (registration, verification, scout_access) are upgraded and the migration phase is skipped with exit code 0:
+
+```bash
+UPGRADE_SOURCE=admin ./scripts/upgrade.sh --contract <id> --wasm <path> [--network testnet]
+```
