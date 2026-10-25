@@ -515,6 +515,15 @@ a shared testnet or mainnet contract other people rely on.
 
 ---
 
+## Emergency: Bulk Validator Revocation
+
+Use when several validators (for example a colluding ring) must be deactivated at once.
+
+1. Split the wallet list into batches of at most **10** (`MAX_BATCH_REVOKE`). Larger batches fail with `BatchTooLarge` before any state change.
+2. Call `batch_revoke_validators(wallets, ForCause, reason)` for each batch. Every wallet is deactivated, removed from open dispute votes and excluded from attestations immediately. A `batch_revoked` summary event is emitted.
+3. The cascade sweep is **not** run inline. For each revoked wallet call `continue_revocation_cascade(wallet)` repeatedly (admin only) until it emits `revocation_cascade_complete` (each call flags at most 50 milestones).
+4. Verify with `is_milestone_flagged` / `get_active_validator_count`.
+
 ## Contract Upgrades
 
 Every `upgrade(new_wasm_hash)` call in all four contracts emits a

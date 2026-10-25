@@ -5181,6 +5181,34 @@ stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
 
 ---
 
+#### `renew_evidence_access(scout: Address, player_id: u64) -> Result<(), ScoutAccessError>`
+
+Pay `contact_fee_stroops` to renew an expired, non-revoked evidence-access
+grant (issue #1607). The grant is updated in place (new 90-day `expires_at`);
+the fee is added to `AccumulatedFees`; the Pro contact quota is not consumed.
+Emits `evidence_access_renewed`. Errors: `GrantNotExpired`,
+`GrantAlreadyRevoked`, `ContactNotFound`, `GrantNotFound`, plus the usual
+subscription / tier checks.
+
+| | |
+|---|---|
+| **Auth** | `scout` must sign |
+
+---
+
+#### `reinstate_evidence_access(player: Address, player_id: u64, scout: Address) -> Result<(), ScoutAccessError>`
+
+Player re-approves a scout whose grant they revoked (issue #1607). No fee and
+no scout consent; sets a fresh 90-day expiry and clears `revoked`/`revoked_at`.
+Emits `evidence_access_reinstated`. Errors: `GrantNotRevoked`,
+`PlayerNotVerified`, `GrantAdminRevoked`, `GrantNotFound`.
+
+| | |
+|---|---|
+| **Auth** | `player` must sign; player must own `player_id` per the registration contract |
+
+---
+
 #### `revoke_evidence_access(player: Address, player_id: u64, scout: Address) -> Result<(), ScoutAccessError>`
 
 Player-initiated revocation of an evidence access grant (issue #1380).
@@ -5188,7 +5216,7 @@ The caller (`player`) authenticates; their ownership of `player_id` is
 verified through the registration contract's `get_player_id_by_wallet`
 cross-contract call. Like `admin_revoke_evidence_access`, this does not
 delete the grant record — only flips `revoked`/`revoked_at`. Emits
-`evidence_access_revoked_by_player`.
+`evidence_revoked_by_player`.
 
 | | |
 |---|---|
@@ -5666,6 +5694,7 @@ pub struct TrialOffer {
 | 58 | `MigrationWindowSealed` | `open_migration_window` was called after the window was permanently closed by `close_migration_window` |
 | 59 | `InvalidRegionQuorum` | `set_min_region_quorum` value above `MAX_VALIDATORS` (#1632) |
 | 60 | `InvalidDiversityConfig` | `set_diversity_config` affiliations outside `[1, MAX_VALIDATORS]` or `starting_milestone_index == 0` (#1632) |
+| 64 | `BatchTooLarge` | `batch_revoke_validators` was called with more than 10 wallets |
 
 ### `ProgressError` (progress contract)
 
@@ -5747,6 +5776,10 @@ pub struct TrialOffer {
 | 45 | `MigrationWindowSealed` | `open_migration_window` was called after the window was permanently closed by `close_migration_window` |
 | 46 | `ScoutNotRegistered` | Registration is wired but has no profile for the scout wallet (never registered, or erased via `deregister_scout`) — fails closed (#1641) |
 | 47 | `TrialOffersDisabled` | `log_trial_offer` was called while `trial_offer_escrow_stroops` is 0 (trial offers disabled) |
+| 54 | `GrantNotExpired` | `renew_evidence_access` called while the grant is still active |
+| 55 | `GrantNotRevoked` | `reinstate_evidence_access` called on a grant that is not revoked |
+| 56 | `GrantAdminRevoked` | `reinstate_evidence_access` cannot undo an admin takedown |
+| 57 | `ContactNotFound` | `renew_evidence_access` requires an existing `ContactRecord` |
 
 ---
 
@@ -5878,7 +5911,9 @@ All events follow the unified `(Symbol, actor)` topic schema introduced in #246.
 | `subscription_record_restored` | event_name, admin (Address) | scout (Address) | `restore_subscription_record` re-extends an archived or expired subscription entry's TTL back to the policy value |
 | `evidence_access_granted` | event_name, scout (Address) | player_id (u64), tier_at_grant (SubscriptionTier) | `pay_to_contact` / `batch_contact_players` atomically authorizes this scout to request the wrapped decryption key for this player's evidence — see [EVIDENCE_PRIVACY.md](EVIDENCE_PRIVACY.md) |
 | `evidence_access_revoked` | event_name, scout (Address) | player_id (u64), admin (Address) | `admin_revoke_evidence_access` — off-chain key-wrapping service should stop honoring *future* requests for this pair |
-| `evidence_access_revoked_by_player` | event_name, scout (Address) | player_id (u64), player (Address) | `revoke_evidence_access` (issue #1380) — player-initiated revocation; key-wrapping service should stop honoring *future* requests for this pair |
+| `evidence_access_renewed` | event_name, scout (Address) | player_id (u64), expires_at (u64), fee_stroops (i128) | `renew_evidence_access` (issue #1607) — scout paid to extend an expired grant |
+| `evidence_access_reinstated` | event_name, scout (Address) | player_id (u64), player (Address), expires_at (u64) | `reinstate_evidence_access` (issue #1607) — player re-approved a revoked grant |
+| `evidence_revoked_by_player` | event_name, scout (Address) | player_id (u64), player (Address) | `revoke_evidence_access` (issue #1380) — player-initiated revocation; key-wrapping service should stop honoring *future* requests for this pair |
 | `auto_renew_set` | event_name, scout (Address) | enabled (bool) | Scout toggled auto-renewal of their subscription |
 | `subscription_auto_renewed` | event_name, scout (Address) | tier (SubscriptionTier), subscribed_at (u64), expires_at (u64) | `renew_if_due` auto-renewed a scout's subscription |
 | `trial_escrow_admin_refunded` | event_name, to (Address) | player_id (u64), index (u32), amount (i128) | `admin_refund_trial_escrow` force-refunded a stuck trial-offer escrow to the originating scout |

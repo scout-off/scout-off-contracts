@@ -118,6 +118,7 @@ deployment guide.
 | `010_deactivated_scout.sql` | `deactivated` column on `scouts` |
 | `011_admins.sql` | `admins` table of addresses authorised for admin operations |
 | `012_dispute_rounds.sql` | Dispute rounds (#1396): `round` / `resolved_at_unix` on `milestone_disputes` and `round` on `dispute_votes`, with round-aware unique keys |
+| `014_sep10_sessions.sql` | SEP-10 session model (#1606): `sep10_challenges` (single-use challenge store) and `refresh_tokens` (rotating refresh tokens) |
 
 ## Related documentation
 

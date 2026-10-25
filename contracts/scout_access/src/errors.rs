@@ -200,6 +200,16 @@ pub enum ScoutAccessError {
     PlayerDeactivated = 52,
     /// The target player is not registered (unknown `player_id`). Closes #301.
     PlayerNotFound = 53,
+
+    // ── Evidence-access renewal (issue #1607) ──
+    /// `renew_evidence_access` was called while the grant is still active.
+    GrantNotExpired = 54,
+    /// `reinstate_evidence_access` was called on a grant that is not revoked.
+    GrantNotRevoked = 55,
+    /// `reinstate_evidence_access` cannot undo an admin takedown.
+    GrantAdminRevoked = 56,
+    /// `renew_evidence_access` requires an existing `ContactRecord` for the pair.
+    ContactNotFound = 57,
 }
 
 impl AdminError for ScoutAccessError {

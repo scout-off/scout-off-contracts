@@ -19,6 +19,27 @@ model RevokedToken {
   @@map("revoked_tokens")
 }
 
+model Sep10Challenge {
+  hash       String    @id @db.VarChar(64)
+  account    String    @db.VarChar(56)
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(6)
+
+  @@index([expiresAt], map: "idx_sep10_challenges_expires_at")
+  @@map("sep10_challenges")
+}
+
+model RefreshToken {
+  tokenHash String    @id @map("token_hash") @db.VarChar(64)
+  account   String    @db.VarChar(56)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([expiresAt], map: "idx_refresh_tokens_expires_at")
+  @@map("refresh_tokens")
+}
+
 model Player {
   playerId     BigInt   @id @map("player_id")
   wallet       String   @unique @db.VarChar(56)

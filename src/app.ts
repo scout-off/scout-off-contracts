@@ -5,17 +5,14 @@ import { config } from "./config";
 import {
   buildChallengeTx,
   verifyChallengeTx,
-  deriveRole,
-  issueSep10Token,
+  issueSession,
+  refreshSession,
 } from "./services/sep10";
 import { requireAuth, requireRole } from "./middleware/auth";
 import { prisma } from "./db";
 
 const app = express();
 app.use(express.json());
-
-// In-memory token store for demo (replace with DB in production)
-const issuedTokens = new Map<string, string>();
 
 function isValidAccount(account: unknown): account is string {
   return typeof account === "string" && StrKey.isValidEd25519PublicKey(account);
@@ -41,7 +38,7 @@ function classifyAuthError(error: unknown): string | null {
 
 // SEP-10 challenge endpoint — returns a server-signed challenge
 // transaction that the client must sign and return.
-app.get("/auth", (req: Request, res: Response) => {
+app.get("/auth", async (req: Request, res: Response) => {
   const account = req.query.account;
   if (account === undefined || account === "") {
     return res.status(400).json({ error: "account query parameter is required" });
@@ -51,7 +48,7 @@ app.get("/auth", (req: Request, res: Response) => {
   }
 
   try {
-    const challenge = buildChallengeTx(account);
+    const challenge = await buildChallengeTx(account);
     res.json({ challenge });
   } catch (error) {
     console.error("GET /auth: failed to build challenge", error);
@@ -60,8 +57,8 @@ app.get("/auth", (req: Request, res: Response) => {
 });
 
 // SEP-10 verification endpoint — client submits the signed challenge
-// transaction; server verifies it and issues a JWT whose role is
-// derived from on-chain / indexer state.
+// transaction; server verifies it and issues an access token plus a rotating
+// refresh token, with the role derived from on-chain / indexer state.
 app.post("/auth", async (req: Request, res: Response) => {
   const { transaction, account } = req.body as {
     transaction?: string;
@@ -79,12 +76,9 @@ app.post("/auth", async (req: Request, res: Response) => {
 
   try {
     const verifiedAccount = await verifyChallengeTx(transaction, account);
-    const role = await deriveRole(verifiedAccount);
-    const token = issueSep10Token({ sub: verifiedAccount, role }, config.jwtSecret);
+    const session = await issueSession(verifiedAccount);
 
-    issuedTokens.set(token, "active");
-
-    res.json({ token });
+    res.json(session);
   } catch (error) {
     const code = classifyAuthError(error);
     if (code === null) {
@@ -93,6 +87,25 @@ app.post("/auth", async (req: Request, res: Response) => {
     }
     console.warn(`POST /auth: verification failed (${code})`, error);
     return res.status(401).json({ error: code });
+  }
+});
+
+// Refresh endpoint — rotates the refresh token and re-derives the role.
+app.post("/auth/refresh", async (req: Request, res: Response) => {
+  const { refreshToken } = req.body as { refreshToken?: string };
+
+  if (!refreshToken || typeof refreshToken !== "string") {
+    return res.status(400).json({ error: "refreshToken is required" });
+  }
+
+  try {
+    res.json(await refreshSession(refreshToken));
+  } catch (error) {
+    if (error instanceof Error && error.message === "Invalid refresh token") {
+      return res.status(401).json({ error: "invalid_refresh_token" });
+    }
+    console.error("POST /auth/refresh: unexpected error", error);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 

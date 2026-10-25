@@ -136,12 +136,28 @@ who can call them and the error they return on a no-op:
   `player_id`, the call is rejected with `PlayerNotVerified` (code 40).
 - Sets `revoked = true` and `revoked_at`, but **never deletes the grant
   record** — the audit trail stays intact.
-- Emits `evidence_access_revoked_by_player`.
+- Emits `evidence_revoked_by_player`.
 - **Does not** silently no-op on an already-revoked grant: it returns
   `GrantAlreadyRevoked` (code 39), so the player's frontend can surface a
   "this access was already revoked" message instead of silently succeeding.
 - **Returns `GrantNotFound`** (code 38) if no grant was ever issued for
   `(player_id, scout)`.
+
+**Renewal and reinstatement (#1607)** — grants are updated in place, never
+re-enumerated, so `get_player_access_grants` never lists a scout twice.
+
+- `renew_evidence_access(scout, player_id)` — the scout pays `contact_fee_stroops`
+  (added to `AccumulatedFees`) to extend an **expired, non-revoked** grant by 90
+  days. Requires an active subscription, a tier that may access the player's
+  level and an existing `ContactRecord`. It does **not** count toward the Pro
+  contact quota (no new player is contacted). Emits `evidence_access_renewed`.
+  Errors: `GrantNotExpired`, `GrantAlreadyRevoked`, `ContactNotFound`.
+- `reinstate_evidence_access(player, player_id, scout)` — the player re-approves
+  a grant they revoked. Only the player's authorization is required (ownership
+  verified via the registration contract); no scout consent and no fee, since
+  the scout already paid for the contact. Sets a fresh 90-day expiry and emits
+  `evidence_access_reinstated`. Errors: `GrantNotRevoked`, `PlayerNotVerified`,
+  `GrantAdminRevoked` (an admin takedown cannot be undone by the player).
 
 > **Caveat — revocation only gates future key-wrap requests.** Per "Contract
 > scope" above, the smart contracts never receive plaintext media, raw

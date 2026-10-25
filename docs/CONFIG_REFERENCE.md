@@ -61,6 +61,8 @@ Read by the TypeScript application server and the Node.js reconciler script.
 |---|---|---|---|
 | `DATABASE_URL` | `prisma/schema.prisma`, `scripts/reconcile-indexer.js` | **Required** | PostgreSQL connection string used by Prisma ORM and the indexer reconciler. Format: `postgresql://USER:PASSWORD@HOST:PORT/DATABASE` |
 | `JWT_SECRET` | `src/middleware/auth.ts` | **Required** | Secret used to sign and verify JWT bearer tokens. Use a cryptographically random value (`openssl rand -hex 32`). Never commit the real value. |
+| `ACCESS_TOKEN_TTL_SECONDS` | `src/services/sep10.ts` | Optional (default `900`) | Lifetime of SEP-10 access tokens in seconds. Values above 900 (15 minutes) are capped. |
+| `REFRESH_TOKEN_TTL_SECONDS` | `src/services/sep10.ts` | Optional (default `604800`) | Lifetime of rotating SEP-10 refresh tokens. Refreshing via `POST /auth/refresh` re-derives the role. |
 
 ---
 

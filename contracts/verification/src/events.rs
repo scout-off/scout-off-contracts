@@ -380,6 +380,25 @@ pub fn validator_revoked(env: &Env, admin: &Address, wallet: &Address, reason: &
     .publish(env);
 }
 
+/// Emitted by `batch_revoke_validators` (#1605).
+/// topics: (event_name, admin)  data: (count, for_cause)
+#[contractevent(topics = ["batch_revoked"], data_format = "vec")]
+pub struct BatchRevoked {
+    #[topic]
+    pub admin: Address,
+    pub count: u32,
+    pub for_cause: bool,
+}
+
+pub fn batch_revoked(env: &Env, admin: &Address, count: u32, for_cause: bool) {
+    BatchRevoked {
+        admin: admin.clone(),
+        count,
+        for_cause,
+    }
+    .emit(env);
+}
+
 pub fn validator_revoked_for_cause(env: &Env, admin: &Address, wallet: &Address, reason: &String) {
     ValidatorRevokedForCause {
         admin: admin.clone(),

@@ -222,6 +222,9 @@ pub enum VerificationError {
     RegistrationNotConfigured = 62,
     /// Wiring target failed the `contract_kind`/`version` handshake (#1610).
     InvalidPeerContract = 63,
+    // ── Bulk revocation (issue #1605) ──
+    /// `batch_revoke_validators` was called with more than `MAX_BATCH_REVOKE` wallets.
+    BatchTooLarge = 64,
 }
 
 impl AdminError for VerificationError {

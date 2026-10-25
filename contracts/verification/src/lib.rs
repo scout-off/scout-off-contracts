@@ -71,6 +71,8 @@ const PLAYER_VALIDATOR_WINDOW_SECS: u64 = 90 * 24 * 60 * 60;
 /// 50 matches the pagination cap used throughout the codebase (e.g.
 /// `get_validator_milestones_page`, `expire_trial_offers`).
 const CASCADE_LIMIT: u32 = 50;
+/// Maximum wallets accepted by `batch_revoke_validators` (#1605).
+const MAX_BATCH_REVOKE: u32 = 10;
 const MILESTONE_FLAG_PAGE_SIZE: u32 = 50;
 
 // Core identity TTL: 30 days at ~5s/ledger ≈ 518_400 ledgers.
@@ -817,6 +819,7 @@ impl VerificationContract {
         wallet: &Address,
         severity: &RevocationSeverity,
         reason: &String,
+        defer_cascade: bool,
     ) -> Result<(), VerificationError> {
         let mut validator: Validator = env
             .storage()
@@ -902,8 +905,20 @@ impl VerificationContract {
                 // #1375: for-cause revocation removes the validator's votes from every
                 // open dispute to prevent a revoked bad actor's votes from still counting.
                 Self::remove_dispute_votes_for_validator(env, wallet);
-                // Start (or complete) the bounded cascade sweep.
-                Self::run_cascade_sweep(env, wallet, 0)?;
+                if defer_cascade {
+                    // #1605: batch mode only marks the cascade as pending
+                    // (cursor 0); `continue_revocation_cascade` drives it.
+                    let cursor_key = DataKey::RevocationCascadeCursor(wallet.clone());
+                    env.storage().persistent().set(&cursor_key, &0u32);
+                    env.storage().persistent().extend_ttl(
+                        &cursor_key,
+                        PERSISTENT_TTL_MIN,
+                        PERSISTENT_TTL_MAX,
+                    );
+                } else {
+                    // Start (or complete) the bounded cascade sweep.
+                    Self::run_cascade_sweep(env, wallet, 0)?;
+                }
             }
         }
 
@@ -951,7 +966,7 @@ impl VerificationContract {
         targets.push_back(wallet.clone());
         Self::remove_from_validator_vector(&env, &targets);
 
-        Self::revoke_one(&env, &admin, &wallet, &severity, &reason_str)
+        Self::revoke_one(&env, &admin, &wallet, &severity, &reason_str, false)
     }
 
     /// Continue a for-cause revocation cascade sweep that was interrupted
@@ -1142,9 +1157,13 @@ impl VerificationContract {
     /// exceeds 128 bytes.
     ///
     /// All wallets in the batch receive the same `severity` and `reason`.
-    /// For `RevocationSeverity::ForCause`, each validator's cascade sweep is
-    /// started inline; use `continue_revocation_cascade` for any validator
-    /// whose prior approval history exceeds `CASCADE_LIMIT`.
+    /// At most `MAX_BATCH_REVOKE` wallets are accepted; larger batches fail
+    /// with `BatchTooLarge` before any state change.
+    ///
+    /// For `RevocationSeverity::ForCause`, validators are deactivated and their
+    /// dispute votes removed immediately, but the cascade sweep is *not* run
+    /// inline: a pending cursor is recorded and `continue_revocation_cascade`
+    /// must be called per wallet until it emits `revocation_cascade_complete`.
     pub fn batch_revoke_validators(
         env: Env,
         wallets: Vec<Address>,
@@ -1153,6 +1172,9 @@ impl VerificationContract {
     ) -> Result<(), VerificationError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
 
+        if wallets.len() > MAX_BATCH_REVOKE {
+            return Err(VerificationError::BatchTooLarge);
+        }
         if let Some(ref r) = reason {
             if r.len() > MAX_REVOCATION_REASON_LEN {
                 return Err(VerificationError::ReasonTooLong);
@@ -1188,8 +1210,14 @@ impl VerificationContract {
 
         for i in 0..wallets.len() {
             let wallet = wallets.get(i).unwrap();
-            Self::revoke_one(&env, &admin, &wallet, &severity, &reason_str)?;
+            Self::revoke_one(&env, &admin, &wallet, &severity, &reason_str, true)?;
         }
+        events::batch_revoked(
+            &env,
+            &admin,
+            wallets.len(),
+            matches!(severity, RevocationSeverity::ForCause),
+        );
 
         Ok(())
     }

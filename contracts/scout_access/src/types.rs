@@ -339,6 +339,9 @@ pub enum DataKey {
     /// scanning every grant a popular player has ever accumulated. See
     /// `ACCESS_GRANT_PAGE_SIZE` in `lib.rs`.
     EvidenceAccessGrantPage(u64, u32),
+    /// (player_id, scout) → `true` when the grant was revoked by the admin
+    /// (compliance takedown). A player cannot reinstate such a grant.
+    EvidenceAccessAdminRevoked(u64, Address),
 }
 
 /// Snapshot of both cross-contract peer address pointers held by the

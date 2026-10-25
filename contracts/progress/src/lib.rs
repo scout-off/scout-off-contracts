@@ -2022,11 +2022,26 @@ impl ProgressContract {
         // logical history is reconstructed by concatenating the pages in order.
         let page_index = Self::history_page_index(next_index);
         let page_key = DataKey::HistoryPage(player_id, page_index);
+        // #1609: a player whose earlier entries predate paging has no page
+        // yet; seed it from the always-written `HistoryEntry` keys so the new
+        // page is not a partial page that readers would trust over them.
         let mut page: Vec<ProgressEntry> = env
             .storage()
             .persistent()
             .get(&page_key)
-            .unwrap_or_else(|| Vec::new(env));
+            .unwrap_or_else(|| {
+                let mut seeded: Vec<ProgressEntry> = Vec::new(env);
+                for idx in (page_index * HISTORY_PAGE_SIZE + 1)..next_index {
+                    if let Some(e) = env
+                        .storage()
+                        .persistent()
+                        .get(&DataKey::HistoryEntry(player_id, idx))
+                    {
+                        seeded.push_back(e);
+                    }
+                }
+                seeded
+            });
         page.push_back(entry.clone());
         env.storage().persistent().set(&page_key, &page);
         env.storage()

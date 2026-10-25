@@ -648,7 +648,44 @@ pub fn player_data_purged(
     .publish(env);
 }
 
-pub const EVIDENCE_ACCESS_REVOKED_BY_PLAYER: &str = "evidence_access_revoked_by_player";
+pub const EVIDENCE_ACCESS_RENEWED: &str = "evidence_access_renewed";
+pub const EVIDENCE_ACCESS_REINSTATED: &str = "evidence_access_reinstated";
+
+/// topics: (event_name, scout)  data: (player_id, expires_at, fee_stroops)
+///
+/// Emitted by `renew_evidence_access` after the scout paid to extend an
+/// expired grant.
+pub fn evidence_access_renewed(
+    env: &Env,
+    player_id: u64,
+    scout: &Address,
+    expires_at: u64,
+    fee_stroops: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, EVIDENCE_ACCESS_RENEWED), scout.clone()),
+        (player_id, expires_at, fee_stroops),
+    );
+}
+
+/// topics: (event_name, scout)  data: (player_id, player, expires_at)
+///
+/// Emitted by `reinstate_evidence_access` when a player re-approves a scout
+/// whose grant they had previously revoked.
+pub fn evidence_access_reinstated(
+    env: &Env,
+    player_id: u64,
+    scout: &Address,
+    player: &Address,
+    expires_at: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, EVIDENCE_ACCESS_REINSTATED), scout.clone()),
+        (player_id, player.clone(), expires_at),
+    );
+}
+
+pub const EVIDENCE_ACCESS_REVOKED_BY_PLAYER: &str = "evidence_revoked_by_player";
 
 /// topics: (event_name, scout)  data: (player_id, player)
 ///
