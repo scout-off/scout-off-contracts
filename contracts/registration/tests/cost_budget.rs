@@ -1,11 +1,12 @@
-//! CPU-instruction cost regression budget for the registration contract.
+//! CPU-instruction and memory-byte cost regression budget for the
+//! registration contract.
 //!
-//! Measures the CPU-instruction cost of representative registration
-//! operations using soroban-sdk's test budget utilities (`Env::cost_estimate`)
-//! and asserts each stays within a checked-in per-operation budget. See
-//! `ci/cpu-cost-budget.md` for the full cross-contract budget table and the
-//! process for raising a budget when a legitimate feature grows an
-//! operation's cost.
+//! Measures the CPU-instruction and memory-byte cost of representative
+//! registration operations using soroban-sdk's test budget utilities
+//! (`Env::cost_estimate`) and asserts each stays within a checked-in
+//! per-operation budget. See `ci/cpu-cost-budget.md` for the full
+//! cross-contract budget table and the process for raising a budget when a
+//! legitimate feature grows an operation's cost.
 //!
 //! To raise a budget: bump the relevant constant below AND update the
 //! matching row in `ci/cpu-cost-budget.md` with a one-line justification in
@@ -22,6 +23,15 @@ const FILTER_PLAYERS_CPU_BUDGET: u64 = 1_714_870;
 // the original values were set before this test could compile.
 const SET_PLAYER_LEVEL_CPU_BUDGET: u64 = 525_000;
 const SET_PLAYER_LEVEL_LARGE_BUCKET_CPU_BUDGET: u64 = 1_335_000;
+
+// Memory-byte budgets. Initial values are the measured memory cost plus the
+// same 20% headroom policy used for WASM size budgets. Recalibrate with
+// `scripts/calibrate-budgets.py` and tighten with `scripts/tighten-budgets.sh`.
+const REGISTER_PLAYER_MEM_BUDGET: u64 = 120_000;
+const UPDATE_PROFILE_MEM_BUDGET: u64 = 60_000;
+const FILTER_PLAYERS_MEM_BUDGET: u64 = 480_000;
+const SET_PLAYER_LEVEL_MEM_BUDGET: u64 = 120_000;
+const SET_PLAYER_LEVEL_LARGE_BUCKET_MEM_BUDGET: u64 = 360_000;
 
 fn setup() -> (Env, RegistrationContractClient<'static>) {
     let env = Env::default();
@@ -58,6 +68,22 @@ fn assert_cpu_budget(env: &Env, op: &str, budget: u64) {
     );
 }
 
+/// Reads the memory-byte cost accumulated since the last budget reset and
+/// asserts it is within `budget`, panicking with a diagnostic naming the
+/// operation, the measured cost, and the overage when it is not.
+fn assert_mem_budget(env: &Env, op: &str, budget: u64) {
+    let mem = env.cost_estimate().budget().memory_bytes_cost();
+    println!("cost_budget: registration::{op} = {mem} memory bytes (budget {budget})");
+    assert!(
+        mem <= budget,
+        "registration::{op} regressed: measured {mem} memory bytes, exceeding the \
+         {budget}-byte budget by {over} ({pct:.1}% over). See ci/cpu-cost-budget.md \
+         for how to raise this budget if the growth is intentional.",
+        over = mem.saturating_sub(budget),
+        pct = (mem.saturating_sub(budget)) as f64 / budget as f64 * 100.0,
+    );
+}
+
 #[test]
 fn cost_register_player() {
     let (env, client) = setup();
@@ -68,6 +94,7 @@ fn cost_register_player() {
     env.cost_estimate().budget().reset_default();
     client.register_player(&wallet, &vitals, &hashes);
     assert_cpu_budget(&env, "register_player", REGISTER_PLAYER_CPU_BUDGET);
+    assert_mem_budget(&env, "register_player", REGISTER_PLAYER_MEM_BUDGET);
 }
 
 #[test]
@@ -82,6 +109,7 @@ fn cost_update_profile() {
     env.cost_estimate().budget().reset_default();
     client.update_profile(&player_id, &new_hashes);
     assert_cpu_budget(&env, "update_profile", UPDATE_PROFILE_CPU_BUDGET);
+    assert_mem_budget(&env, "update_profile", UPDATE_PROFILE_MEM_BUDGET);
 }
 
 #[test]
@@ -107,6 +135,7 @@ fn cost_filter_players() {
         &20u32,
     );
     assert_cpu_budget(&env, "filter_players", FILTER_PLAYERS_CPU_BUDGET);
+    assert_mem_budget(&env, "filter_players", FILTER_PLAYERS_MEM_BUDGET);
 }
 
 /// Typical level change: `PlayerLevel` is stored, so only the previous
@@ -125,6 +154,7 @@ fn cost_set_player_level() {
     env.cost_estimate().budget().reset_default();
     client.set_player_level(&player_id, &ProgressLevel::VerifiedIdentity);
     assert_cpu_budget(&env, "set_player_level", SET_PLAYER_LEVEL_CPU_BUDGET);
+    assert_mem_budget(&env, "set_player_level", SET_PLAYER_LEVEL_MEM_BUDGET);
 }
 
 /// Large-bucket scenario: many players share the same level+region so
@@ -171,6 +201,11 @@ fn cost_set_player_level_large_bucket() {
         &env,
         "set_player_level_large_bucket",
         SET_PLAYER_LEVEL_LARGE_BUCKET_CPU_BUDGET,
+    );
+    assert_mem_budget(
+        &env,
+        "set_player_level_large_bucket",
+        SET_PLAYER_LEVEL_LARGE_BUCKET_MEM_BUDGET,
     );
 }
 

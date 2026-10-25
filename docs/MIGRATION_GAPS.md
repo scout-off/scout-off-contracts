@@ -48,6 +48,20 @@ category into one place so a migration operator has a single checklist.
 
 ---
 
+## End-to-end migration test
+
+The workspace-level integration test in `contracts/migration-e2e` exercises the
+full documented runbook (open window → seed → close) across all four contracts
+and diffs every public getter between the old and new deployments. It is the
+**source of truth for gap status**: the test asserts each row above as either a
+fully-replayed match or a documented known difference, so it fails if a gap is
+silently closed or widened.
+
+When a gap's status changes, update the corresponding row here **and** the
+allow-list in `contracts/migration-e2e/tests/runbook.rs` in the same change.
+
+---
+
 ## Migration operator checklist
 
 Before running `scripts/migrate-contract.sh`, verify the following:

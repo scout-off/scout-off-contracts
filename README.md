@@ -876,3 +876,6 @@ Quick checklist:
 
 <!-- handsoff-issue-1642 -->
 - #1642: all contracts: record the previous WASM hash on upgrade and expose an upgrade history for rollback runbooks
+
+<!-- handsoff-issue-1653 -->
+- #1653: registration: deactivating a player doesn't affect verification or scout_access eligibility for disputes and grants
