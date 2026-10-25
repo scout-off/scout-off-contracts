@@ -113,6 +113,12 @@ Admin-only function to mark a scout as verified.
 - Sets `verified = true`.
 - Extends TTL and emits a `scout_verified` event.
 
+#### `unverify_scout(scout_id, reason)` (registration contract) — #1608
+
+Admin-only revocation. Sets `verified = false`, records `revoked_at` and `revoked_reason` on `ScoutVerificationRecord` (original `verified_by`/`verified_at` are kept for audit) and emits `scout_unverified`. Errors: `Unauthorized`, `ScoutNotFound`, `InvalidInput` (already unverified). `is_scout_verified(wallet) -> bool` is the lightweight check used by scout_access.
+
+scout_access calls `require_verified_for_tier` for Pro/Elite in `pay_to_contact`, `batch_contact_players`, `log_trial_offer` and `renew_if_due`; failure (revoked, unknown scout, call error) returns `ScoutNotVerified` and an unwired registration contract returns `RegistrationContractNotSet` (fail closed). Basic tier is unchanged. **No refund:** remaining paid time is not refunded; the subscription simply cannot be used for gated actions or renewed until the scout is re-verified. Indexers should set `scouts.verified = false` on `scout_unverified`; `scripts/reconcile-indexer.js` already compares `scouts.verified` against the on-chain value.
+
 ### Modified Functions
 
 #### `subscribe()` (scout_access contract)

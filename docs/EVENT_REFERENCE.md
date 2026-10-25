@@ -74,6 +74,12 @@ for how to verify the event after running `scripts/upgrade.sh`.
 | Topics | `("player_deregistered", admin: Address)` |
 | Data   | `player_id: u64` |
 
+### `scout_deregistered`
+| Field  | Value |
+|--------|-------|
+| Topics | `("scout_deregistered", admin: Address)` |
+| Data   | `(scout_id: u64, wallet: Address)` |
+
 ### `player_deactivated`
 | Field  | Value |
 |--------|-------|
@@ -108,6 +114,14 @@ for how to verify the event after running `scripts/upgrade.sh`.
 | Topics | `("milestone_approved", validator: Address)` |
 | Data   | `(player_id: u64, milestone_index: u32, description: String, evidence_hash: String)` |
 
+### `validator_specialization_updated`
+| Field | Value |
+|-------|-------|
+| Topics | `("validator_specialization_updated", admin: Address)` |
+| Data | `(wallet: Address, old: Vec<String>, new: Vec<String>)` |
+
+**Indexer guidance:** Update the specialization tags associated with `wallet` to the full `new` list, and retain `old` for audit history. This event is emitted only when `set_validator_specializations` succeeds; registration still emits `validator_registered`. Historic events do not provide retroactive tag history.
+
 ### `validator_registered`
 | Field  | Value |
 |--------|-------|
@@ -136,6 +150,10 @@ for how to verify the event after running `scripts/upgrade.sh`.
 | Topics | `("progress_updated", updated_by: Address)` |
 | Data   | `(player_id: u64, old_level: ProgressLevel, new_level: ProgressLevel)` |
 
+`updated_by` always equals the stored `ProgressEntry.updated_by` (issue #1640):
+- **Verification path** (`advance_level`, Level 1–2 via `approve_milestone`): the validator wallet that approved the milestone.
+- **Scout-access path** (`advance_level_for_scout`, EliteTier via `confirm_trial_offer`): the scout who made the trial offer. The scout_access contract is the authorising party but is not recorded.
+
 ### `player_level_reset`
 | Field  | Value |
 |--------|-------|
@@ -146,11 +164,27 @@ for how to verify the event after running `scripts/upgrade.sh`.
 
 ## Scout Access contract events
 
-### `scout_subscribed`
+### `scout_subscribed` (deprecated)
+
+> **Deprecated since v2.0.0, removed in v3.0.0.** Emitted alongside
+> `subscription_created`, `subscription_renewed` or `subscription_auto_renewed`
+> for backward compatibility only. New consumers must use those events; see
+> [VERSIONING.md — Deprecations](VERSIONING.md#deprecations).
+
 | Field  | Value |
 |--------|-------|
 | Topics | `("scout_subscribed", scout: Address)` |
 | Data   | `(tier: SubscriptionTier, fee_paid: i128)` |
+
+### `subscription_created` / `subscription_renewed` / `subscription_auto_renewed`
+| Field  | Value |
+|--------|-------|
+| Topics | `("<event_name>", scout: Address)` |
+| Data   | `(tier: SubscriptionTier, subscribed_at: u64, expires_at: u64)` |
+
+`subscription_created` fires on a scout's first subscription, `subscription_renewed`
+on a manual renewal or upgrade via `subscribe`, and `subscription_auto_renewed`
+when `renew_if_due` renews.
 
 ### `player_contacted`
 | Field  | Value |

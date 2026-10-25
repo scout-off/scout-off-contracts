@@ -1,0 +1,32 @@
+# Issue #1614: attach reproducibly built WASMs and a checksummed hash manifest
+# to every version tag's GitHub Release. Verify a deployment against it with
+# scripts/verify-deployed-wasm.sh <network> <tag>.
+name: Release WASM
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build pinned build image
+        run: docker build -t scoutchain-wasm-build -f ci/build/Dockerfile ci/build
+
+      - name: Build WASM
+        run: |
+          mkdir -p out
+          docker run --rm -v "$PWD:/src" -v "$PWD/out:/out" scoutchain-wasm-build /out
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" out/*.optimized.wasm out/wasm-hashes.json out/SHA256SUMS --clobber

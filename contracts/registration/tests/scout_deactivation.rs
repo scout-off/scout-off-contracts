@@ -8,10 +8,12 @@
 //! 4. `is_scout_deactivated` boolean view reflects current state.
 //! 5. Non-admin callers are rejected.
 //! 6. Unknown scout_id returns ScoutNotFound.
+//! 7. Repeated calls emit at most one event per actual state change (#1658).
+//! 8. `ScoutDeactivated` TTL is extended on set (#1658).
 
 use scoutchain_registration::{RegistrationContract, RegistrationContractClient, ScoutStatus};
 use scoutchain_shared_types::testutils::count_events;
-use soroban_sdk::testutils::{Address as _, MockAuth, MockAuthInvoke};
+use soroban_sdk::testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke};
 use soroban_sdk::{vec, Address, Env, IntoVal, String, Val, Vec};
 
 struct Harness {
@@ -124,6 +126,33 @@ fn test_deactivate_idempotent() {
     assert!(h.client.is_scout_deactivated(&1));
 }
 
+/// Repeated `deactivate_scout` emits at most one `scout_deactivated` event.
+#[test]
+fn test_deactivate_emits_single_event() {
+    let h = setup();
+
+    auth(
+        &h.env,
+        &h.admin,
+        &h.contract_id,
+        "deactivate_scout",
+        vec![&h.env, 1u64.into_val(&h.env)],
+    );
+    h.client.deactivate_scout(&1);
+
+    auth(
+        &h.env,
+        &h.admin,
+        &h.contract_id,
+        "deactivate_scout",
+        vec![&h.env, 1u64.into_val(&h.env)],
+    );
+    h.client.deactivate_scout(&1);
+
+    let count = count_events(&h.env, "scout_deactivated", Some(&h.contract_id));
+    assert_eq!(count, 1, "scout_deactivated must be emitted exactly once");
+}
+
 /// Admin can reactivate a deactivated scout; status returns to Active.
 #[test]
 fn test_reactivate_clears_deactivated_status() {
@@ -170,6 +199,24 @@ fn test_reactivate_idempotent() {
 
     assert_eq!(h.client.get_scout_status(&1), ScoutStatus::Active);
     assert!(!h.client.is_scout_deactivated(&1));
+}
+
+/// Reactivating a never-deactivated scout emits no `scout_reactivated` event.
+#[test]
+fn test_reactivate_no_event_when_active() {
+    let h = setup();
+
+    auth(
+        &h.env,
+        &h.admin,
+        &h.contract_id,
+        "reactivate_scout",
+        vec![&h.env, 1u64.into_val(&h.env)],
+    );
+    h.client.reactivate_scout(&1);
+
+    let count = count_events(&h.env, "scout_reactivated", Some(&h.contract_id));
+    assert_eq!(count, 0, "scout_reactivated must not be emitted when active");
 }
 
 /// Non-admin caller is rejected.
@@ -250,6 +297,33 @@ fn test_reactivate_emits_event() {
 
     let found = count_events(&h.env, "scout_reactivated", Some(&h.contract_id)) > 0;
     assert!(found, "scout_reactivated event must be emitted");
+}
+
+/// `ScoutDeactivated` flag survives ledger advancement past its TTL window.
+#[test]
+fn test_deactivate_extends_ttl() {
+    let h = setup();
+
+    auth(
+        &h.env,
+        &h.admin,
+        &h.contract_id,
+        "deactivate_scout",
+        vec![&h.env, 1u64.into_val(&h.env)],
+    );
+    h.client.deactivate_scout(&1);
+    assert!(h.client.is_scout_deactivated(&1));
+
+    // Advance the ledger well past a short TTL; the flag must still be set.
+    h.env.ledger().with_mut(|li| {
+        li.sequence_number += 100_000;
+    });
+
+    assert!(
+        h.client.is_scout_deactivated(&1),
+        "ScoutDeactivated flag must be TTL-extended on set"
+    );
+    assert_eq!(h.client.get_scout_status(&1), ScoutStatus::Deactivated);
 }
 
 /// `is_scout_deactivated` returns false for non-existent scout.

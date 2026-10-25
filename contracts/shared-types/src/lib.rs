@@ -183,6 +183,10 @@ pub trait AdminError {
     fn not_initialized() -> Self;
 }
 
+/// Maximum allowed registration cooldown: 7 days in seconds.
+/// Shared by `registration` and `verification` `set_reg_cooldown`.
+pub const MAX_REG_COOLDOWN_SECS: u64 = 7 * 24 * 60 * 60;
+
 /// Shared admin-authorization helper.
 ///
 /// Reads the stored admin `Address` from persistent storage using `admin_key`,
@@ -329,6 +333,54 @@ where
     env.storage().instance().set(addr_key, addr);
     env.storage().instance().set(epoch_key, &next_epoch);
     next_epoch
+}
+
+/// Read-only handshake used by wiring setters (#1610): returns `true` only if
+/// `addr` is a ScoutChain contract whose `contract_kind()` equals
+/// `expected_kind` and whose `version()` has a major component of at least
+/// `min_major`. Non-contract addresses, missing entrypoints and malformed
+/// responses all return `false` instead of trapping.
+pub fn verify_peer(env: &Env, addr: &Address, expected_kind: &str, min_major: u32) -> bool {
+    let kind = env.try_invoke_contract::<soroban_sdk::Symbol, soroban_sdk::Error>(
+        addr,
+        &soroban_sdk::Symbol::new(env, "contract_kind"),
+        Vec::new(env),
+    );
+    match kind {
+        Ok(Ok(k)) if k == soroban_sdk::Symbol::new(env, expected_kind) => {}
+        _ => return false,
+    }
+    let version = env.try_invoke_contract::<String, soroban_sdk::Error>(
+        addr,
+        &soroban_sdk::Symbol::new(env, "version"),
+        Vec::new(env),
+    );
+    let Ok(Ok(version)) = version else {
+        return false;
+    };
+    let len = version.len() as usize;
+    if len == 0 || len > 32 {
+        return false;
+    }
+    let mut buf = [0u8; 32];
+    version.copy_into_slice(&mut buf[..len]);
+    let mut major: u32 = 0;
+    let mut seen_digit = false;
+    for b in &buf[..len] {
+        if b.is_ascii_digit() {
+            seen_digit = true;
+            major = match major
+                .checked_mul(10)
+                .and_then(|m| m.checked_add((b - b'0') as u32))
+            {
+                Some(m) => m,
+                None => return false,
+            };
+        } else {
+            break;
+        }
+    }
+    seen_digit && major >= min_major
 }
 
 /// Safe (checked) arithmetic helpers shared across all four contracts.
@@ -865,6 +917,35 @@ mod tests {
         assert_eq!(ProgressLevel::VerifiedIdentity as u32, 1);
         assert_eq!(ProgressLevel::PerformanceMilestones as u32, 2);
         assert_eq!(ProgressLevel::EliteTier as u32, 3);
+    }
+
+    const ALL_LEVELS: [ProgressLevel; 4] = [
+        ProgressLevel::Unverified,
+        ProgressLevel::VerifiedIdentity,
+        ProgressLevel::PerformanceMilestones,
+        ProgressLevel::EliteTier,
+    ];
+
+    #[test]
+    fn progress_level_derived_ord_matches_rank() {
+        for a in ALL_LEVELS.iter() {
+            for b in ALL_LEVELS.iter() {
+                assert_eq!(a.cmp(b), a.rank().cmp(&b.rank()), "{:?} vs {:?}", a, b);
+            }
+        }
+    }
+
+    #[test]
+    fn progress_level_next_is_rank_plus_one() {
+        for level in ALL_LEVELS.iter() {
+            match level.next() {
+                Some(next) => {
+                    assert_eq!(next.rank(), level.rank() + 1);
+                    assert!(next > *level);
+                }
+                None => assert_eq!(*level, ProgressLevel::EliteTier),
+            }
+        }
     }
 
     #[test]

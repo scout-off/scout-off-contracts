@@ -1,10 +1,10 @@
 //! Issue #1399: milestone commit paths require an active registered player
-//! when registration is wired; unwired registration remains permissive.
+//! when registration is wired; unwired registration fails closed (#1622).
 
 use scoutchain_shared_types::ProgressLevel;
 use scoutchain_verification::{
-    RegPlayerProfile, RegPlayerVitals, VerificationContract, VerificationContractClient,
-    VerificationError,
+    RegPlayerProfile, RegPlayerStatus, RegPlayerVitals, VerificationContract,
+    VerificationContractClient, VerificationError,
 };
 use soroban_sdk::{
     contract, contractimpl, contracttype, testutils::Address as _, Address, Env, String, Vec,
@@ -60,9 +60,17 @@ impl RegStub {
         }
     }
 
-    pub fn is_player_deactivated(env: Env, player_id: u64) -> bool {
+    pub fn get_player_status(env: Env, player_id: u64) -> RegPlayerStatus {
+        let missing: Option<u64> = env.storage().persistent().get(&RegStubKey::Missing);
+        if missing == Some(player_id) {
+            panic!("player not registered");
+        }
         let deactivated: Option<u64> = env.storage().persistent().get(&RegStubKey::Deactivated);
-        deactivated == Some(player_id)
+        if deactivated == Some(player_id) {
+            RegPlayerStatus::Deactivated
+        } else {
+            RegPlayerStatus::Active
+        }
     }
 }
 
@@ -73,10 +81,9 @@ const CID3: &str = "QmwsjoZwgfzgx6xPr3cXEKhzfLt5RQ87yMnWecTp1tf6p7";
 fn base() -> (Env, VerificationContractClient<'static>, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    let id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let id = env.register(VerificationContract, (admin,));
+    let client = VerificationContractClient::new(&env, &id);
     let validator = Address::generate(&env);
     client.register_validator(
         &validator,
@@ -88,16 +95,18 @@ fn base() -> (Env, VerificationContractClient<'static>, Address) {
 }
 
 #[test]
-fn unwired_registration_allows_approve() {
+fn unwired_registration_fails_closed() {
     let (env, client, validator) = base();
-    let idx = client.approve_milestone(
-        &validator,
-        &42u64,
-        &String::from_str(&env, "ok"),
-        &String::from_str(&env, CID),
-        &None,
+    let desc = String::from_str(&env, "ok");
+    let cid = String::from_str(&env, CID);
+    assert_eq!(
+        client.try_approve_milestone(&validator, &42u64, &desc, &cid, &None),
+        Err(Ok(VerificationError::RegistrationNotConfigured))
     );
-    assert_eq!(idx, 1);
+    assert_eq!(
+        client.try_attest_milestone(&validator, &42u64, &desc, &cid),
+        Err(Ok(VerificationError::RegistrationNotConfigured))
+    );
 }
 
 #[test]

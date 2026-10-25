@@ -3,13 +3,64 @@
 # Run after deploy.sh. Requires .env.contracts to exist.
 set -euo pipefail
 
+source "$(dirname "$0")/network.sh" "${1:-}"
 NETWORK="${1:-testnet}"
 # shellcheck source=/dev/null
 source .env.contracts
 
 ADMIN="${ADMIN_ADDRESS:?Set ADMIN_ADDRESS}"
 DEPLOYER="${DEPLOYER_SECRET:?Set DEPLOYER_SECRET}"
-XLM_TOKEN="${XLM_TOKEN_ADDRESS:?Set XLM_TOKEN_ADDRESS}"
+
+# Per-network parameters come from config/<network>.json; networks without a
+# config file (e.g. local) fall back to the testnet values.
+CONFIG_FILE="config/${NETWORK}.json"
+[[ -f "$CONFIG_FILE" ]] || CONFIG_FILE="config/testnet.json"
+
+# Reads the config, rejects missing/placeholder fields, enforces the bounds in
+# docs/CONFIG_REFERENCE.md, and prints: <xlm_token> <reg_cooldown_secs> <fee_config_json>.
+# XLM_TOKEN_ADDRESS in the environment overrides xlm_token_address (sandbox/local).
+CONFIG_OUT=$(python3 - "$CONFIG_FILE" "${XLM_TOKEN_ADDRESS:-}" <<'PY'
+import json, sys
+path, token_env = sys.argv[1], sys.argv[2]
+cfg = json.load(open(path))
+def fail(msg):
+    sys.exit(f"ERROR: {path}: {msg}")
+def get(d, k):
+    v = d.get(k)
+    if v is None or (isinstance(v, str) and (not v or "FILL_IN_BEFORE_USE" in v)):
+        fail(f"'{k}' is missing or still a placeholder")
+    return v
+token = token_env or get(cfg, "xlm_token_address")
+cool = get(cfg, "reg_cooldown_secs")
+if not isinstance(cool, int) or not 0 <= cool <= 604800:
+    fail("reg_cooldown_secs must be an integer in 0..=604800")
+fc = get(cfg, "fee_config")
+for k in ("contact_fee_stroops", "basic_sub_stroops", "pro_sub_stroops", "elite_sub_stroops",
+          "trial_offer_escrow_stroops"):
+    try:
+        fc[k] = int(get(fc, k))
+    except (TypeError, ValueError):
+        fail(f"fee_config.{k} must be an integer")
+for k in ("sub_duration_secs", "trial_offer_expiry_secs", "pro_contact_limit"):
+    if not isinstance(get(fc, k), int):
+        fail(f"fee_config.{k} must be an integer")
+def bound(k, lo, hi):
+    if not lo <= fc[k] <= hi:
+        fail(f"fee_config.{k}={fc[k]} outside {lo}..={hi}")
+bound("contact_fee_stroops", 100_000, 100_000_000_000)
+for k in ("basic_sub_stroops", "pro_sub_stroops", "elite_sub_stroops"):
+    bound(k, 1_000_000, 1_000_000_000_000)
+if not fc["basic_sub_stroops"] <= fc["pro_sub_stroops"] <= fc["elite_sub_stroops"]:
+    fail("fee_config subscription prices must satisfy basic <= pro <= elite")
+bound("sub_duration_secs", 1, 365 * 24 * 3600)
+bound("pro_contact_limit", 1, 10_000)
+if fc["trial_offer_escrow_stroops"] < 0 or (fc["trial_offer_escrow_stroops"] > 0 and fc["trial_offer_expiry_secs"] == 0):
+    fail("fee_config trial offer escrow must be >= 0 and needs a non-zero expiry when > 0")
+fc = {k: (str(v) if k.endswith("_stroops") else v) for k, v in fc.items()}
+print(token, cool, json.dumps(fc, separators=(",", ":")))
+PY
+) || exit 1
+read -r XLM_TOKEN REG_COOLDOWN_SECS FEE_CONFIG_JSON <<<"$CONFIG_OUT"
 
 # ---------------------------------------------------------------------------
 # Guard: verify that DEPLOYER_SECRET is the keypair for ADMIN_ADDRESS.
@@ -109,16 +160,7 @@ invoke_idempotent 1 "scout_access initialize" \
   -- initialize \
   --admin "$ADMIN" \
   --xlm_token "$XLM_TOKEN" \
-  --fee_config '{
-    "contact_fee_stroops": "1000000",
-    "basic_sub_stroops": "10000000",
-    "pro_sub_stroops": "30000000",
-    "elite_sub_stroops": "70000000",
-    "sub_duration_secs": 2592000,
-    "trial_offer_escrow_stroops": "5000000",
-    "trial_offer_expiry_secs": 604800,
-    "pro_contact_limit": 10
-  }'
+  --fee_config "$FEE_CONFIG_JSON"
 
 echo "==> Wiring verification → progress cross-contract link..."
 # verification.set_progress_contract is first-time-only: it returns
@@ -237,8 +279,7 @@ stellar contract invoke \
 
 echo ""
 echo "==> Setting registration cooldown..."
-# Networks without a config file (e.g. local) fall back to the 24h default.
-REG_COOLDOWN_SECS=$(python3 -c "import json, os; p='config/${NETWORK}.json'; print(json.load(open(p)).get('reg_cooldown_secs', 86400) if os.path.exists(p) else 86400)")
+# Value comes from config/<network>.json (validated above).
 stellar contract invoke \
   --id "$REGISTRATION_CONTRACT_ID" \
   --source "$DEPLOYER" \

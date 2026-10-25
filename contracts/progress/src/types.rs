@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, BytesN};
+use soroban_sdk::{contracttype, Address, BytesN, Vec};
 
 pub use scoutchain_shared_types::{ProgressLevel, WiringLink};
 
@@ -10,11 +10,11 @@ pub const CODE_SCHEMA_VERSION: u32 = 1;
 /// One step of a Merkle inclusion proof for [`ProgressEntry`] history
 /// commitments (see [`DataKey::HistoryRoot`]).
 ///
-/// `sibling` is the hash this step combines with the accumulated hash so
-/// far; `sibling_is_right` records which side of the combination it sits
-/// on (`H(current, sibling)` vs `H(sibling, current)`), since the RFC
-/// 6962-style tree used here is not always evenly balanced and the
-/// combination order is therefore not inferable from position alone.
+/// `sibling` is the hash this step combines with the accumulated hash so far;
+/// `sibling_is_right` records which side of the combination it sits on
+/// (`H(current, sibling)` vs `H(sibling, current)`), since the RFC 6962-style
+/// tree used here is not always evenly balanced and the combination order is
+/// therefore not inferable from position alone.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct HistoryProofStep {
@@ -40,6 +40,16 @@ pub struct ProgressEntry {
     pub milestone_ref: u32,
     /// Ledger sequence number at the time of the level change
     pub ledger_sequence: u32,
+}
+
+/// Result of `get_history_since_v2`: entries newest-first plus a flag telling
+/// the caller whether more matching entries may exist beyond `limit` or the
+/// page-scan cap.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct HistorySince {
+    pub entries: Vec<ProgressEntry>,
+    pub truncated: bool,
 }
 
 /// One peak of a player's incremental Merkle frontier (issue #1368).
@@ -140,11 +150,14 @@ pub enum DataKey {
     /// `HISTORY_PAGE_SIZE` chronological entries, keeping each persistent-read key
     /// bounded even if a player accumulates many resets or re-entries.
     HistoryPage(u64, u32),
-    /// The `Address` of the companion verification contract. Reserved for
-    /// future cross-contract authorisation checks; not yet written at runtime.
+    /// The `Address` of the companion verification contract. Written by
+    /// `set_verification_contract` and read by `advance_level`, which uses it
+    /// to gate level advances to the authorised verification caller.
     VerificationContract,
-    /// The `Address` of the registration contract. Only this address is
-    /// permitted to call `initialize_player`. Set by `set_registration_contract`.
+    /// The `Address` of the registration contract. Written by
+    /// `set_registration_contract`; used to sync levels via `set_player_level`
+    /// and to fail closed in `advance_level` / `reset_player_level` when the
+    /// registration peer is not configured.
     RegistrationContract,
     /// The `Address` of the scout_access contract. Whitelisted as a secondary
     /// authorised caller of `advance_level` (for trial-offer Level-3 advances).
