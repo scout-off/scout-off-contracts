@@ -478,7 +478,14 @@ pub enum DataKey {
     ValidatorRegLastSent(Address),
     /// Platform-wide validator registration cooldown in seconds.
     /// 0 disables the cooldown. Configurable by admin via `set_reg_cooldown`.
-    /// The `u64` payload is unused (always written as `RegCooldownSecs(0)`).
+    ///
+    /// The `u64` payload is a dummy discriminator: it is always `0` and carries
+    /// no meaning. Do NOT "clean it up" into a unit variant or change the `0`.
+    /// The serialized storage key is the variant tuple
+    /// `[Symbol("RegCooldownSecs"), U64(0)]`, so any change to the shape or
+    /// value produces a different key and orphans the cooldown already stored
+    /// on deployed contracts (reads would silently fall back to the default).
+    /// Pinned by the `reg_cooldown_storage_key_is_pinned` test.
     RegCooldownSecs(u64),
     /// Minimum distinct validator regions required for Level-2/3 advances.
     MinRegionQuorum,
@@ -619,4 +626,33 @@ impl VerificationWiringState {
     pub fn is_fully_wired(&self) -> bool {
         self.progress_contract.is_configured() && self.registration_contract.is_configured()
     }
+}
+
+/// Compile-time protocol limits exposed to clients by
+/// [`VerificationContract::get_limits`] so UIs can pre-validate input
+/// instead of copying constants from source.
+///
+/// Strictly compile-time constants: configurable values (milestone
+/// threshold, voting window, jury config) have their own getters and are
+/// deliberately not included here.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct VerificationLimits {
+    pub max_validators: u32,
+    pub max_milestones_per_player_per_validator: u32,
+    pub max_global_milestone_index: u32,
+    pub min_credentials_len: u32,
+    pub max_credentials_len: u32,
+    pub max_description_len: u32,
+    pub max_specializations: u32,
+    pub max_specialization_tag_len: u32,
+    pub max_pending_votes_per_validator: u32,
+    pub max_dispute_rounds: u32,
+    pub dispute_reopen_cooldown_secs: u64,
+    pub max_open_disputes_per_player: u32,
+    pub min_voting_window_secs: u64,
+    pub max_voting_window_secs: u64,
+    pub min_jury_window_secs: u64,
+    pub max_jury_window_secs: u64,
+    pub max_attestation_future_tolerance_secs: u64,
 }

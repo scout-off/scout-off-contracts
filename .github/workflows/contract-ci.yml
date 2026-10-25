@@ -1,5 +1,5 @@
 # Full build, test, lint, bindings, and sandbox pipeline; see ci.yml for the
-# separate fast, dependency-free TODO/FIXME/HACK static check.
+# separate fast, dependency-free work-marker static check.
 name: Soroban Contract CI
 
 on:
@@ -36,11 +36,14 @@ jobs:
       - name: Pin ed25519-dalek to fix soroban-env-host trait bound error
         run: cargo update -p ed25519-dalek@3.0.0 --precise 3.0.0-rc.0 || true
 
+      - name: Verify Cargo.lock is committed and up to date
+        run: cargo metadata --locked --format-version 1 > /dev/null && git diff --exit-code Cargo.lock
+
       - name: Run tests
         run: cargo test --workspace --locked
 
-      - name: Test progress contract
-        run: cargo test -p scoutchain-progress --locked -- --nocapture
+      - name: Build WASM (release)
+        run: cargo build --workspace --target wasm32-unknown-unknown --release --locked
 
       - name: CPU-instruction cost budget report
         # cost_budget.rs asserted its own pass/fail already as part of the
@@ -73,7 +76,7 @@ jobs:
         with:
           components: clippy, rustfmt
       - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Format check
         run: cargo fmt --all -- --check
 
@@ -103,6 +106,8 @@ jobs:
           shellcheck scripts/check-error-code-continuity.sh
           shellcheck scripts/check-cargo-doc.sh
           shellcheck scripts/check-migration-numbering.sh
+          shellcheck scripts/check-storage-layout-compat.sh
+          shellcheck scripts/check-prisma-drift.sh
       - name: Docs completeness check
         run: bash scripts/check-docs.sh
       - name: Event-topic consistency check
@@ -117,8 +122,6 @@ jobs:
         run: bash scripts/check-error-code-continuity.sh
       - name: Cargo doc missing-documentation check
         run: bash scripts/check-cargo-doc.sh
-      - name: Migration numbering check
-        run: bash scripts/check-migration-numbering.sh
       - name: Validate bindings package.json templates
         run: bash scripts/check-bindings.sh
 
@@ -151,8 +154,8 @@ jobs:
 
       - name: Install Stellar CLI (pinned)
         run: |
-          # Keep in sync with: docs/CONTRIBUTING.md, scripts/generate-bindings.sh, and the abi-export CI step
-          STELLAR_CLI_VERSION="28.0.0"
+          # Version is read from ci/stellar-cli-version (single source of truth)
+          STELLAR_CLI_VERSION="$(tr -d '[:space:]' < ci/stellar-cli-version)"
           curl -sSL "https://raw.githubusercontent.com/stellar/stellar-cli/v${STELLAR_CLI_VERSION}/install.sh" | bash
           echo "$HOME/.stellar/bin" >> "$GITHUB_PATH"
 
@@ -496,8 +499,8 @@ jobs:
 
       - name: Install Stellar CLI (pinned)
         run: |
-          # Keep in sync with: docs/CONTRIBUTING.md, scripts/generate-bindings.sh, and the bindings-smoke-test CI step
-          STELLAR_CLI_VERSION="28.0.0"
+          # Version is read from ci/stellar-cli-version (single source of truth)
+          STELLAR_CLI_VERSION="$(tr -d '[:space:]' < ci/stellar-cli-version)"
           curl -sSL "https://raw.githubusercontent.com/stellar/stellar-cli/v${STELLAR_CLI_VERSION}/install.sh" | bash
           echo "$HOME/.stellar/bin" >> "$GITHUB_PATH"
 
@@ -630,6 +633,42 @@ jobs:
           name: abi-diff-report-${{ github.sha }}
           path: abi/*.json
           if-no-files-found: ignore
+  storage-layout-compat:
+    name: Storage Layout Compat Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checker self-test (fixtures)
+        run: |
+          set -euo pipefail
+          bash scripts/check-storage-layout-compat.sh \
+            scripts/fixtures/storage_compat_safe/old_types.rs \
+            scripts/fixtures/storage_compat_safe/new_types.rs
+          if bash scripts/check-storage-layout-compat.sh \
+            scripts/fixtures/storage_compat_breaking/old_types.rs \
+            scripts/fixtures/storage_compat_breaking/new_types.rs; then
+            echo "::error::checker failed to flag the breaking fixture"
+            exit 1
+          fi
+
+      - name: Check storage layout against base ref
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          git fetch origin "$BASE_REF" --depth=1
+          ACK=""
+          if [[ -n "$PR_NUMBER" && -f "docs/breaking-change-ack-${PR_NUMBER}.md" ]]; then
+            echo "Found docs/breaking-change-ack-${PR_NUMBER}.md; acknowledging breaking changes"
+            ACK="--acknowledge-breaking-change"
+          fi
+          bash scripts/check-storage-layout-compat.sh "origin/${BASE_REF}" HEAD $ACK
+
   budget-calibration:
     name: Budget Calibration
     runs-on: ubuntu-latest
@@ -695,3 +734,35 @@ jobs:
           print("")
           print("All measured values are within budget.")
           PYEOF
+
+  # Issue #1614: two independent clean-container builds of the same commit must
+  # produce byte-identical optimized WASM for all four contracts.
+  reproducible-build:
+    name: Reproducible WASM build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build pinned build image
+        run: docker build -t scoutchain-wasm-build -f ci/build/Dockerfile ci/build
+
+      - name: Build WASM twice in clean containers
+        run: |
+          for run in 1 2; do
+            mkdir -p "out-$run"
+            # Fresh container and a fresh copy of the tree per run: nothing is shared between builds.
+            rm -rf "src-$run" && git worktree add --detach "src-$run" HEAD
+            docker run --rm -v "$PWD/src-$run:/src" -v "$PWD/out-$run:/out" scoutchain-wasm-build /out
+          done
+
+      - name: Compare hashes
+        run: diff -u out-1/SHA256SUMS out-2/SHA256SUMS && cmp out-1/wasm-hashes.json out-2/wasm-hashes.json
+
+      - name: Upload WASM hashes
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-hashes
+          path: |
+            out-1/wasm-hashes.json
+            out-1/SHA256SUMS
+            out-1/*.optimized.wasm

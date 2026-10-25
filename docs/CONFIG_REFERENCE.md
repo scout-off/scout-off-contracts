@@ -172,6 +172,23 @@ Before running `./scripts/deploy.sh mainnet`:
 
 ---
 
+## Per-network config (`config/<network>.json`)
+
+`scripts/initialize.sh` reads these fields (networks without a config file, e.g. `local`, use `config/testnet.json`) and aborts before sending anything if one is missing, contains `FILL_IN_BEFORE_USE`, or is outside the bounds below. `XLM_TOKEN_ADDRESS` in the environment overrides `xlm_token_address` (used by the sandbox CI job).
+
+| Field | Bounds | Description |
+|-------|--------|-------------|
+| `xlm_token_address` | non-empty | Native XLM token contract passed to `scout_access.initialize`. |
+| `reg_cooldown_secs` | `0..=604800` | Applied to the registration contract via `set_reg_cooldown` after initialization. |
+| `fee_config.contact_fee_stroops` | `100000..=100000000000` | Per-contact fee. |
+| `fee_config.basic_sub_stroops` / `pro_sub_stroops` / `elite_sub_stroops` | `1000000..=1000000000000`, `basic <= pro <= elite` | Subscription prices. |
+| `fee_config.sub_duration_secs` | `1..=31536000` | Subscription length. |
+| `fee_config.trial_offer_escrow_stroops` | `>= 0` (0 disables trial offers) | Trial-offer escrow. |
+| `fee_config.trial_offer_expiry_secs` | non-zero when escrow `> 0` | Trial-offer expiry. |
+| `fee_config.pro_contact_limit` | `1..=10000` | Pro-tier contact limit. |
+
+---
+
 ## Updating Config Values
 
 1. Edit `config/testnet.json` or `config/mainnet.json`

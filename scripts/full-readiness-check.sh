@@ -10,6 +10,7 @@
 #
 # Usage:
 #   ./scripts/full-readiness-check.sh [testnet|mainnet|local]
+#   RELEASE_TAG=v1.2.3 ./scripts/full-readiness-check.sh mainnet   # also verify deployed WASM hashes
 #
 # Prerequisites:
 #   • .env.contracts must exist (written by deploy.sh)
@@ -307,6 +308,21 @@ for target in progress registration verification scout_access; do
       ;;
   esac
 done
+
+# ===========================================================================
+# SECTION 3 — Deployed WASM hash verification (issue #1614)
+# Opt-in: set RELEASE_TAG to compare the on-chain code of every contract with
+# the hashes published for that release (scripts/verify-deployed-wasm.sh).
+# ===========================================================================
+if [[ -n "${RELEASE_TAG:-}" ]]; then
+    echo ""
+    echo "--- Section 3: Deployed WASM hashes vs release ${RELEASE_TAG} ---"
+    if "$(dirname "$0")/verify-deployed-wasm.sh" "$NETWORK" "$RELEASE_TAG"; then
+        record_pass "wasm:release:${RELEASE_TAG}" "all deployed hashes match"
+    else
+        record_fail "wasm:release:${RELEASE_TAG}" "deployed WASM differs from release — see verify-deployed-wasm.sh output"
+    fi
+fi
 
 # ===========================================================================
 # COMBINED SUMMARY TABLE

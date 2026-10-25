@@ -12,5 +12,15 @@
   "network_passphrase": "Public Global Stellar Network ; September 2015",
   "friendbot_url": null,
   "xlm_token_address": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
-  "reg_cooldown_secs": 86400
+  "reg_cooldown_secs": 86400,
+  "fee_config": {
+    "contact_fee_stroops": "1000000",
+    "basic_sub_stroops": "10000000",
+    "pro_sub_stroops": "30000000",
+    "elite_sub_stroops": "70000000",
+    "sub_duration_secs": 2592000,
+    "trial_offer_escrow_stroops": "5000000",
+    "trial_offer_expiry_secs": 604800,
+    "pro_contact_limit": 10
+  }
 }
