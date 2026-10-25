@@ -2183,11 +2183,7 @@ mod tests {
             env.events().all(),
             soroban_sdk::vec![
                 &env,
-                (
-                    client.address.clone(),
-                    (Symbol::new(&env, "scout_record_restored"), admin).into_val(&env),
-                    scout_id.into_val(&env),
-                )
+                { let e = crate::events::ScoutRecordRestored { admin: admin, scout_id: scout_id }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
             ]
         );
         let after = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&key));
@@ -2324,15 +2320,7 @@ mod tests {
             env.events().all(),
             vec![
                 &env,
-                (
-                    client.address.clone(),
-                    (
-                        Symbol::new(&env, "AdminTransferProposed"),
-                        old_admin.clone(),
-                    )
-                        .into_val(&env),
-                    stale_admin.clone().into_val(&env),
-                )
+                { let e = crate::events::AdminTransferProposed { old_admin: old_admin.clone(), new_admin: stale_admin.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
             ]
         );
 
@@ -2371,11 +2359,7 @@ mod tests {
             env.events().all(),
             vec![
                 &env,
-                (
-                    client.address.clone(),
-                    (Symbol::new(&env, "AdminTransferred"), old_admin.clone(),).into_val(&env),
-                    new_admin.clone().into_val(&env),
-                )
+                { let e = crate::events::AdminTransferred { old_admin: old_admin.clone(), new_admin: new_admin.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
             ]
         );
         env.as_contract(&client.address, || {
@@ -3965,16 +3949,7 @@ mod tests {
             env.events().all(),
             soroban_sdk::vec![
                 &env,
-                (
-                    client.address.clone(),
-                    (
-                        Symbol::new(&env, "WiringUpdated"),
-                        admin.clone(),
-                        Symbol::new(&env, "progress_contract"),
-                    )
-                        .into_val(&env),
-                    (progress_addr, 1u32).into_val(&env),
-                )
+                { let e = crate::events::WiringUpdated { admin: admin.clone(), link: Symbol::new(&env, "progress_contract"), new_address: progress_addr, new_epoch: 1u32 }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
             ]
         );
     }
@@ -4345,6 +4320,7 @@ mod tests {
 
         // 4. Wire verification -> progress
         ver_client.set_progress_contract(&prog_id);
+        ver_client.set_registration_contract(&reg_id);
 
         // 5. Wire progress -> verification
         prog_client.set_verification_contract(&ver_id);

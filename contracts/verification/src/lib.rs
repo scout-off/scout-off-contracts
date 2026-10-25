@@ -5704,15 +5704,7 @@ mod tests {
             env.events().all(),
             soroban_sdk::vec![
                 &env,
-                (
-                    client.address.clone(),
-                    (
-                        Symbol::new(&env, "AdminTransferProposed"),
-                        old_admin.clone(),
-                    )
-                        .into_val(&env),
-                    stale_admin.clone().into_val(&env),
-                )
+                { let e = crate::events::AdminTransferProposed { old_admin: old_admin.clone(), new_admin: stale_admin.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
             ]
         );
 
@@ -5749,11 +5741,7 @@ mod tests {
             env.events().all(),
             soroban_sdk::vec![
                 &env,
-                (
-                    client.address.clone(),
-                    (Symbol::new(&env, "AdminTransferred"), old_admin.clone(),).into_val(&env),
-                    new_admin.clone().into_val(&env),
-                )
+                { let e = crate::events::AdminTransferred { old_admin: old_admin.clone(), new_admin: new_admin.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
             ]
         );
         env.as_contract(&client.address, || {
@@ -6012,7 +6000,7 @@ mod tests {
     fn test_get_validator_players_index_accuracy() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6063,7 +6051,7 @@ mod tests {
     fn test_get_validator_players_no_duplicates() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6101,7 +6089,7 @@ mod tests {
     fn test_get_validator_players_two_validators_independent() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let v1 = Address::generate(&env);
         let v2 = Address::generate(&env);
@@ -6193,7 +6181,7 @@ mod tests {
     fn test_total_milestone_count() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         // Initialized to 0
         assert_eq!(client.get_total_milestone_count(), 0);
@@ -6657,11 +6645,7 @@ mod tests {
             events,
             soroban_sdk::vec![
                 &env,
-                (
-                    client.address.clone(),
-                    (Symbol::new(&env, "ContractPaused"), admin.clone(),).into_val(&env),
-                    ().into_val(&env)
-                )
+                { let e = crate::events::ContractPaused { admin: admin.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
             ]
         );
 
@@ -6671,11 +6655,7 @@ mod tests {
             events,
             soroban_sdk::vec![
                 &env,
-                (
-                    client.address.clone(),
-                    (Symbol::new(&env, "ContractUnpaused"), admin.clone(),).into_val(&env),
-                    ().into_val(&env)
-                )
+                { let e = crate::events::ContractUnpaused { admin: admin.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
             ]
         );
     }
@@ -6721,21 +6701,8 @@ mod tests {
             events,
             soroban_sdk::vec![
                 &env,
-                (
-                    client.address.clone(),
-                    (Symbol::new(&env, "ProgressContractUpdated"), admin.clone(),).into_val(&env),
-                    addr.clone().into_val(&env)
-                ),
-                (
-                    client.address.clone(),
-                    (
-                        Symbol::new(&env, "WiringUpdated"),
-                        admin.clone(),
-                        Symbol::new(&env, "progress_contract"),
-                    )
-                        .into_val(&env),
-                    (addr, 1u32).into_val(&env)
-                )
+                { let e = crate::events::ProgressContractUpdated { admin: admin.clone(), progress_contract: addr.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
+                { let e = crate::events::WiringUpdated { admin: admin.clone(), link: Symbol::new(&env, "progress_contract"), new_address: addr, new_epoch: 1u32 }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
             ]
         );
     }
@@ -6867,16 +6834,7 @@ mod tests {
             env.events().all(),
             soroban_sdk::vec![
                 &env,
-                (
-                    client.address.clone(),
-                    (
-                        Symbol::new(&env, "WiringUpdated"),
-                        admin.clone(),
-                        Symbol::new(&env, "registration_contract"),
-                    )
-                        .into_val(&env),
-                    (reg_addr, 1u32).into_val(&env)
-                )
+                { let e = crate::events::WiringUpdated { admin: admin.clone(), link: Symbol::new(&env, "registration_contract"), new_address: reg_addr, new_epoch: 1u32 }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
             ]
         );
     }
@@ -6889,7 +6847,7 @@ mod tests {
     fn test_upgrade_preserves_admin() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -6957,11 +6915,7 @@ mod tests {
             events,
             soroban_sdk::vec![
                 &env,
-                (
-                    client.address.clone(),
-                    (Symbol::new(&env, "ContractInitialized"), admin.clone(),).into_val(&env),
-                    ().into_val(&env)
-                )
+                { let e = crate::events::ContractInitialized { admin: admin.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
             ]
         );
     }
@@ -7755,11 +7709,7 @@ mod tests {
             events,
             soroban_sdk::vec![
                 &env,
-                (
-                    client.address.clone(),
-                    (Symbol::new(&env, "DisputeResolved"), admin.clone(),).into_val(&env),
-                    (2u64, 1u32, false).into_val(&env)
-                )
+                { let e = crate::events::DisputeResolved { admin: admin.clone(), player_id: 2u64, milestone_index: 1u32, upheld: false }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
             ]
         );
     }
@@ -7797,15 +7747,7 @@ mod tests {
             events,
             soroban_sdk::vec![
                 &env,
-                (
-                    client.address.clone(),
-                    (
-                        Symbol::new(&env, "milestone_disputed"),
-                        player_wallet.clone()
-                    )
-                        .into_val(&env),
-                    (2u64, 1u32, reason.clone()).into_val(&env)
-                )
+                { let e = crate::events::MilestoneDisputed { player_wallet: player_wallet.clone(), player_id: 2u64, milestone_index: 1u32, reason: reason.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
             ]
         );
     }
@@ -8269,7 +8211,7 @@ mod tests {
     fn test_validator_reputation_mechanism() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
 
         let wallet_cause = Address::generate(&env);
         let wallet_routine = Address::generate(&env);
@@ -8977,7 +8919,7 @@ mod tests {
     fn test_ring_buffer_write_head_never_exceeds_twice_cap() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
         let validator = register_test_validator(&env, &client);
 
         env.as_contract(&client.address, || {
@@ -9005,7 +8947,7 @@ mod tests {
     fn test_global_index_reads_in_insertion_order() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
         let validator = register_test_validator(&env, &client);
 
         client.approve_milestone(
@@ -9035,7 +8977,7 @@ mod tests {
     fn test_total_milestone_count_u64() {
         let env = setup_env();
         let admin = Address::generate(&env);
-        let client = deploy(&env, &admin);
+        let client = deploy_active(&env, &admin);
         let validator = register_test_validator(&env, &client);
 
         env.as_contract(&client.address, || {
@@ -9249,11 +9191,7 @@ mod tests {
         let original = client.get_milestone(&7, &1);
         client.restore_milestone_record(&7, &1);
         assert_eq!(env.events().all().filter_by_contract(&client.address),
-            soroban_sdk::vec![&env, (
-                client.address.clone(),
-                (Symbol::new(&env, "milestone_record_restored"), admin).into_val(&env),
-                (7u64, 1u32).into_val(&env),
-            )]);
+            soroban_sdk::vec![&env, { let e = crate::events::MilestoneRecordRestored { admin: admin, player_id: 7u64, index: 1u32 }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }]);
         assert_eq!(client.get_milestone(&7, &1), original);
     }
 
@@ -9276,11 +9214,7 @@ mod tests {
         let original = client.get_validator(&wallet);
         client.restore_validator_record(&wallet);
         assert_eq!(env.events().all().filter_by_contract(&client.address),
-            soroban_sdk::vec![&env, (
-                client.address.clone(),
-                (Symbol::new(&env, "validator_record_restored"), admin).into_val(&env),
-                wallet.clone().into_val(&env),
-            )]);
+            soroban_sdk::vec![&env, { let e = crate::events::ValidatorRecordRestored { admin: admin, wallet: wallet.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },]);
         let restored = client.get_validator(&wallet);
         assert_eq!(restored.wallet, original.wallet);
         assert_eq!(restored.credentials, original.credentials);

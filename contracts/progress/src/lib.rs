@@ -2248,11 +2248,7 @@ mod tests {
             env.events().all(),
             soroban_sdk::vec![
                 &env,
-                (
-                    client.address.clone(),
-                    (Symbol::new(&env, "player_level_record_restored"), admin).into_val(&env),
-                    player.into_val(&env),
-                )
+                { let e = crate::events::PlayerLevelRecordRestored { admin: admin, player_id: player }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
             ]
         );
         let after = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&key));
@@ -3168,16 +3164,7 @@ mod tests {
             env.events().all(),
             vec![
                 &env,
-                (
-                    client.address.clone(),
-                    (Symbol::new(&env, "PlayerLevelReset"), admin,).into_val(&env),
-                    (
-                        player_id,
-                        ProgressLevel::PerformanceMilestones,
-                        ProgressLevel::Unverified,
-                    )
-                        .into_val(&env),
-                )
+                { let e = crate::events::PlayerLevelReset { admin: admin, player_id: player_id, old_level: ProgressLevel::PerformanceMilestones, target_level: ProgressLevel::Unverified }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
             ]
         );
 
@@ -3454,11 +3441,7 @@ mod tests {
             events,
             soroban_sdk::vec![
                 &env,
-                (
-                    client.address.clone(),
-                    (Symbol::new(&env, "contract_paused"), admin.clone()).into_val(&env),
-                    ().into_val(&env)
-                )
+                { let e = crate::events::ContractPaused { admin: admin.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
             ]
         );
     }
@@ -3484,11 +3467,7 @@ mod tests {
             env.events().all(),
             vec![
                 &env,
-                (
-                    client.address.clone(),
-                    (Symbol::new(&env, "contract_unpaused"), admin.clone()).into_val(&env),
-                    ().into_val(&env)
-                )
+                { let e = crate::events::ContractUnpaused { admin: admin.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
             ]
         );
     }
