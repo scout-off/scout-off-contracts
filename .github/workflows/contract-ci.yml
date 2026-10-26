@@ -183,9 +183,13 @@ jobs:
           docker run -d \
             --name stellar-local \
             -p 8000:8000 \
-            stellar/quickstart:testing@sha256:c1feb4fd799bb80b8d09f1131533ceefd78b12e8a0dce9242088a0db475ff805 \
+            stellar/quickstart:testing@sha256:66a19476f2ce2ed09c4dccf3f1af4d438209eee9ee05eb113a02dd926e2b03f5 \
             --local \
             --limits unlimited
+          # The image digest is pinned to the build (core/RPC v29, XDR v28) that
+          # matches the stellar-cli in ci/stellar-cli-version. Newer `testing`
+          # builds ship RPC/XDR v30, and CLI 28's upload simulation against
+          # them fails with Error(Context, InternalError). Bump the two together.
           # `--limits unlimited` raises the local network's Soroban resource
           # ceilings. The stellar-core default limits are extremely low and
           # reject the upload of `verification`'s ~134 KB optimized WASM with
