@@ -51,7 +51,7 @@ jobs:
         run: cargo test --workspace --locked
 
       - name: Build WASM (release)
-        run: cargo build --workspace --target wasm32-unknown-unknown --release --locked
+        run: cargo build --workspace --target wasm32v1-none --release --locked
 
       - name: CPU-instruction cost budget report
         # cost_budget.rs asserted its own pass/fail already as part of the

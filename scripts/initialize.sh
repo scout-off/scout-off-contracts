@@ -3,6 +3,7 @@
 # Run after deploy.sh. Requires .env.contracts to exist.
 set -euo pipefail
 
+# shellcheck disable=SC1091
 source "$(dirname "$0")/network.sh" "${1:-}"
 NETWORK="${1:-testnet}"
 # shellcheck source=/dev/null

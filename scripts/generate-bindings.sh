@@ -4,6 +4,7 @@
 # Requires .env.contracts to exist (written by deploy.sh)
 set -euo pipefail
 
+# shellcheck disable=SC1091
 source "$(dirname "$0")/network.sh" "${1:-}"
 # Reference stellar-cli version the generated bindings were last validated
 # against. Single source of truth: ci/stellar-cli-version (also read by
@@ -13,7 +14,7 @@ source "$(dirname "$0")/network.sh" "${1:-}"
 # A different locally installed CLI version only warns — set
 # STRICT_STELLAR_CLI_VERSION=1 to make it fatal. The "Verify ABI function
 # coverage in generated bindings" CI step structurally checks the output.
-# shellcheck source=lib/check-stellar-cli.sh
+# shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/lib/check-stellar-cli.sh"
 REFERENCE_STELLAR_CLI_VERSION="$PINNED_STELLAR_CLI_VERSION"
 

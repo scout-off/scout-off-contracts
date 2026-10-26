@@ -75,7 +75,7 @@ if ! command -v stellar >/dev/null 2>&1; then
   exit 1
 fi
 
-# shellcheck source=lib/check-stellar-cli.sh
+# shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/lib/check-stellar-cli.sh"
 check_stellar_cli_version "$ALLOW_CLI_MISMATCH"
 

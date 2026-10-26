@@ -12,9 +12,10 @@ for arg in "$@"; do
   esac
 done
 
+# shellcheck disable=SC1091
 source "$(dirname "$0")/network.sh" "$NETWORK_ARG"
 
-# shellcheck source=lib/check-stellar-cli.sh
+# shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/lib/check-stellar-cli.sh"
 check_stellar_cli_version "$ALLOW_CLI_MISMATCH"
 DEPLOYER="${DEPLOYER_SECRET:-}"
