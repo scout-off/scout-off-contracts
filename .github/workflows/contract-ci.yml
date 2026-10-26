@@ -145,6 +145,9 @@ jobs:
       # version) still require a --source-account. The sandbox identity is
       # created in the "Generate a local sandbox identity" step below.
       STELLAR_SOURCE_ACCOUNT: ci-deployer
+      # scripts/network.sh refuses `local` without an explicit passphrase
+      # (#1728); this is the quickstart `--local` standalone network's.
+      NETWORK_PASSPHRASE: "Standalone Network ; February 2017"
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
