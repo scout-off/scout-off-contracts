@@ -820,9 +820,25 @@ impl RegistrationContract {
         if !exists {
             return Err(ScoutChainError::ScoutNotFound);
         }
+        // Idempotency (#1658): an already-deactivated scout gets no
+        // duplicate event, mirroring deactivate_player.
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::ScoutDeactivated(scout_id))
+        {
+            return Ok(());
+        }
         env.storage()
             .persistent()
             .set(&DataKey::ScoutDeactivated(scout_id), &true);
+        // Extend TTL so the flag is not archived, which would silently
+        // reactivate the scout.
+        env.storage().persistent().extend_ttl(
+            &DataKey::ScoutDeactivated(scout_id),
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
         events::scout_deactivated(&env, scout_id, &admin);
         Ok(())
     }
@@ -837,6 +853,14 @@ impl RegistrationContract {
         let exists = env.storage().persistent().has(&DataKey::Scout(scout_id));
         if !exists {
             return Err(ScoutChainError::ScoutNotFound);
+        }
+        // Idempotency (#1658): reactivating an active scout is a silent no-op.
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::ScoutDeactivated(scout_id))
+        {
+            return Ok(());
         }
         env.storage()
             .persistent()
@@ -859,9 +883,8 @@ impl RegistrationContract {
         Self::require_initialized(&env)?;
         wallet.require_auth();
 
-        let canon_region = canonicalize_region(&env, &region)?;
-
-        // Per-caller cooldown: same pattern as register_player.
+        // Same check order as register_player (#1660): cooldown, then
+        // duplicate, then input validation.
         Self::enforce_reg_cooldown(&env, &DataKey::ScoutRegLastSent(wallet.clone()))?;
 
         if env
@@ -871,6 +894,8 @@ impl RegistrationContract {
         {
             return Err(ScoutChainError::AlreadyRegistered);
         }
+
+        let canon_region = canonicalize_region(&env, &region)?;
         Self::require_scout_capacity(&env)?;
 
         let scout_id = Self::next_scout_id(&env)?;

@@ -139,8 +139,10 @@ fn cooldown_wins_over_invalid_region_for_both_entrypoints() {
     let wallet = Address::generate(&env);
     let invalid_region = String::from_str(&env, "not-a-valid-region");
 
-    // First registration (valid input) succeeds and starts the cooldown window.
+    // First registrations (valid input) succeed and start each entrypoint's
+    // cooldown window (players and scouts are rate-limited separately).
     client.register_player(&wallet, &valid_vitals(&env), &one_hash(&env));
+    client.register_scout(&wallet, &String::from_str(&env, "EU"));
 
     // Still inside the cooldown window: cooldown must win over the invalid
     // region for both entrypoints.

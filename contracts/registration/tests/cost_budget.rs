@@ -27,11 +27,14 @@ const SET_PLAYER_LEVEL_LARGE_BUCKET_CPU_BUDGET: u64 = 1_335_000;
 // Memory-byte budgets. Initial values are the measured memory cost plus the
 // same 20% headroom policy used for WASM size budgets. Recalibrate with
 // `scripts/calibrate-budgets.py` and tighten with `scripts/tighten-budgets.sh`.
-const REGISTER_PLAYER_MEM_BUDGET: u64 = 120_000;
-const UPDATE_PROFILE_MEM_BUDGET: u64 = 60_000;
-const FILTER_PLAYERS_MEM_BUDGET: u64 = 480_000;
-const SET_PLAYER_LEVEL_MEM_BUDGET: u64 = 120_000;
-const SET_PLAYER_LEVEL_LARGE_BUCKET_MEM_BUDGET: u64 = 360_000;
+// Memory budgets re-baselined to measured + 20% after the 2026-10 batch
+// (constructors, wiring handshake, scout verification records, cooldown
+// ordering) grew these operations by 15-43%.
+const REGISTER_PLAYER_MEM_BUDGET: u64 = 185_000;
+const UPDATE_PROFILE_MEM_BUDGET: u64 = 85_000;
+const FILTER_PLAYERS_MEM_BUDGET: u64 = 720_000;
+const SET_PLAYER_LEVEL_MEM_BUDGET: u64 = 200_000;
+const SET_PLAYER_LEVEL_LARGE_BUCKET_MEM_BUDGET: u64 = 620_000;
 
 fn setup() -> (Env, RegistrationContractClient<'static>) {
     let env = Env::default();

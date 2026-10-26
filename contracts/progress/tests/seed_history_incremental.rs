@@ -17,15 +17,28 @@ fn setup() -> (Env, ProgressContractClient<'static>) {
     (env, client)
 }
 
+/// Entries alternate an advance (Unverified -> VerifiedIdentity) with a reset
+/// back to Unverified, so every seeded history forms a valid level chain
+/// (#1617: `old_level` must continue the previous entry's `new_level`).
 fn make_entry(player_id: u64, index: u32, by: &Address) -> ProgressEntry {
+    let advance = index % 2 == 1;
     ProgressEntry {
         player_id,
-        old_level: ProgressLevel::Unverified,
-        new_level: ProgressLevel::VerifiedIdentity,
+        old_level: if advance { ProgressLevel::Unverified } else { ProgressLevel::VerifiedIdentity },
+        new_level: if advance { ProgressLevel::VerifiedIdentity } else { ProgressLevel::Unverified },
         updated_by: by.clone(),
         updated_at: 1_700_000_000 + index as u64 * 100,
-        milestone_ref: index,
+        milestone_ref: if advance { index } else { 0 },
         ledger_sequence: 1000 + index,
+    }
+}
+
+fn level_code(l: &ProgressLevel) -> u32 {
+    match l {
+        ProgressLevel::Unverified => 0,
+        ProgressLevel::VerifiedIdentity => 1,
+        ProgressLevel::PerformanceMilestones => 2,
+        ProgressLevel::EliteTier => 3,
     }
 }
 
@@ -34,8 +47,8 @@ fn leaf(env: &Env, e: &ProgressEntry) -> BytesN<32> {
     let mut b = Bytes::new(env);
     b.push_back(0u8);
     b.extend_from_slice(&e.player_id.to_be_bytes());
-    b.extend_from_slice(&0u32.to_be_bytes()); // Unverified
-    b.extend_from_slice(&1u32.to_be_bytes()); // VerifiedIdentity
+    b.extend_from_slice(&level_code(&e.old_level).to_be_bytes());
+    b.extend_from_slice(&level_code(&e.new_level).to_be_bytes());
     b.append(&e.updated_by.clone().to_xdr(env));
     b.extend_from_slice(&e.updated_at.to_be_bytes());
     b.extend_from_slice(&e.milestone_ref.to_be_bytes());

@@ -33,9 +33,14 @@ fn setup(n: u32) -> (Env, ScoutAccessContractClient<'static>) {
     );
     let client = ScoutAccessContractClient::new(&env, &id);
     let scout = Address::generate(&env);
-    env.as_contract(&id, || {
-        for i in 1..=n {
-            let offer = TrialOffer {
+    // Seed in chunks: each as_contract call is one invocation, and a single
+    // invocation may write at most 50 ledger entries.
+    let mut start = 1u32;
+    while start <= n {
+        let end = (start + 39).min(n);
+        env.as_contract(&id, || {
+            for i in start..=end {
+                let offer = TrialOffer {
                 player_id: PLAYER,
                 scout: scout.clone(),
                 details_hash: String::from_str(
@@ -43,11 +48,15 @@ fn setup(n: u32) -> (Env, ScoutAccessContractClient<'static>) {
                     "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB",
                 ),
                 logged_at: i as u64,
-            };
-            env.storage()
-                .persistent()
-                .set(&DataKey::TrialOffer(PLAYER, i), &offer);
-        }
+                };
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::TrialOffer(PLAYER, i), &offer);
+            }
+        });
+        start = end + 1;
+    }
+    env.as_contract(&id, || {
         env.storage()
             .persistent()
             .set(&DataKey::TrialCounter(PLAYER), &n);

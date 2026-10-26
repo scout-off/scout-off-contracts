@@ -35,7 +35,7 @@ fn default_fees() -> FeeConfig {
 fn vitals(env: &Env) -> PlayerVitals {
     PlayerVitals {
         age: 22,
-        position: String::from_str(env, "Midfielder"),
+        position: String::from_str(env, "CM"),
         region: String::from_str(env, "EU"),
         nationality: String::from_str(env, "BR"),
     }
@@ -89,8 +89,9 @@ fn setup() -> Harness {
     scout_access.set_progress_contract(&prog_id);
     progress.set_scout_access_contract(&sa_id);
 
-    // Wire verification → progress
+    // Wire verification → progress and → registration (player-status check)
     verification.set_progress_contract(&prog_id);
+    verification.set_registration_contract(&reg_id);
     // Wire registration → progress (for level sync)
     registration.set_progress_contract(&prog_id);
     progress.set_registration_contract(&reg_id);
@@ -130,7 +131,7 @@ fn test_full_erasure_leaves_no_readable_state() {
         &validator_wallet,
         &player_id,
         &String::from_str(env, "Scored 5 goals in cup"),
-        &String::from_str(env, "bafyevidence123"),
+        &String::from_str(env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB"),
         &None,
     );
 
@@ -147,16 +148,17 @@ fn test_full_erasure_leaves_no_readable_state() {
     xlm_client.mint(&scout_wallet, &10_000_000i128);
     // Approve scout_access to spend scout funds.
     let reg_id = h.registration.address.clone();
-    h.registration.register_scout(
+    let scout_id = h.registration.register_scout(
         &scout_wallet,
         &String::from_str(env, "EU"),
     );
+    // Elite subscriptions require a wired registration and a verified scout.
+    h.scout_access.set_registration_contract(&reg_id);
+    h.registration.verify_scout(&scout_id);
     // Subscribe (Elite tier for contact + trial access)
     h.scout_access.subscribe(&scout_wallet, &SubscriptionTier::Elite);
 
-    // pay_to_contact requires registration wiring for verification in some
-    // configurations; we call it here to create a ContactRecord.
-    h.scout_access.set_registration_contract(&reg_id);
+    // Create a ContactRecord.
     h.scout_access.pay_to_contact(&scout_wallet, &player_id);
 
     // --- Step 4: Run paged erasure (recommended order) ---
@@ -228,14 +230,14 @@ fn test_erasure_blocks_on_outstanding_escrow() {
         &validator_wallet,
         &player_id,
         &String::from_str(env, "Milestone 1"),
-        &String::from_str(env, "bafyev001"),
+        &String::from_str(env, "QmvwxyzABCDEFGHJKLMNPQRSTUVWXYZ123456789abcdef"),
         &None,
     );
     h.verification.approve_milestone(
         &validator_wallet,
         &player_id,
         &String::from_str(env, "Milestone 2"),
-        &String::from_str(env, "bafyev002"),
+        &String::from_str(env, "QmABCDEFGHJKLMNPQRSTUVWXYZ123456789abcdefghijk"),
         &None,
     );
 
@@ -243,16 +245,17 @@ fn test_erasure_blocks_on_outstanding_escrow() {
     let scout_wallet = Address::generate(env);
     let xlm_client = StellarAssetClient::new(env, &h.xlm);
     xlm_client.mint(&scout_wallet, &10_000_000i128);
-    h.registration.register_scout(
+    let scout_id = h.registration.register_scout(
         &scout_wallet,
         &String::from_str(env, "EU"),
     );
     h.scout_access
         .set_registration_contract(&h.registration.address.clone());
+    h.registration.verify_scout(&scout_id);
     h.scout_access.subscribe(&scout_wallet, &SubscriptionTier::Elite);
     h.scout_access.pay_to_contact(&scout_wallet, &player_id);
     h.scout_access
-        .log_trial_offer(&scout_wallet, &player_id, &String::from_str(env, "bafyoffer1"));
+        .log_trial_offer(&scout_wallet, &player_id, &String::from_str(env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB"));
 
     // Attempt purge while escrow is outstanding — must be rejected.
     let result = h

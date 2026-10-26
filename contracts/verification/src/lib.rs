@@ -9154,7 +9154,8 @@ mod tests {
         let current = client.get_revocation_record(&wallet).unwrap();
         assert_eq!(current.severity, RevocationSeverity::ForCause);
         assert_eq!(current.reason, String::from_str(&env, "Escalated cause"));
-        assert_eq!(current.revoked_at, 2_000);
+        // Escalation keeps the original routine revocation time.
+        assert_eq!(current.revoked_at, 1_000);
     }
 
     #[test]
@@ -9270,11 +9271,14 @@ mod tests {
         env.as_contract(&client.address, || {
             env.storage().instance().extend_ttl(0, PERSISTENT_TTL_MAX);
         });
-        env.ledger().with_mut(|l| l.sequence_number += PERSISTENT_TTL_MAX - 100);
+        // Move to 100 ledgers before the record's TTL runs out, inside the
+        // PERSISTENT_TTL_MIN (500) threshold where restoration must extend it.
+        let ttl = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&DataKey::Milestone(7, 1)));
+        env.ledger().with_mut(|l| l.sequence_number += ttl - 100);
         let before = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&DataKey::Milestone(7, 1)));
         client.restore_milestone_record(&7, &1);
         let after = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&DataKey::Milestone(7, 1)));
-        assert!(after > before, "restoration must extend ledger TTL");
+        assert!(after > before, "restoration must extend ledger TTL (before={before}, after={after})");
     }
 
     #[test]
@@ -9290,10 +9294,13 @@ mod tests {
         env.as_contract(&client.address, || {
             env.storage().instance().extend_ttl(0, PERSISTENT_TTL_MAX);
         });
-        env.ledger().with_mut(|l| l.sequence_number += PERSISTENT_TTL_MAX - 100);
+        // Move to 100 ledgers before the record's TTL runs out, inside the
+        // PERSISTENT_TTL_MIN (500) threshold where restoration must extend it.
+        let ttl = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&DataKey::Validator(wallet.clone())));
+        env.ledger().with_mut(|l| l.sequence_number += ttl - 100);
         let before = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&DataKey::Validator(wallet.clone())));
         client.restore_validator_record(&wallet);
         let after = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&DataKey::Validator(wallet)));
-        assert!(after > before, "restoration must extend ledger TTL");
+        assert!(after > before, "restoration must extend ledger TTL (before={before}, after={after})");
     }
 }

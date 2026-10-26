@@ -85,6 +85,8 @@ fn test_subscribers_by_tier_upgrade_moves_scout_from_basic_to_pro() {
     let h = setup();
     let scout = funded_scout(&h);
     h.client.subscribe(&scout, &SubscriptionTier::Basic);
+    // Upgrades are rate-limited to one per hour after subscribing.
+    h.env.ledger().with_mut(|l| l.timestamp += 3_600);
     h.client.subscribe(&scout, &SubscriptionTier::Pro);
 
     assert!(!h.client.get_subscribers_by_tier(&SubscriptionTier::Basic).contains(&scout));

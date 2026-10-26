@@ -3170,7 +3170,8 @@ impl ScoutAccessContract {
             .get(&DataKey::TrialCounter(player_id))
             .unwrap_or(0u32);
         let now = env.ledger().timestamp();
-        for idx in 0..trial_count {
+        // Trial indices are 1-based (log_trial_offer returns 1 for the first).
+        for idx in 1..=trial_count {
             let ek = DataKey::TrialEscrow(player_id, idx);
             if let Some(escrow) = env.storage().persistent().get::<DataKey, TrialEscrow>(&ek) {
                 if now <= escrow.expires_at && escrow.amount > 0 {
@@ -3216,10 +3217,12 @@ impl ScoutAccessContract {
             }
         }
 
-        // Paged removal: trial offers + escrows starting at cursor.
+        // Paged removal: trial offers + escrows. `cursor` counts the indices
+        // already processed, so this page covers (cursor, end] of the
+        // 1-based trial indices.
         let start = cursor;
         let end = (start + PAGE_SIZE).min(trial_count);
-        for idx in start..end {
+        for idx in (start + 1)..=end {
             let tok = DataKey::TrialOffer(player_id, idx);
             if env.storage().persistent().has(&tok) {
                 env.storage().persistent().remove(&tok);

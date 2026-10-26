@@ -130,6 +130,12 @@ fn test_deactivate_emits_single_event() {
         vec![&h.env, 1u64.into_val(&h.env)],
     );
     h.client.deactivate_scout(&1);
+    // `events()` covers only the latest invocation, so check after each call.
+    assert_eq!(
+        count_events(&h.env, "scout_deactivated", Some(&h.contract_id)),
+        1,
+        "first deactivate_scout must emit scout_deactivated"
+    );
 
     auth(
         &h.env,
@@ -141,7 +147,7 @@ fn test_deactivate_emits_single_event() {
     h.client.deactivate_scout(&1);
 
     let count = count_events(&h.env, "scout_deactivated", Some(&h.contract_id));
-    assert_eq!(count, 1, "scout_deactivated must be emitted exactly once");
+    assert_eq!(count, 0, "a repeated deactivate_scout must not emit again");
 }
 
 /// Admin can reactivate a deactivated scout; status returns to Active.

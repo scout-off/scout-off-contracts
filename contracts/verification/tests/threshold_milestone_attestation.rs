@@ -604,6 +604,7 @@ fn committer_cap_resets_after_window() {
 #[contracttype]
 enum RegStubKey {
     Owner,
+    PlayerId,
 }
 
 /// Registration stand-in for `dispute_milestone`'s wallet↔player check: every
@@ -613,6 +614,20 @@ struct RegStub;
 
 #[contractimpl]
 impl RegStub {
+    /// Player owned by the stored owner wallet (set via `set_player_id`,
+    /// default 1); used by dispute_milestone's ownership check.
+    pub fn get_player_id_by_wallet(env: Env, wallet: Address) -> u64 {
+        let owner: Address = env.storage().persistent().get(&RegStubKey::Owner).unwrap();
+        if wallet != owner {
+            return 0;
+        }
+        env.storage().persistent().get(&RegStubKey::PlayerId).unwrap_or(1)
+    }
+
+    pub fn set_player_id(env: Env, player_id: u64) {
+        env.storage().persistent().set(&RegStubKey::PlayerId, &player_id);
+    }
+
     /// Wiring handshake (#1610): report the kind of contract this stub stands in for.
     pub fn contract_kind(env: Env) -> soroban_sdk::Symbol {
         soroban_sdk::Symbol::new(&env, "registration")
@@ -664,6 +679,7 @@ fn dispute_rejects_co_attestor_with_conflict_of_interest() {
         .address
         .unwrap();
     RegStubClient::new(&env, &reg_id).initialize(&player_wallet);
+    RegStubClient::new(&env, &reg_id).set_player_id(&400u64);
 
     let register = |affiliation: &str| -> Address {
         let wallet = Address::generate(&env);
