@@ -40,33 +40,21 @@ stellar contract optimize --wasm "${WASM_DIR}/scoutchain_registration.wasm" \
 # 2. Deploy contracts
 echo ""
 echo "==> Deploying verification contract..."
-VER_ID=$(stellar contract deploy --wasm "$VER_WASM" --source "$DEPLOYER" --network "$NETWORK")
+VER_ID=$(stellar contract deploy --wasm "$VER_WASM" --source "$DEPLOYER" --network "$NETWORK" \
+  -- --admin "$ADMIN")
 echo "    verification => $VER_ID"
 
 echo "==> Deploying progress contract..."
-PROG_ID=$(stellar contract deploy --wasm "$PROG_WASM" --source "$DEPLOYER" --network "$NETWORK")
+PROG_ID=$(stellar contract deploy --wasm "$PROG_WASM" --source "$DEPLOYER" --network "$NETWORK" \
+  -- --admin "$ADMIN")
 echo "    progress => $PROG_ID"
 
 echo "==> Deploying registration contract..."
-REG_ID=$(stellar contract deploy --wasm "$REG_WASM" --source "$DEPLOYER" --network "$NETWORK")
+REG_ID=$(stellar contract deploy --wasm "$REG_WASM" --source "$DEPLOYER" --network "$NETWORK" \
+  -- --admin "$ADMIN")
 echo "    registration => $REG_ID"
 
-# 3. Initialize contracts
-echo ""
-echo "==> Initializing verification contract..."
-stellar contract invoke \
-  --id "$VER_ID" --source "$DEPLOYER" --network "$NETWORK" \
-  -- initialize --admin "$ADMIN"
-
-echo "==> Initializing progress contract..."
-stellar contract invoke \
-  --id "$PROG_ID" --source "$DEPLOYER" --network "$NETWORK" \
-  -- initialize --admin "$ADMIN"
-
-echo "==> Initializing registration contract..."
-stellar contract invoke \
-  --id "$REG_ID" --source "$DEPLOYER" --network "$NETWORK" \
-  -- initialize --admin "$ADMIN"
+# 3. Contracts initialize in their constructors at deploy time (#1369).
 
 # 4. Wire verification → progress
 echo ""
@@ -75,6 +63,14 @@ stellar contract invoke \
   --id "$VER_ID" --source "$DEPLOYER" --network "$NETWORK" \
   -- set_progress_contract \
   --progress_contract "$PROG_ID"
+
+# 4b. Wire verification -> registration (approve_milestone fails closed
+# without it, #1622).
+echo "==> Wiring verification -> registration..."
+stellar contract invoke \
+  --id "$VER_ID" --source "$DEPLOYER" --network "$NETWORK" \
+  -- set_registration_contract \
+  --reg_contract "$REG_ID"
 
 # 5. Wire progress → verification (so advance_level validates the caller)
 echo "==> Wiring progress -> verification..."

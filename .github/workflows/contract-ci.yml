@@ -246,8 +246,19 @@ jobs:
           set -euo pipefail
           WASM=target/wasm32v1-none/release
 
+          # Contracts initialize in their constructors (#1369), so the admin,
+          # payment token and fee config are passed at deploy time. The
+          # native-asset SAC must exist first: scout_access's constructor
+          # probes its decimals().
+          ADMIN=$(stellar keys address ci-deployer)
+          XLM_TOKEN="$(stellar contract asset deploy \
+            --asset native --source ci-deployer --network local 2>/dev/null \
+            || stellar contract id asset --asset native --network local)"
+          read -r _ _ FEE_CONFIG_JSON <<<"$(python3 scripts/lib/read_network_config.py config/testnet.json "$XLM_TOKEN")"
+
           deploy_one() {
             local name="$1"
+            shift
             local wasm_src="$WASM/scoutchain_${name}.wasm"
             local wasm_opt="$WASM/scoutchain_${name}.optimized.wasm"
             # Use the current non-deprecated build+optimize path
@@ -264,13 +275,15 @@ jobs:
             stellar contract deploy \
               --wasm "$wasm_opt" \
               --source ci-deployer \
-              --network local | grep -oE 'C[A-Z0-9]{55}' | tail -1
+              --network local \
+              -- "$@" | grep -oE 'C[A-Z0-9]{55}' | tail -1
           }
 
-          REG_ID=$(deploy_one registration)
-          VER_ID=$(deploy_one verification)
-          PRG_ID=$(deploy_one progress)
-          SCO_ID=$(deploy_one scout_access)
+          REG_ID=$(deploy_one registration --admin "$ADMIN")
+          VER_ID=$(deploy_one verification --admin "$ADMIN")
+          PRG_ID=$(deploy_one progress --admin "$ADMIN")
+          SCO_ID=$(deploy_one scout_access --admin "$ADMIN" \
+            --xlm_token "$XLM_TOKEN" --fee_config "$FEE_CONFIG_JSON")
 
           [ -n "$REG_ID" ] || { echo "ERROR: empty registration ID"; exit 1; }
           [ -n "$VER_ID" ] || { echo "ERROR: empty verification ID"; exit 1; }

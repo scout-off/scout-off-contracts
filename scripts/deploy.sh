@@ -25,6 +25,14 @@ if [[ -z "$DEPLOYER" ]]; then
   exit 1
 fi
 
+# Contracts initialize in their constructors, atomically with deployment
+# (#1369), so the admin and scout_access's token/fee config are needed here.
+ADMIN="${ADMIN_ADDRESS:?Set ADMIN_ADDRESS (the admin passed to every constructor)}"
+CONFIG_FILE="config/${NETWORK}.json"
+[[ -f "$CONFIG_FILE" ]] || CONFIG_FILE="config/testnet.json"
+CONFIG_OUT=$(python3 "$(dirname "$0")/lib/read_network_config.py" "$CONFIG_FILE" "${XLM_TOKEN_ADDRESS:-}") || exit 1
+read -r XLM_TOKEN _REG_COOLDOWN_SECS FEE_CONFIG_JSON <<<"$CONFIG_OUT"
+
 # Mainnet safety check: verify config file has no placeholders
 if [[ "$NETWORK" == "mainnet" ]]; then
   if grep -q "FILL_IN_BEFORE_USE" config/mainnet.json; then
@@ -78,11 +86,18 @@ for name in "${CONTRACTS[@]}"; do
     echo "ERROR: $optimized not found in PREBUILT_WASM_DIR"; exit 1
   fi
 
+  if [[ "$name" == "scout_access" ]]; then
+    ctor_args=(--admin "$ADMIN" --xlm_token "$XLM_TOKEN" --fee_config "$FEE_CONFIG_JSON")
+  else
+    ctor_args=(--admin "$ADMIN")
+  fi
+
   echo "==> Deploying $name to $NETWORK..."
   id=$(stellar contract deploy \
     --wasm "$optimized" \
     --source "$DEPLOYER" \
-    --network "$NETWORK")
+    --network "$NETWORK" \
+    -- "${ctor_args[@]}")
 
   CONTRACT_IDS[$name]="$id"
   CONTRACT_WASM_HASHES[$name]=$(hash_wasm "$optimized")
