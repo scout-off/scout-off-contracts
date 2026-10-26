@@ -28,6 +28,7 @@ fn test_approve_milestone_progress_call_failed_reverts_all_state() {
 
     let verification_id = env.register(VerificationContract, (admin.clone(),));
     let verification_client = VerificationContractClient::new(&env, &verification_id);
+    verification_client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
     verification_client.set_progress_contract(&progress_id);
     verification_client.register_validator(
         &validator,
@@ -108,6 +109,7 @@ fn test_approve_milestone_duplicate_evidence_prevents_double_commit_on_retry() {
 
     let verification_id = env.register(VerificationContract, (admin.clone(),));
     let verification_client = VerificationContractClient::new(&env, &verification_id);
+    verification_client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
     verification_client.register_validator(
         &validator,
         &String::from_str(&env, "UEFA-B-License-2026"),

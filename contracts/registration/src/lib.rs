@@ -1452,8 +1452,14 @@ impl RegistrationContract {
         }
 
         let mut summaries = Vec::new(&env);
+        // Duplicate IDs are fetched once, in first-occurrence order (#1661).
+        let mut seen: Vec<u64> = Vec::new(&env);
         for i in 0..ids.len() {
             if let Some(id) = ids.get(i) {
+                if seen.contains(id) {
+                    continue;
+                }
+                seen.push_back(id);
                 if let Ok(profile) = Self::load_player(&env, id) {
                     summaries.push_back(Self::to_player_summary(&profile));
                 }
@@ -1574,8 +1580,14 @@ impl RegistrationContract {
         }
 
         let mut profiles = Vec::new(&env);
+        // Duplicate IDs are fetched once, in first-occurrence order (#1661).
+        let mut seen: Vec<u64> = Vec::new(&env);
         for i in 0..ids.len() {
             if let Some(id) = ids.get(i) {
+                if seen.contains(id) {
+                    continue;
+                }
+                seen.push_back(id);
                 if let Some(profile) = env
                     .storage()
                     .persistent()
@@ -3665,15 +3677,7 @@ mod tests {
             events,
             soroban_sdk::vec![
                 &env,
-                (
-                    client.address.clone(),
-                    (
-                        soroban_sdk::Symbol::new(&env, "player_deactivated"),
-                        admin.clone(),
-                    )
-                        .into_val(&env),
-                    player_id.into_val(&env)
-                )
+                { let e = crate::events::PlayerDeactivated { admin: admin.clone(), player_id }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
             ]
         );
     }
@@ -3702,15 +3706,7 @@ mod tests {
             events,
             soroban_sdk::vec![
                 &env,
-                (
-                    client.address.clone(),
-                    (
-                        soroban_sdk::Symbol::new(&env, "player_reactivated"),
-                        admin.clone(),
-                    )
-                        .into_val(&env),
-                    player_id.into_val(&env)
-                )
+                { let e = crate::events::PlayerReactivated { admin: admin.clone(), player_id }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
             ]
         );
     }
@@ -3747,15 +3743,7 @@ mod tests {
             events,
             soroban_sdk::vec![
                 &env,
-                (
-                    client.address.clone(),
-                    (
-                        soroban_sdk::Symbol::new(&env, "player_level_synced"),
-                        progress_contract.clone(),
-                    )
-                        .into_val(&env),
-                    (player_id, ProgressLevel::VerifiedIdentity).into_val(&env)
-                )
+                { let e = crate::events::PlayerLevelSynced { caller: progress_contract.clone(), player_id, level: ProgressLevel::VerifiedIdentity }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
             ]
         );
     }
@@ -3817,15 +3805,7 @@ mod tests {
             events,
             soroban_sdk::vec![
                 &env,
-                (
-                    client.address.clone(),
-                    (
-                        soroban_sdk::Symbol::new(&env, "ScoutVerified"),
-                        wallet.clone()
-                    )
-                        .into_val(&env),
-                    scout_id.into_val(&env)
-                )
+                { let e = crate::events::ScoutVerified { wallet: wallet.clone(), scout_id }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
             ]
         );
     }

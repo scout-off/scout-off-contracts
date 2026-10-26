@@ -2831,20 +2831,7 @@ mod tests {
             env.events().all(),
             soroban_sdk::vec![
                 &env,
-                (
-                    contract_id,
-                    soroban_sdk::vec![
-                        &env,
-                        Symbol::new(&env, "ProgressUpdated").into_val(&env),
-                        validator.into_val(&env),
-                    ],
-                    (
-                        player_id,
-                        ProgressLevel::Unverified,
-                        ProgressLevel::VerifiedIdentity
-                    )
-                        .into_val(&env),
-                )
+                { let e = crate::events::ProgressUpdated { updated_by: validator.clone(), player_id, old_level: ProgressLevel::Unverified, new_level: ProgressLevel::VerifiedIdentity }; (contract_id, soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
             ]
         );
     }
@@ -2877,15 +2864,7 @@ mod tests {
             env.events().all(),
             vec![
                 &env,
-                (
-                    contract_id.clone(),
-                    vec![
-                        &env,
-                        Symbol::new(&env, "AdminTransferProposed").into_val(&env),
-                        old_admin.clone().into_val(&env),
-                    ],
-                    stale_admin.clone().into_val(&env),
-                )
+                { let e = crate::events::AdminTransferProposed { old_admin: old_admin.clone(), new_admin: stale_admin.clone() }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
             ]
         );
 
@@ -2923,15 +2902,7 @@ mod tests {
             env.events().all(),
             vec![
                 &env,
-                (
-                    contract_id.clone(),
-                    vec![
-                        &env,
-                        Symbol::new(&env, "AdminTransferred").into_val(&env),
-                        old_admin.clone().into_val(&env),
-                    ],
-                    new_admin.clone().into_val(&env),
-                )
+                { let e = crate::events::AdminTransferred { old_admin: old_admin.clone(), new_admin: new_admin.clone() }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
             ]
         );
         env.as_contract(&contract_id, || {
@@ -3078,6 +3049,7 @@ mod tests {
         let ver_admin = Address::generate(&env);
         let ver_id = env.register(scoutchain_verification::VerificationContract, (ver_admin.clone(),));
         let ver_client = scoutchain_verification::VerificationContractClient::new(&env, &ver_id);
+        ver_client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
         let milestone_validator = Address::generate(&env);
         ver_client.register_validator(
             &milestone_validator,

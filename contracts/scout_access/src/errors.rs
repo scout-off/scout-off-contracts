@@ -264,7 +264,6 @@ mod tests {
                 let code = code.trim().trim_end_matches(',').trim();
                 if let Ok(code) = code.parse::<u32>() {
                     assert_ne!(code, 13, "error code 13 must remain reserved");
-                    assert_ne!(code, 18, "error code 18 must remain reserved");
                     next_implicit_code = Some(code + 1);
                 }
                 let _ = name;

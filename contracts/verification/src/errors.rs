@@ -257,6 +257,7 @@ mod tests {
         let admin = Address::generate(&env);
         let validator = Address::generate(&env);
         let client = deploy(&env, &admin);
+        client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
         client.register_validator(
             &validator,
             &String::from_str(&env, "UEFA B License"),

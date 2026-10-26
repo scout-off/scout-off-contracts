@@ -1,6 +1,6 @@
 #![cfg_attr(target_family = "wasm", no_std)]
 mod errors;
-mod events;
+pub mod events;
 mod types;
 
 use types::{FeeConfigProposal, ProContactPeriod, ScoutAccessWiringState};

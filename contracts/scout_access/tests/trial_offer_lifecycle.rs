@@ -244,7 +244,10 @@ fn test_confirm_before_expiry_advances_level_and_emits_event() {
     );
 
     // The data payload must be (player_id, index).
-    let expected: soroban_sdk::Val = (player_id, index).into_val(&h.env);
+    let expected: soroban_sdk::Val = soroban_sdk::events::Event::data(
+        &scoutchain_scout_access::events::TrialOfferConfirmed { scout: scout.clone(), player_id, index },
+        &h.env,
+    );
     let expected_xdr = soroban_sdk::xdr::ScVal::try_from_val(&h.env, &expected).unwrap();
     assert_eq!(confirmed_event.unwrap().data, expected_xdr);
 }
@@ -295,7 +298,10 @@ fn test_confirm_after_expiry_refunds_escrow_and_emits_event() {
         expired_event.is_some(),
         "trial_offer_expired event must be emitted on expiry-refund path"
     );
-    let expected: soroban_sdk::Val = (player_id, index).into_val(&h.env);
+    let expected: soroban_sdk::Val = soroban_sdk::events::Event::data(
+        &scoutchain_scout_access::events::TrialOfferExpired { scout: scout.clone(), player_id, index },
+        &h.env,
+    );
     let expected_xdr = soroban_sdk::xdr::ScVal::try_from_val(&h.env, &expected).unwrap();
     assert_eq!(expired_event.unwrap().data, expected_xdr);
 

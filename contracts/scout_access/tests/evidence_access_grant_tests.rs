@@ -133,20 +133,8 @@ fn pay_to_contact_emits_evidence_access_granted_event() {
         h.env.events().all().filter_by_contract(&h.contract.address),
         vec![
             &h.env,
-            (
-                h.contract.address.clone(),
-                (
-                    Symbol::new(&h.env, "evidence_access_granted"),
-                    scout.clone(),
-                )
-                    .into_val(&h.env),
-                (player_id, SubscriptionTier::Pro).into_val(&h.env),
-            ),
-            (
-                h.contract.address.clone(),
-                (Symbol::new(&h.env, "player_contacted"), scout.clone()).into_val(&h.env),
-                (player_id, CONTACT_FEE).into_val(&h.env),
-            ),
+            { let e = scoutchain_scout_access::events::EvidenceAccessGranted { scout: scout.clone(), player_id, tier: SubscriptionTier::Pro }; (h.contract.address.clone(), soroban_sdk::events::Event::topics(&e, &h.env), soroban_sdk::events::Event::data(&e, &h.env)) },
+            { let e = scoutchain_scout_access::events::PlayerContacted { scout: scout.clone(), player_id, fee_paid: CONTACT_FEE }; (h.contract.address.clone(), soroban_sdk::events::Event::topics(&e, &h.env), soroban_sdk::events::Event::data(&e, &h.env)) },
         ]
     );
 }
@@ -463,15 +451,7 @@ fn admin_revoke_evidence_access_emits_event() {
         h.env.events().all().filter_by_contract(&h.contract.address),
         vec![
             &h.env,
-            (
-                h.contract.address.clone(),
-                (
-                    Symbol::new(&h.env, "evidence_access_revoked"),
-                    scout.clone(),
-                )
-                    .into_val(&h.env),
-                (player_id, h.admin.clone()).into_val(&h.env),
-            ),
+            { let e = scoutchain_scout_access::events::EvidenceAccessRevoked { scout: scout.clone(), player_id, admin: h.admin.clone() }; (h.contract.address.clone(), soroban_sdk::events::Event::topics(&e, &h.env), soroban_sdk::events::Event::data(&e, &h.env)) },
         ]
     );
 }

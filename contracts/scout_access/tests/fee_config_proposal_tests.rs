@@ -414,20 +414,8 @@ fn test_update_fee_config_emits_delay_bypassed_event() {
     let events = h.env.events().all();
     let expected = soroban_sdk::vec![
         &h.env,
-        (
-            h.contract_id.clone(),
-            (Symbol::new(&h.env, "fee_config_updated"), h.admin.clone()).into_val(&h.env),
-            (old_config.clone(), new_config.clone()).into_val(&h.env),
-        ),
-        (
-            h.contract_id.clone(),
-            (
-                Symbol::new(&h.env, "fee_config_delay_bypassed"),
-                h.admin.clone()
-            )
-                .into_val(&h.env),
-            (old_config.clone(), new_config.clone()).into_val(&h.env),
-        ),
+        { let e = scoutchain_scout_access::events::FeeConfigUpdated { admin: h.admin.clone(), old_config: old_config.clone(), new_config: new_config.clone() }; (h.contract_id.clone(), soroban_sdk::events::Event::topics(&e, &h.env), soroban_sdk::events::Event::data(&e, &h.env)) },
+        { let e = scoutchain_scout_access::events::FeeConfigDelayBypassed { admin: h.admin.clone(), old_config: old_config.clone(), new_config: new_config.clone() }; (h.contract_id.clone(), soroban_sdk::events::Event::topics(&e, &h.env), soroban_sdk::events::Event::data(&e, &h.env)) },
     ];
     assert_eq!(
         events, expected,
@@ -462,11 +450,7 @@ fn test_activate_fee_config_does_not_emit_delay_bypassed_event() {
     let events = h.env.events().all();
     let expected = soroban_sdk::vec![
         &h.env,
-        (
-            h.contract_id.clone(),
-            (Symbol::new(&h.env, "fee_config_updated"), h.admin.clone()).into_val(&h.env),
-            (old_config.clone(), new_config.clone()).into_val(&h.env),
-        ),
+        { let e = scoutchain_scout_access::events::FeeConfigUpdated { admin: h.admin.clone(), old_config: old_config.clone(), new_config: new_config.clone() }; (h.contract_id.clone(), soroban_sdk::events::Event::topics(&e, &h.env), soroban_sdk::events::Event::data(&e, &h.env)) },
     ];
     assert_eq!(
         events, expected,
