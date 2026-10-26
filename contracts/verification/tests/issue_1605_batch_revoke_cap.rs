@@ -2,8 +2,7 @@
 //! defer the for-cause cascade sweep to `continue_revocation_cascade`.
 
 use scoutchain_verification::{
-    AttestationStatus, RevocationSeverity, VerificationContract, VerificationContractClient,
-    VerificationError,
+    RevocationSeverity, VerificationContract, VerificationContractClient, VerificationError,
 };
 use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
 
@@ -30,19 +29,10 @@ fn setup() -> (Env, VerificationContractClient<'static>) {
     let admin = Address::generate(&env);
     let contract_id = env.register(VerificationContract, (admin.clone(),));
     let client = VerificationContractClient::new(&env, &contract_id);
-    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
+    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(
+        &env,
+    ));
     (env, client)
-}
-
-fn register_validator(env: &Env, client: &VerificationContractClient) -> Address {
-    let wallet = Address::generate(env);
-    client.register_validator(
-        &wallet,
-        &String::from_str(env, "UEFA-B-License-2026"),
-        &String::from_str(env, "Default Academy"),
-        &Vec::new(env),
-    );
-    wallet
 }
 
 /// Approve `count` distinct milestones for `validator` across `count` distinct

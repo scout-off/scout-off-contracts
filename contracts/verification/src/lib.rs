@@ -32,9 +32,9 @@ use soroban_sdk::{
 };
 
 use scoutchain_shared_types::{
-    read_wiring_link, require_admin, MAX_REG_COOLDOWN_SECS,
+    read_wiring_link, require_admin,
     safe_math::{safe_add_u32, safe_add_u64, safe_sub_u32},
-    validate_cid, write_wiring_link,
+    validate_cid, write_wiring_link, MAX_REG_COOLDOWN_SECS,
 };
 
 const MAX_CREDENTIALS_LEN: u32 = 256;
@@ -1600,7 +1600,12 @@ impl VerificationContract {
 
     pub fn pause_contract(env: Env) -> Result<(), VerificationError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
-        if env.storage().instance().get::<_, bool>(&DataKey::Paused).unwrap_or(false) == true {
+        if env
+            .storage()
+            .instance()
+            .get::<_, bool>(&DataKey::Paused)
+            .unwrap_or(false)
+        {
             return Ok(());
         }
         env.storage().instance().set(&DataKey::Paused, &true);
@@ -1610,7 +1615,12 @@ impl VerificationContract {
 
     pub fn unpause_contract(env: Env) -> Result<(), VerificationError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
-        if env.storage().instance().get::<_, bool>(&DataKey::Paused).unwrap_or(false) == false {
+        if !env
+            .storage()
+            .instance()
+            .get::<_, bool>(&DataKey::Paused)
+            .unwrap_or(false)
+        {
             return Ok(());
         }
         env.storage().instance().set(&DataKey::Paused, &false);
@@ -1631,7 +1641,12 @@ impl VerificationContract {
             .get(&DataKey::Admin)
             .ok_or(VerificationError::NotInitialized)?;
 
-        if env.storage().instance().get::<_, bool>(&DataKey::PausedApproveMilestone).unwrap_or(false) == true {
+        if env
+            .storage()
+            .instance()
+            .get::<_, bool>(&DataKey::PausedApproveMilestone)
+            .unwrap_or(false)
+        {
             return Ok(());
         }
         env.storage()
@@ -1651,7 +1666,12 @@ impl VerificationContract {
             .get(&DataKey::Admin)
             .ok_or(VerificationError::NotInitialized)?;
 
-        if env.storage().instance().get::<_, bool>(&DataKey::PausedApproveMilestone).unwrap_or(false) == false {
+        if !env
+            .storage()
+            .instance()
+            .get::<_, bool>(&DataKey::PausedApproveMilestone)
+            .unwrap_or(false)
+        {
             return Ok(());
         }
         env.storage()
@@ -2214,7 +2234,9 @@ impl VerificationContract {
             return Err(VerificationError::InvalidAttestation);
         }
 
-        if attestation.description.len() < MIN_DESCRIPTION_LEN || attestation.description.len() > MAX_DESCRIPTION_LEN {
+        if attestation.description.len() < MIN_DESCRIPTION_LEN
+            || attestation.description.len() > MAX_DESCRIPTION_LEN
+        {
             return Err(VerificationError::InvalidInput);
         }
         validate_cid(&attestation.evidence_hash).map_err(|_| VerificationError::InvalidInput)?;
@@ -3379,17 +3401,16 @@ impl VerificationContract {
         let more = next_cursor < total;
 
         // On final page remove the counter itself.
-        if !more {
-            if env
+        if !more
+            && env
                 .storage()
                 .persistent()
                 .has(&DataKey::MilestoneCounter(player_id))
-            {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::MilestoneCounter(player_id));
-                removed += 1;
-            }
+        {
+            env.storage()
+                .persistent()
+                .remove(&DataKey::MilestoneCounter(player_id));
+            removed += 1;
         }
 
         events::player_data_purged(&env, &admin, player_id, removed, more);
@@ -5555,10 +5576,15 @@ mod tests {
             if wallet != owner {
                 return 0u64;
             }
-            env.storage().persistent().get(&StubKey::PlayerId).unwrap_or(1u64)
+            env.storage()
+                .persistent()
+                .get(&StubKey::PlayerId)
+                .unwrap_or(1u64)
         }
         pub fn set_player_id(env: Env, player_id: u64) {
-            env.storage().persistent().set(&StubKey::PlayerId, &player_id);
+            env.storage()
+                .persistent()
+                .set(&StubKey::PlayerId, &player_id);
         }
         pub fn get_player_status(_env: Env, _player_id: u64) -> RegPlayerStatus {
             RegPlayerStatus::Active
@@ -5621,12 +5647,18 @@ mod tests {
             &Vec::new(&env),
         );
         client.approve_milestone(
-            &validator, &1u64, &String::from_str(&env, "Milestone A"),
-            &String::from_str(&env, VALID_CID_V0), &None,
+            &validator,
+            &1u64,
+            &String::from_str(&env, "Milestone A"),
+            &String::from_str(&env, VALID_CID_V0),
+            &None,
         );
         client.approve_milestone(
-            &validator, &1u64, &String::from_str(&env, "Milestone B"),
-            &String::from_str(&env, VALID_CID_V0_2), &None,
+            &validator,
+            &1u64,
+            &String::from_str(&env, "Milestone B"),
+            &String::from_str(&env, VALID_CID_V0_2),
+            &None,
         );
         (env, client, wallet)
     }
@@ -5650,7 +5682,11 @@ mod tests {
         let (env, client, wallet) = setup_dispute_count_scenario();
         for i in 1..=2u32 {
             client.dispute_milestone(
-                &wallet, &1u64, &i, &String::from_str(&env, "Ownership"), &0u32,
+                &wallet,
+                &1u64,
+                &i,
+                &String::from_str(&env, "Ownership"),
+                &0u32,
             );
         }
         assert_eq!(client.get_player_dispute_count(&1u64), 2);
@@ -5663,7 +5699,11 @@ mod tests {
         let (env, client, wallet) = setup_dispute_count_scenario();
         for i in 1..=2u32 {
             client.dispute_milestone(
-                &wallet, &1u64, &i, &String::from_str(&env, "Ownership"), &0u32,
+                &wallet,
+                &1u64,
+                &i,
+                &String::from_str(&env, "Ownership"),
+                &0u32,
             );
         }
         client.resolve_dispute(&1u64, &1u32, &false);
@@ -5676,7 +5716,11 @@ mod tests {
     fn test_get_player_dispute_count_reopen_round_does_not_add_milestone() {
         let (env, client, wallet) = setup_dispute_count_scenario();
         client.dispute_milestone(
-            &wallet, &1u64, &1u32, &String::from_str(&env, "First"), &0u32,
+            &wallet,
+            &1u64,
+            &1u32,
+            &String::from_str(&env, "First"),
+            &0u32,
         );
         client.resolve_dispute(&1u64, &1u32, &false);
         let resolved_at = client.get_dispute(&1u64, &1u32).resolved_at;
@@ -5684,7 +5728,11 @@ mod tests {
             l.timestamp = resolved_at + DISPUTE_REOPEN_COOLDOWN_SECS + 1;
         });
         client.dispute_milestone(
-            &wallet, &1u64, &1u32, &String::from_str(&env, "Again"), &0u32,
+            &wallet,
+            &1u64,
+            &1u32,
+            &String::from_str(&env, "Again"),
+            &0u32,
         );
         assert_eq!(client.get_player_dispute_count(&1u64), 1);
         assert_eq!(client.get_active_disputes_count(), 1);
@@ -5702,10 +5750,17 @@ mod tests {
         client.propose_admin(&stale_admin);
         assert_eq!(
             env.events().all(),
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::AdminTransferProposed { old_admin: old_admin.clone(), new_admin: stale_admin.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::AdminTransferProposed {
+                    old_admin: old_admin.clone(),
+                    new_admin: stale_admin.clone(),
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            },]
         );
 
         client.pause_contract();
@@ -5739,10 +5794,17 @@ mod tests {
         client.accept_admin();
         assert_eq!(
             env.events().all(),
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::AdminTransferred { old_admin: old_admin.clone(), new_admin: new_admin.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::AdminTransferred {
+                    old_admin: old_admin.clone(),
+                    new_admin: new_admin.clone(),
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            },]
         );
         env.as_contract(&client.address, || {
             assert_eq!(
@@ -5849,11 +5911,15 @@ mod tests {
                 approver_affiliation: String::from_str(&env, "synthetic academy"),
             };
             env.storage().persistent().set(&dispute_key, &dispute);
-            env.storage().persistent().set(
-                &DataKey::DisputeRound(player_id, milestone_index), &round,
-            );
-            env.storage().instance().set(&DataKey::ActiveDisputesCount, &1u32);
-            env.storage().persistent().set(&DataKey::PlayerOpenDisputeCount(player_id), &1u32);
+            env.storage()
+                .persistent()
+                .set(&DataKey::DisputeRound(player_id, milestone_index), &round);
+            env.storage()
+                .instance()
+                .set(&DataKey::ActiveDisputesCount, &1u32);
+            env.storage()
+                .persistent()
+                .set(&DataKey::PlayerOpenDisputeCount(player_id), &1u32);
             env.storage().persistent().set(
                 &DataKey::OpenDisputeIndex,
                 &soroban_sdk::vec![&env, (player_id, milestone_index, round)],
@@ -5863,20 +5929,26 @@ mod tests {
         assert_eq!(client.get_active_disputes_count(), 0);
         env.as_contract(&client.address, || {
             assert_eq!(
-                env.storage().persistent().get::<DataKey, u32>(
-                    &DataKey::PlayerOpenDisputeCount(player_id)
-                ),
+                env.storage()
+                    .persistent()
+                    .get::<DataKey, u32>(&DataKey::PlayerOpenDisputeCount(player_id)),
                 Some(0),
             );
-            let index: Vec<(u64, u32, u32)> = env.storage().persistent()
-                .get(&DataKey::OpenDisputeIndex).unwrap();
+            let index: Vec<(u64, u32, u32)> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::OpenDisputeIndex)
+                .unwrap();
             assert!(index.is_empty());
             assert!(env.storage().persistent().get_ttl(&dispute_key) >= 500);
         });
         env.ledger().with_mut(|ledger| ledger.sequence_number += 50);
         env.as_contract(&client.address, || {
-            let retained: MilestoneDispute = env.storage().persistent()
-                .get(&dispute_key).expect("jury-resolved dispute must survive short TTL");
+            let retained: MilestoneDispute = env
+                .storage()
+                .persistent()
+                .get(&dispute_key)
+                .expect("jury-resolved dispute must survive short TTL");
             assert!(retained.resolved);
             assert!(retained.upheld);
             assert_eq!(retained.resolved_at, 100);
@@ -6212,8 +6284,20 @@ mod tests {
 
         let v0_2 = String::from_str(&env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqC");
         let v0_3 = String::from_str(&env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqD");
-        client.approve_milestone(&v1, &2u64, &String::from_str(&env, "Milestone m2"), &v0_2, &None);
-        client.approve_milestone(&v2, &3u64, &String::from_str(&env, "Milestone m3"), &v0_3, &None);
+        client.approve_milestone(
+            &v1,
+            &2u64,
+            &String::from_str(&env, "Milestone m2"),
+            &v0_2,
+            &None,
+        );
+        client.approve_milestone(
+            &v2,
+            &3u64,
+            &String::from_str(&env, "Milestone m3"),
+            &v0_3,
+            &None,
+        );
         assert_eq!(client.get_total_milestone_count(), 3);
 
         // per-validator counts still correct
@@ -6643,20 +6727,32 @@ mod tests {
         let events = env.events().all();
         assert_eq!(
             events,
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::ContractPaused { admin: admin.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::ContractPaused {
+                    admin: admin.clone(),
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
         );
 
         client.unpause_contract();
         let events = env.events().all();
         assert_eq!(
             events,
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::ContractUnpaused { admin: admin.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::ContractUnpaused {
+                    admin: admin.clone(),
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
         );
     }
 
@@ -6701,8 +6797,30 @@ mod tests {
             events,
             soroban_sdk::vec![
                 &env,
-                { let e = crate::events::ProgressContractUpdated { admin: admin.clone(), progress_contract: addr.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
-                { let e = crate::events::WiringUpdated { admin: admin.clone(), link: Symbol::new(&env, "progress_contract"), new_address: addr, new_epoch: 1u32 }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
+                {
+                    let e = crate::events::ProgressContractUpdated {
+                        admin: admin.clone(),
+                        progress_contract: addr.clone(),
+                    };
+                    (
+                        client.address.clone(),
+                        soroban_sdk::events::Event::topics(&e, &env),
+                        soroban_sdk::events::Event::data(&e, &env),
+                    )
+                },
+                {
+                    let e = crate::events::WiringUpdated {
+                        admin: admin.clone(),
+                        link: Symbol::new(&env, "progress_contract"),
+                        new_address: addr,
+                        new_epoch: 1u32,
+                    };
+                    (
+                        client.address.clone(),
+                        soroban_sdk::events::Event::topics(&e, &env),
+                        soroban_sdk::events::Event::data(&e, &env),
+                    )
+                }
             ]
         );
     }
@@ -6832,10 +6950,19 @@ mod tests {
 
         assert_eq!(
             env.events().all(),
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::WiringUpdated { admin: admin.clone(), link: Symbol::new(&env, "registration_contract"), new_address: reg_addr, new_epoch: 1u32 }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::WiringUpdated {
+                    admin: admin.clone(),
+                    link: Symbol::new(&env, "registration_contract"),
+                    new_address: reg_addr,
+                    new_epoch: 1u32,
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
         );
     }
 
@@ -6913,10 +7040,16 @@ mod tests {
         let events = env.events().all();
         assert_eq!(
             events,
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::ContractInitialized { admin: admin.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::ContractInitialized {
+                    admin: admin.clone(),
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
         );
     }
 
@@ -7707,10 +7840,19 @@ mod tests {
         let events = env.events().all();
         assert_eq!(
             events,
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::DisputeResolved { admin: admin.clone(), player_id: 2u64, milestone_index: 1u32, upheld: false }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::DisputeResolved {
+                    admin: admin.clone(),
+                    player_id: 2u64,
+                    milestone_index: 1u32,
+                    upheld: false,
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
         );
     }
 
@@ -7745,10 +7887,19 @@ mod tests {
         let events = env.events().all();
         assert_eq!(
             events,
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::MilestoneDisputed { player_wallet: player_wallet.clone(), player_id: 2u64, milestone_index: 1u32, reason: reason.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::MilestoneDisputed {
+                    player_wallet: player_wallet.clone(),
+                    player_id: 2u64,
+                    milestone_index: 1u32,
+                    reason: reason.clone(),
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
         );
     }
 
@@ -7982,7 +8133,7 @@ mod tests {
         let player_wallet = Address::generate(&env);
         let attacker_wallet = Address::generate(&env);
         let client = deploy(&env, &admin);
-        let reg_id = setup_with_registration(&env, &client, &player_wallet);
+        let _reg_id = setup_with_registration(&env, &client, &player_wallet);
 
         let validator = Address::generate(&env);
         client.register_validator(
@@ -9122,10 +9273,17 @@ mod tests {
         let admin = Address::generate(&env);
         let wallet = Address::generate(&env);
         let client = deploy(&env, &admin);
-        client.register_validator(&wallet, &String::from_str(&env, "UEFA B Licence"),
-            &String::from_str(&env, "Example Academy"), &Vec::new(&env));
-        client.revoke_validator(&wallet, &RevocationSeverity::Routine,
-            &Some(String::from_str(&env, "Routine review")));
+        client.register_validator(
+            &wallet,
+            &String::from_str(&env, "UEFA B Licence"),
+            &String::from_str(&env, "Example Academy"),
+            &Vec::new(&env),
+        );
+        client.revoke_validator(
+            &wallet,
+            &RevocationSeverity::Routine,
+            &Some(String::from_str(&env, "Routine review")),
+        );
         assert_eq!(client.get_revocation_history(&wallet).len(), 0);
         let record = client.get_revocation_record(&wallet).unwrap();
         assert_eq!(record.severity, RevocationSeverity::Routine);
@@ -9139,15 +9297,25 @@ mod tests {
         let admin = Address::generate(&env);
         let wallet = Address::generate(&env);
         let client = deploy(&env, &admin);
-        client.register_validator(&wallet, &String::from_str(&env, "UEFA B Licence"),
-            &String::from_str(&env, "Example Academy"), &Vec::new(&env));
+        client.register_validator(
+            &wallet,
+            &String::from_str(&env, "UEFA B Licence"),
+            &String::from_str(&env, "Example Academy"),
+            &Vec::new(&env),
+        );
         env.ledger().with_mut(|l| l.timestamp = 1_000);
-        client.revoke_validator(&wallet, &RevocationSeverity::Routine,
-            &Some(String::from_str(&env, "Initial routine reason")));
+        client.revoke_validator(
+            &wallet,
+            &RevocationSeverity::Routine,
+            &Some(String::from_str(&env, "Initial routine reason")),
+        );
         let original = client.get_revocation_record(&wallet).unwrap();
         env.ledger().with_mut(|l| l.timestamp = 2_000);
-        client.revoke_validator(&wallet, &RevocationSeverity::ForCause,
-            &Some(String::from_str(&env, "Escalated cause")));
+        client.revoke_validator(
+            &wallet,
+            &RevocationSeverity::ForCause,
+            &Some(String::from_str(&env, "Escalated cause")),
+        );
         let history = client.get_revocation_history(&wallet);
         assert_eq!(history.len(), 1);
         assert_eq!(history.get(0).unwrap(), original);
@@ -9164,14 +9332,23 @@ mod tests {
         let admin = Address::generate(&env);
         let wallet = Address::generate(&env);
         let client = deploy(&env, &admin);
-        client.register_validator(&wallet, &String::from_str(&env, "UEFA B Licence"),
-            &String::from_str(&env, "Example Academy"), &Vec::new(&env));
-        client.revoke_validator(&wallet, &RevocationSeverity::ForCause,
-            &Some(String::from_str(&env, "Cause")));
+        client.register_validator(
+            &wallet,
+            &String::from_str(&env, "UEFA B Licence"),
+            &String::from_str(&env, "Example Academy"),
+            &Vec::new(&env),
+        );
+        client.revoke_validator(
+            &wallet,
+            &RevocationSeverity::ForCause,
+            &Some(String::from_str(&env, "Cause")),
+        );
         let before = client.get_revocation_record(&wallet);
         let history_before = client.get_revocation_history(&wallet);
-        assert_eq!(client.try_revoke_validator(&wallet, &RevocationSeverity::Routine, &None),
-            Err(Ok(VerificationError::ValidatorAlreadyRevoked)));
+        assert_eq!(
+            client.try_revoke_validator(&wallet, &RevocationSeverity::Routine, &None),
+            Err(Ok(VerificationError::ValidatorAlreadyRevoked))
+        );
         assert_eq!(client.get_revocation_history(&wallet), history_before);
         assert_eq!(client.get_revocation_record(&wallet), before);
     }
@@ -9185,14 +9362,36 @@ mod tests {
         let admin = Address::generate(&env);
         let validator = Address::generate(&env);
         let client = deploy_active(&env, &admin);
-        client.register_validator(&validator, &String::from_str(&env, "UEFA B Licence"),
-            &String::from_str(&env, "Example Academy"), &Vec::new(&env));
-        client.approve_milestone(&validator, &7u64, &String::from_str(&env, "Training"),
-            &String::from_str(&env, VALID_CID_V0), &None);
+        client.register_validator(
+            &validator,
+            &String::from_str(&env, "UEFA B Licence"),
+            &String::from_str(&env, "Example Academy"),
+            &Vec::new(&env),
+        );
+        client.approve_milestone(
+            &validator,
+            &7u64,
+            &String::from_str(&env, "Training"),
+            &String::from_str(&env, VALID_CID_V0),
+            &None,
+        );
         let original = client.get_milestone(&7, &1);
         client.restore_milestone_record(&7, &1);
-        assert_eq!(env.events().all().filter_by_contract(&client.address),
-            soroban_sdk::vec![&env, { let e = crate::events::MilestoneRecordRestored { admin: admin, player_id: 7u64, index: 1u32 }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }]);
+        assert_eq!(
+            env.events().all().filter_by_contract(&client.address),
+            soroban_sdk::vec![&env, {
+                let e = crate::events::MilestoneRecordRestored {
+                    admin,
+                    player_id: 7u64,
+                    index: 1u32,
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
+        );
         assert_eq!(client.get_milestone(&7, &1), original);
     }
 
@@ -9200,8 +9399,10 @@ mod tests {
     fn restore_milestone_missing_returns_evicted_error() {
         let env = setup_env();
         let client = deploy(&env, &Address::generate(&env));
-        assert_eq!(client.try_restore_milestone_record(&999, &1),
-            Err(Ok(VerificationError::MilestoneRecordEvicted)));
+        assert_eq!(
+            client.try_restore_milestone_record(&999, &1),
+            Err(Ok(VerificationError::MilestoneRecordEvicted))
+        );
     }
 
     #[test]
@@ -9210,12 +9411,28 @@ mod tests {
         let admin = Address::generate(&env);
         let wallet = Address::generate(&env);
         let client = deploy(&env, &admin);
-        client.register_validator(&wallet, &String::from_str(&env, "UEFA B Licence"),
-            &String::from_str(&env, "Example Academy"), &Vec::new(&env));
+        client.register_validator(
+            &wallet,
+            &String::from_str(&env, "UEFA B Licence"),
+            &String::from_str(&env, "Example Academy"),
+            &Vec::new(&env),
+        );
         let original = client.get_validator(&wallet);
         client.restore_validator_record(&wallet);
-        assert_eq!(env.events().all().filter_by_contract(&client.address),
-            soroban_sdk::vec![&env, { let e = crate::events::ValidatorRecordRestored { admin: admin, wallet: wallet.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },]);
+        assert_eq!(
+            env.events().all().filter_by_contract(&client.address),
+            soroban_sdk::vec![&env, {
+                let e = crate::events::ValidatorRecordRestored {
+                    admin,
+                    wallet: wallet.clone(),
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            },]
+        );
         let restored = client.get_validator(&wallet);
         assert_eq!(restored.wallet, original.wallet);
         assert_eq!(restored.credentials, original.credentials);
@@ -9226,8 +9443,10 @@ mod tests {
     fn restore_validator_missing_returns_evicted_error() {
         let env = setup_env();
         let client = deploy(&env, &Address::generate(&env));
-        assert_eq!(client.try_restore_validator_record(&Address::generate(&env)),
-            Err(Ok(VerificationError::ValidatorRecordEvicted)));
+        assert_eq!(
+            client.try_restore_validator_record(&Address::generate(&env)),
+            Err(Ok(VerificationError::ValidatorRecordEvicted))
+        );
     }
 
     #[test]
@@ -9236,10 +9455,19 @@ mod tests {
         let env = setup_env();
         let client = deploy(&env, &Address::generate(&env));
         let validator = Address::generate(&env);
-        client.register_validator(&validator, &String::from_str(&env, "UEFA B Licence"),
-            &String::from_str(&env, "Example Academy"), &Vec::new(&env));
-        client.approve_milestone(&validator, &1, &String::from_str(&env, "Training"),
-            &String::from_str(&env, VALID_CID_V0), &None);
+        client.register_validator(
+            &validator,
+            &String::from_str(&env, "UEFA B Licence"),
+            &String::from_str(&env, "Example Academy"),
+            &Vec::new(&env),
+        );
+        client.approve_milestone(
+            &validator,
+            &1,
+            &String::from_str(&env, "Training"),
+            &String::from_str(&env, VALID_CID_V0),
+            &None,
+        );
         env.mock_auths(&[]);
         client.restore_milestone_record(&1, &1);
     }
@@ -9250,8 +9478,12 @@ mod tests {
         let env = setup_env();
         let client = deploy(&env, &Address::generate(&env));
         let wallet = Address::generate(&env);
-        client.register_validator(&wallet, &String::from_str(&env, "UEFA B Licence"),
-            &String::from_str(&env, "Example Academy"), &Vec::new(&env));
+        client.register_validator(
+            &wallet,
+            &String::from_str(&env, "UEFA B Licence"),
+            &String::from_str(&env, "Example Academy"),
+            &Vec::new(&env),
+        );
         env.mock_auths(&[]);
         client.restore_validator_record(&wallet);
     }
@@ -9263,22 +9495,46 @@ mod tests {
         let admin = Address::generate(&env);
         let validator = Address::generate(&env);
         let client = deploy_active(&env, &admin);
-        client.register_validator(&validator, &String::from_str(&env, "UEFA B Licence"),
-            &String::from_str(&env, "Example Academy"), &Vec::new(&env));
-        client.approve_milestone(&validator, &7, &String::from_str(&env, "Training"),
-            &String::from_str(&env, VALID_CID_V0), &None);
+        client.register_validator(
+            &validator,
+            &String::from_str(&env, "UEFA B Licence"),
+            &String::from_str(&env, "Example Academy"),
+            &Vec::new(&env),
+        );
+        client.approve_milestone(
+            &validator,
+            &7,
+            &String::from_str(&env, "Training"),
+            &String::from_str(&env, VALID_CID_V0),
+            &None,
+        );
         // Keep the contract instance executable near the record's TTL threshold.
         env.as_contract(&client.address, || {
             env.storage().instance().extend_ttl(0, PERSISTENT_TTL_MAX);
         });
         // Move to 100 ledgers before the record's TTL runs out, inside the
         // PERSISTENT_TTL_MIN (500) threshold where restoration must extend it.
-        let ttl = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&DataKey::Milestone(7, 1)));
+        let ttl = env.as_contract(&client.address, || {
+            env.storage()
+                .persistent()
+                .get_ttl(&DataKey::Milestone(7, 1))
+        });
         env.ledger().with_mut(|l| l.sequence_number += ttl - 100);
-        let before = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&DataKey::Milestone(7, 1)));
+        let before = env.as_contract(&client.address, || {
+            env.storage()
+                .persistent()
+                .get_ttl(&DataKey::Milestone(7, 1))
+        });
         client.restore_milestone_record(&7, &1);
-        let after = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&DataKey::Milestone(7, 1)));
-        assert!(after > before, "restoration must extend ledger TTL (before={before}, after={after})");
+        let after = env.as_contract(&client.address, || {
+            env.storage()
+                .persistent()
+                .get_ttl(&DataKey::Milestone(7, 1))
+        });
+        assert!(
+            after > before,
+            "restoration must extend ledger TTL (before={before}, after={after})"
+        );
     }
 
     #[test]
@@ -9288,19 +9544,38 @@ mod tests {
         let admin = Address::generate(&env);
         let wallet = Address::generate(&env);
         let client = deploy(&env, &admin);
-        client.register_validator(&wallet, &String::from_str(&env, "UEFA B Licence"),
-            &String::from_str(&env, "Example Academy"), &Vec::new(&env));
+        client.register_validator(
+            &wallet,
+            &String::from_str(&env, "UEFA B Licence"),
+            &String::from_str(&env, "Example Academy"),
+            &Vec::new(&env),
+        );
         // Keep the contract instance executable near the record's TTL threshold.
         env.as_contract(&client.address, || {
             env.storage().instance().extend_ttl(0, PERSISTENT_TTL_MAX);
         });
         // Move to 100 ledgers before the record's TTL runs out, inside the
         // PERSISTENT_TTL_MIN (500) threshold where restoration must extend it.
-        let ttl = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&DataKey::Validator(wallet.clone())));
+        let ttl = env.as_contract(&client.address, || {
+            env.storage()
+                .persistent()
+                .get_ttl(&DataKey::Validator(wallet.clone()))
+        });
         env.ledger().with_mut(|l| l.sequence_number += ttl - 100);
-        let before = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&DataKey::Validator(wallet.clone())));
+        let before = env.as_contract(&client.address, || {
+            env.storage()
+                .persistent()
+                .get_ttl(&DataKey::Validator(wallet.clone()))
+        });
         client.restore_validator_record(&wallet);
-        let after = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&DataKey::Validator(wallet)));
-        assert!(after > before, "restoration must extend ledger TTL (before={before}, after={after})");
+        let after = env.as_contract(&client.address, || {
+            env.storage()
+                .persistent()
+                .get_ttl(&DataKey::Validator(wallet))
+        });
+        assert!(
+            after > before,
+            "restoration must extend ledger TTL (before={before}, after={after})"
+        );
     }
 }

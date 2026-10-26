@@ -94,7 +94,9 @@ fn setup() -> Harness {
 
     let ver_id = env.register(VerificationContract, (admin.clone(),));
     let verification = VerificationContractClient::new(&env, &ver_id);
-    verification.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
+    verification.set_registration_contract(
+        &scoutchain_shared_types::testutils::active_registry_stub(&env),
+    );
 
     let progress_id = env.register(ProgressContract, (admin.clone(),));
     let progress = ProgressContractClient::new(&env, &progress_id);
@@ -105,7 +107,10 @@ fn setup() -> Harness {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    let sa_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+    let sa_id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
     let scout_access = ScoutAccessContractClient::new(&env, &sa_id);
     common::wire_registration(&env, Some(&scout_access), None);
     scout_access.set_progress_contract(&progress_id);

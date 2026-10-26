@@ -62,7 +62,10 @@ fn setup() -> (Env, ScoutAccessContractClient<'static>, Address) {
     let xlm = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
-    let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+    let contract_id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
     let client = ScoutAccessContractClient::new(&env, &contract_id);
     common::wire_registration(&env, Some(&client), None);
     common::wire_progress_level_stub(&env, &client);

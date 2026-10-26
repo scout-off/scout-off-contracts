@@ -46,8 +46,10 @@ fn setup() -> (
     StellarAssetClient::new(&env, &xlm_token).mint(&scout, &1_000_000_000i128);
     let fee_config = default_fees();
 
-    let verification_id =
-        env.register(scoutchain_verification::VerificationContract, (admin.clone(),));
+    let verification_id = env.register(
+        scoutchain_verification::VerificationContract,
+        (admin.clone(),),
+    );
     let verification_client =
         scoutchain_verification::VerificationContractClient::new(&env, &verification_id);
 

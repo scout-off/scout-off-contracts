@@ -302,7 +302,7 @@ fn test_property_every_appended_entry_verifies_against_final_root() {
     let h = setup();
     let mut rng = Lcg(0x9E3779B97F4A7C15);
 
-    for offset in 0u64..50 {
+    for _offset in 0u64..50 {
         let player_id = register_player(&h);
         // 1..=3 entries, respecting the real four-tier model's cap on
         // ordinary advance_level sequences (Unverified -> ... -> EliteTier).

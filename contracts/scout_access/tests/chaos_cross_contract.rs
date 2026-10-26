@@ -123,7 +123,10 @@ fn build_harness() -> ChaosHarness {
     let xlm = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
-    let sa_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+    let sa_id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
     let scout_access = ScoutAccessContractClient::new(&env, &sa_id);
     scout_access.set_progress_contract(&prog_id);
     progress.set_scout_access_contract(&sa_id);

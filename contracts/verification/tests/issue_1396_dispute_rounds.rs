@@ -24,11 +24,18 @@ impl RegStub {
     /// The owner wallet owns player 1, the only player these tests dispute.
     pub fn get_player_id_by_wallet(env: Env, wallet: Address) -> u64 {
         let owner: Address = env.storage().persistent().get(&RegStubKey::Owner).unwrap();
-        if wallet == owner { 1 } else { 0 }
+        if wallet == owner {
+            1
+        } else {
+            0
+        }
     }
 
     /// Every player counts as active for verification's #1622 check.
-    pub fn get_player_status(_env: Env, _player_id: u64) -> scoutchain_verification::RegPlayerStatus {
+    pub fn get_player_status(
+        _env: Env,
+        _player_id: u64,
+    ) -> scoutchain_verification::RegPlayerStatus {
         scoutchain_verification::RegPlayerStatus::Active
     }
 
@@ -160,7 +167,7 @@ fn open_dispute_cap_enforced() {
     let (env, client, player_wallet, _validator) = setup();
     // Use distinct validators so we do not hit the per-(validator, player)
     // milestone cap of 5 while opening MAX_OPEN_DISPUTES_PER_PLAYER disputes.
-    for i in 0..5usize {
+    for cid in CIDS.iter().take(5) {
         let validator = Address::generate(&env);
         client.register_validator(
             &validator,
@@ -172,7 +179,7 @@ fn open_dispute_cap_enforced() {
             &validator,
             &1u64,
             &String::from_str(&env, "Milestone m"),
-            &String::from_str(&env, CIDS[i]),
+            &String::from_str(&env, cid),
             &None,
         );
         client.dispute_milestone(

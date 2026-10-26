@@ -36,10 +36,11 @@ fn setup() -> Harness {
     let admin = Address::generate(&env);
     let validator = Address::generate(&env);
 
-
     let contract_id = env.register(VerificationContract, (admin.clone(),));
     let client = VerificationContractClient::new(&env, &contract_id);
-    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
+    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(
+        &env,
+    ));
     client.register_validator(
         &validator,
         &String::from_str(&env, CREDENTIALS),

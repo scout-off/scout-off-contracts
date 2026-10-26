@@ -482,7 +482,12 @@ impl ScoutAccessContract {
     pub fn pause_contract(env: Env) -> Result<(), ScoutAccessError> {
         Self::bump_instance_ttl(&env);
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
-        if env.storage().instance().get::<_, bool>(&DataKey::Paused).unwrap_or(false) == true {
+        if env
+            .storage()
+            .instance()
+            .get::<_, bool>(&DataKey::Paused)
+            .unwrap_or(false)
+        {
             return Ok(());
         }
         env.storage().instance().set(&DataKey::Paused, &true);
@@ -493,7 +498,12 @@ impl ScoutAccessContract {
     pub fn unpause_contract(env: Env) -> Result<(), ScoutAccessError> {
         Self::bump_instance_ttl(&env);
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
-        if env.storage().instance().get::<_, bool>(&DataKey::Paused).unwrap_or(false) == false {
+        if !env
+            .storage()
+            .instance()
+            .get::<_, bool>(&DataKey::Paused)
+            .unwrap_or(false)
+        {
             return Ok(());
         }
         env.storage().instance().set(&DataKey::Paused, &false);
@@ -516,7 +526,12 @@ impl ScoutAccessContract {
             .persistent()
             .get(&DataKey::Admin)
             .ok_or(ScoutAccessError::NotInitialized)?;
-        if env.storage().instance().get::<_, bool>(&DataKey::PausedPayToContact).unwrap_or(false) == true {
+        if env
+            .storage()
+            .instance()
+            .get::<_, bool>(&DataKey::PausedPayToContact)
+            .unwrap_or(false)
+        {
             return Ok(());
         }
         env.storage()
@@ -536,7 +551,12 @@ impl ScoutAccessContract {
             .persistent()
             .get(&DataKey::Admin)
             .ok_or(ScoutAccessError::NotInitialized)?;
-        if env.storage().instance().get::<_, bool>(&DataKey::PausedPayToContact).unwrap_or(false) == false {
+        if !env
+            .storage()
+            .instance()
+            .get::<_, bool>(&DataKey::PausedPayToContact)
+            .unwrap_or(false)
+        {
             return Ok(());
         }
         env.storage()
@@ -1390,8 +1410,18 @@ impl ScoutAccessContract {
     // Trial offer
     // -------------------------------------------------------------------------
 
-    /// Log a trial offer on-chain. Scout must have an Elite subscription.
-    /// Also calls progress.advance_level if the progress contract is registered.
+    /// Log a trial offer from an Elite scout to a player they have contacted.
+    ///
+    /// Step one of the two-step escrow flow: the scout's
+    /// `trial_offer_escrow_stroops` is moved into escrow and the offer is
+    /// recorded under the next trial index (returned, 1-based). The player's
+    /// level only changes later, when the player calls `confirm_trial_offer`
+    /// before the offer expires.
+    ///
+    /// Errors: `ContractPaused`, `NotInitialized`, `InvalidInput` (bad
+    /// `details_hash` or no prior contact), `Unauthorized` (not Elite),
+    /// `ScoutNotVerified`, `TrialOffersDisabled` (escrow set to 0),
+    /// `TrialOfferRateLimited`, `Overflow`.
     pub fn log_trial_offer(
         env: Env,
         scout: Address,
@@ -1848,7 +1878,11 @@ impl ScoutAccessContract {
 
         let token_addr = Self::get_token(&env)?;
         let contract_addr = env.current_contract_address();
-        token::Client::new(&env, &token_addr).transfer(&contract_addr, &offer.scout, &escrow.amount);
+        token::Client::new(&env, &token_addr).transfer(
+            &contract_addr,
+            &offer.scout,
+            &escrow.amount,
+        );
 
         // Same cleanup order as confirm_trial_offer/expire_trial_offers:
         // drop the primary record, then scrub the enumeration index, so no
@@ -3841,7 +3875,10 @@ mod tests {
         env.mock_all_auths();
         let admin = Address::generate(&env);
         let xlm = create_token(&env, &admin);
-        let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+        let contract_id = env.register(
+            ScoutAccessContract,
+            (admin.clone(), xlm.clone(), default_fees()),
+        );
         let client = ScoutAccessContractClient::new(&env, &contract_id);
         (env, admin, xlm, contract_id, client)
     }
@@ -3916,7 +3953,10 @@ mod tests {
         assert_eq!(client.get_trial_count(&7u64), 21);
         for i in 1..=20u32 {
             assert_eq!(all.get(i - 1).unwrap().logged_at, 1_000 + u64::from(i));
-            assert_eq!(all.get(i - 1).unwrap().scout, player.get(i - 1).unwrap().scout);
+            assert_eq!(
+                all.get(i - 1).unwrap().scout,
+                player.get(i - 1).unwrap().scout
+            );
         }
         assert_eq!(player.get(20).unwrap().logged_at, 1_021);
     }
@@ -3928,9 +3968,7 @@ mod tests {
         mint_token(&env, &token, &admin, &scout, 100_000_000);
         client.subscribe(&scout, &SubscriptionTier::Elite);
         client.pay_to_contact(&scout, &1u64);
-        let details = String::from_str(
-            &env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB",
-        );
+        let details = String::from_str(&env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB");
         let timestamp = env.ledger().timestamp();
         assert_eq!(client.log_trial_offer(&scout, &1u64, &details), 1);
         // `events().all()` only covers the latest invocation, so check the
@@ -4042,15 +4080,24 @@ mod tests {
         let admin = Address::generate(&env);
         let xlm = create_token(&env, &admin);
 
-        let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+        let contract_id = env.register(
+            ScoutAccessContract,
+            (admin.clone(), xlm.clone(), default_fees()),
+        );
         let client = ScoutAccessContractClient::new(&env, &contract_id);
 
         assert_eq!(
             env.events().all().filter_by_contract(&contract_id),
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::ContractInitialized { admin: admin.clone() }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::ContractInitialized {
+                    admin: admin.clone(),
+                };
+                (
+                    contract_id.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
         );
 
         let res = client.try_initialize(&admin, &xlm, &default_fees());
@@ -4162,8 +4209,30 @@ mod tests {
             events,
             soroban_sdk::vec![
                 &env,
-                { let e = crate::events::FeeConfigUpdated { admin: _admin.clone(), old_config: old_config.clone(), new_config: new_fees.clone() }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
-                { let e = crate::events::FeeConfigDelayBypassed { admin: _admin.clone(), old_config: old_config, new_config: new_fees.clone() }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
+                {
+                    let e = crate::events::FeeConfigUpdated {
+                        admin: _admin.clone(),
+                        old_config: old_config.clone(),
+                        new_config: new_fees.clone(),
+                    };
+                    (
+                        contract_id.clone(),
+                        soroban_sdk::events::Event::topics(&e, &env),
+                        soroban_sdk::events::Event::data(&e, &env),
+                    )
+                },
+                {
+                    let e = crate::events::FeeConfigDelayBypassed {
+                        admin: _admin.clone(),
+                        old_config,
+                        new_config: new_fees.clone(),
+                    };
+                    (
+                        contract_id.clone(),
+                        soroban_sdk::events::Event::topics(&e, &env),
+                        soroban_sdk::events::Event::data(&e, &env),
+                    )
+                }
             ]
         );
 
@@ -4228,8 +4297,31 @@ mod tests {
             emitted,
             soroban_sdk::vec![
                 &env,
-                { let e = crate::events::SubscriptionCreated { scout: scout.clone(), tier: SubscriptionTier::Basic, subscribed_at: sub.subscribed_at, expires_at: sub.expires_at }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
-                { let e = crate::events::ScoutSubscribed { scout: scout.clone(), tier: SubscriptionTier::Basic, fee_paid: default_fees().basic_sub_stroops }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
+                {
+                    let e = crate::events::SubscriptionCreated {
+                        scout: scout.clone(),
+                        tier: SubscriptionTier::Basic,
+                        subscribed_at: sub.subscribed_at,
+                        expires_at: sub.expires_at,
+                    };
+                    (
+                        contract_id.clone(),
+                        soroban_sdk::events::Event::topics(&e, &env),
+                        soroban_sdk::events::Event::data(&e, &env),
+                    )
+                },
+                {
+                    let e = crate::events::ScoutSubscribed {
+                        scout: scout.clone(),
+                        tier: SubscriptionTier::Basic,
+                        fee_paid: default_fees().basic_sub_stroops,
+                    };
+                    (
+                        contract_id.clone(),
+                        soroban_sdk::events::Event::topics(&e, &env),
+                        soroban_sdk::events::Event::data(&e, &env),
+                    )
+                }
             ]
         );
     }
@@ -4250,8 +4342,31 @@ mod tests {
             emitted,
             soroban_sdk::vec![
                 &env,
-                { let e = crate::events::SubscriptionCreated { scout: scout.clone(), tier: SubscriptionTier::Pro, subscribed_at: sub.subscribed_at, expires_at: sub.expires_at }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
-                { let e = crate::events::ScoutSubscribed { scout: scout.clone(), tier: SubscriptionTier::Pro, fee_paid: default_fees().pro_sub_stroops }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
+                {
+                    let e = crate::events::SubscriptionCreated {
+                        scout: scout.clone(),
+                        tier: SubscriptionTier::Pro,
+                        subscribed_at: sub.subscribed_at,
+                        expires_at: sub.expires_at,
+                    };
+                    (
+                        contract_id.clone(),
+                        soroban_sdk::events::Event::topics(&e, &env),
+                        soroban_sdk::events::Event::data(&e, &env),
+                    )
+                },
+                {
+                    let e = crate::events::ScoutSubscribed {
+                        scout: scout.clone(),
+                        tier: SubscriptionTier::Pro,
+                        fee_paid: default_fees().pro_sub_stroops,
+                    };
+                    (
+                        contract_id.clone(),
+                        soroban_sdk::events::Event::topics(&e, &env),
+                        soroban_sdk::events::Event::data(&e, &env),
+                    )
+                }
             ]
         );
     }
@@ -4332,8 +4447,30 @@ mod tests {
             env.events().all().filter_by_contract(&contract_id),
             soroban_sdk::vec![
                 &env,
-                { let e = crate::events::EvidenceAccessGranted { scout: scout.clone(), player_id: 42u64, tier: SubscriptionTier::Elite }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
-                { let e = crate::events::PlayerContacted { scout: scout.clone(), player_id: 42u64, fee_paid: default_fees().contact_fee_stroops }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
+                {
+                    let e = crate::events::EvidenceAccessGranted {
+                        scout: scout.clone(),
+                        player_id: 42u64,
+                        tier: SubscriptionTier::Elite,
+                    };
+                    (
+                        contract_id.clone(),
+                        soroban_sdk::events::Event::topics(&e, &env),
+                        soroban_sdk::events::Event::data(&e, &env),
+                    )
+                },
+                {
+                    let e = crate::events::PlayerContacted {
+                        scout: scout.clone(),
+                        player_id: 42u64,
+                        fee_paid: default_fees().contact_fee_stroops,
+                    };
+                    (
+                        contract_id.clone(),
+                        soroban_sdk::events::Event::topics(&e, &env),
+                        soroban_sdk::events::Event::data(&e, &env),
+                    )
+                }
             ]
         );
     }
@@ -4435,7 +4572,10 @@ mod tests {
             trial_offer_escrow_stroops: 500_000,
             trial_offer_expiry_secs: 3_600,
         };
-        let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), fees.clone(),));
+        let contract_id = env.register(
+            ScoutAccessContract,
+            (admin.clone(), xlm.clone(), fees.clone()),
+        );
         let client = ScoutAccessContractClient::new(&env, &contract_id);
         client.set_registration_contract(&env.register(RegistrationStub, ()));
         wire_progress_stub(&env, &client);
@@ -4471,7 +4611,10 @@ mod tests {
             trial_offer_escrow_stroops: 500_000,
             trial_offer_expiry_secs: 3_600,
         };
-        let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), fees.clone(),));
+        let contract_id = env.register(
+            ScoutAccessContract,
+            (admin.clone(), xlm.clone(), fees.clone()),
+        );
         let client = ScoutAccessContractClient::new(&env, &contract_id);
         client.set_registration_contract(&env.register(RegistrationStub, ()));
 
@@ -4504,7 +4647,10 @@ mod tests {
             trial_offer_escrow_stroops: 500_000,
             trial_offer_expiry_secs: 3_600,
         };
-        let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), fees.clone(),));
+        let contract_id = env.register(
+            ScoutAccessContract,
+            (admin.clone(), xlm.clone(), fees.clone()),
+        );
         let client = ScoutAccessContractClient::new(&env, &contract_id);
         client.set_registration_contract(&env.register(RegistrationStub, ()));
         wire_progress_stub(&env, &client);
@@ -4839,10 +4985,17 @@ mod tests {
         client.propose_admin(&stale_admin);
         assert_eq!(
             env.events().all(),
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::AdminTransferProposed { old_admin: old_admin.clone(), new_admin: stale_admin.clone() }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::AdminTransferProposed {
+                    old_admin: old_admin.clone(),
+                    new_admin: stale_admin.clone(),
+                };
+                (
+                    contract_id.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            },]
         );
 
         client.pause_contract();
@@ -4876,10 +5029,17 @@ mod tests {
         client.accept_admin();
         assert_eq!(
             env.events().all(),
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::AdminTransferred { old_admin: old_admin.clone(), new_admin: new_admin.clone() }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::AdminTransferred {
+                    old_admin: old_admin.clone(),
+                    new_admin: new_admin.clone(),
+                };
+                (
+                    contract_id.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            },]
         );
         env.as_contract(&contract_id, || {
             assert_eq!(
@@ -4957,20 +5117,32 @@ mod tests {
         let events = env.events().all();
         assert_eq!(
             events,
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::ContractPaused { admin: admin.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::ContractPaused {
+                    admin: admin.clone(),
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
         );
 
         client.unpause_contract();
         let events = env.events().all();
         assert_eq!(
             events,
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::ContractUnpaused { admin: admin.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::ContractUnpaused {
+                    admin: admin.clone(),
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
         );
     }
 
@@ -5537,10 +5709,16 @@ mod tests {
         let events = env.events().all();
         assert_eq!(
             events.filter_by_contract(&contract_id),
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::ContractPaused { admin: admin.clone() }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::ContractPaused {
+                    admin: admin.clone(),
+                };
+                (
+                    contract_id.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
         );
 
         // Verify contract is actually paused
@@ -5639,8 +5817,30 @@ mod tests {
             env.events().all().filter_by_contract(&contract_id),
             soroban_sdk::vec![
                 &env,
-                { let e = crate::events::ProgressContractUpdated { admin: _admin.clone(), progress_contract: progress_addr.clone() }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
-                { let e = crate::events::WiringUpdated { admin: _admin.clone(), link: Symbol::new(&env, "progress_contract"), new_address: progress_addr.clone(), new_epoch: 1u32 }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
+                {
+                    let e = crate::events::ProgressContractUpdated {
+                        admin: _admin.clone(),
+                        progress_contract: progress_addr.clone(),
+                    };
+                    (
+                        contract_id.clone(),
+                        soroban_sdk::events::Event::topics(&e, &env),
+                        soroban_sdk::events::Event::data(&e, &env),
+                    )
+                },
+                {
+                    let e = crate::events::WiringUpdated {
+                        admin: _admin.clone(),
+                        link: Symbol::new(&env, "progress_contract"),
+                        new_address: progress_addr.clone(),
+                        new_epoch: 1u32,
+                    };
+                    (
+                        contract_id.clone(),
+                        soroban_sdk::events::Event::topics(&e, &env),
+                        soroban_sdk::events::Event::data(&e, &env),
+                    )
+                }
             ]
         );
     }
@@ -5729,8 +5929,30 @@ mod tests {
             env.events().all().filter_by_contract(&contract_id),
             soroban_sdk::vec![
                 &env,
-                { let e = crate::events::RegistrationContractUpdated { admin: _admin.clone(), registration_contract: reg_addr.clone() }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
-                { let e = crate::events::WiringUpdated { admin: _admin.clone(), link: Symbol::new(&env, "registration_contract"), new_address: reg_addr, new_epoch: 1u32 }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
+                {
+                    let e = crate::events::RegistrationContractUpdated {
+                        admin: _admin.clone(),
+                        registration_contract: reg_addr.clone(),
+                    };
+                    (
+                        contract_id.clone(),
+                        soroban_sdk::events::Event::topics(&e, &env),
+                        soroban_sdk::events::Event::data(&e, &env),
+                    )
+                },
+                {
+                    let e = crate::events::WiringUpdated {
+                        admin: _admin.clone(),
+                        link: Symbol::new(&env, "registration_contract"),
+                        new_address: reg_addr,
+                        new_epoch: 1u32,
+                    };
+                    (
+                        contract_id.clone(),
+                        soroban_sdk::events::Event::topics(&e, &env),
+                        soroban_sdk::events::Event::data(&e, &env),
+                    )
+                }
             ]
         );
     }
@@ -5755,7 +5977,9 @@ mod tests {
         let ver_admin = Address::generate(&env);
         let ver_id = env.register(VerificationContract, (ver_admin.clone(),));
         let ver_client = VerificationContractClient::new(&env, &ver_id);
-        ver_client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
+        ver_client.set_registration_contract(
+            &scoutchain_shared_types::testutils::active_registry_stub(&env),
+        );
 
         // --- deploy progress contract ---
         let progress_admin = Address::generate(&env);
@@ -5767,7 +5991,10 @@ mod tests {
         // --- deploy scout_access contract ---
         let admin = Address::generate(&env);
         let xlm = create_token(&env, &admin);
-        let scout_access_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+        let scout_access_id = env.register(
+            ScoutAccessContract,
+            (admin.clone(), xlm.clone(), default_fees()),
+        );
         let client = ScoutAccessContractClient::new(&env, &scout_access_id);
         client.set_registration_contract(&env.register(RegistrationStub, ()));
 
@@ -5873,7 +6100,9 @@ mod tests {
         let ver_admin = Address::generate(&env);
         let ver_id = env.register(VerificationContract, (ver_admin.clone(),));
         let ver_client = VerificationContractClient::new(&env, &ver_id);
-        ver_client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
+        ver_client.set_registration_contract(
+            &scoutchain_shared_types::testutils::active_registry_stub(&env),
+        );
 
         // --- deploy progress contract ---
         let progress_admin = Address::generate(&env);
@@ -5885,7 +6114,10 @@ mod tests {
         // --- deploy scout_access contract ---
         let admin = Address::generate(&env);
         let xlm = create_token(&env, &admin);
-        let scout_access_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+        let scout_access_id = env.register(
+            ScoutAccessContract,
+            (admin.clone(), xlm.clone(), default_fees()),
+        );
         let client = ScoutAccessContractClient::new(&env, &scout_access_id);
         client.set_registration_contract(&env.register(RegistrationStub, ()));
 
@@ -6126,8 +6358,31 @@ mod tests {
             emitted,
             soroban_sdk::vec![
                 &env,
-                { let e = crate::events::SubscriptionCreated { scout: scout.clone(), tier: SubscriptionTier::Elite, subscribed_at: sub.subscribed_at, expires_at: sub.expires_at }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
-                { let e = crate::events::ScoutSubscribed { scout: scout.clone(), tier: SubscriptionTier::Elite, fee_paid: default_fees().elite_sub_stroops }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
+                {
+                    let e = crate::events::SubscriptionCreated {
+                        scout: scout.clone(),
+                        tier: SubscriptionTier::Elite,
+                        subscribed_at: sub.subscribed_at,
+                        expires_at: sub.expires_at,
+                    };
+                    (
+                        contract_id.clone(),
+                        soroban_sdk::events::Event::topics(&e, &env),
+                        soroban_sdk::events::Event::data(&e, &env),
+                    )
+                },
+                {
+                    let e = crate::events::ScoutSubscribed {
+                        scout: scout.clone(),
+                        tier: SubscriptionTier::Elite,
+                        fee_paid: default_fees().elite_sub_stroops,
+                    };
+                    (
+                        contract_id.clone(),
+                        soroban_sdk::events::Event::topics(&e, &env),
+                        soroban_sdk::events::Event::data(&e, &env),
+                    )
+                }
             ]
         );
         // Event includes scout, tier, and expiry (acceptance criteria #462)
@@ -6162,8 +6417,31 @@ mod tests {
             emitted,
             soroban_sdk::vec![
                 &env,
-                { let e = crate::events::SubscriptionRenewed { scout: scout.clone(), tier: SubscriptionTier::Basic, subscribed_at: sub.subscribed_at, expires_at: sub.expires_at }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
-                { let e = crate::events::ScoutSubscribed { scout: scout.clone(), tier: SubscriptionTier::Basic, fee_paid: default_fees().basic_sub_stroops }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
+                {
+                    let e = crate::events::SubscriptionRenewed {
+                        scout: scout.clone(),
+                        tier: SubscriptionTier::Basic,
+                        subscribed_at: sub.subscribed_at,
+                        expires_at: sub.expires_at,
+                    };
+                    (
+                        contract_id.clone(),
+                        soroban_sdk::events::Event::topics(&e, &env),
+                        soroban_sdk::events::Event::data(&e, &env),
+                    )
+                },
+                {
+                    let e = crate::events::ScoutSubscribed {
+                        scout: scout.clone(),
+                        tier: SubscriptionTier::Basic,
+                        fee_paid: default_fees().basic_sub_stroops,
+                    };
+                    (
+                        contract_id.clone(),
+                        soroban_sdk::events::Event::topics(&e, &env),
+                        soroban_sdk::events::Event::data(&e, &env),
+                    )
+                }
             ]
         );
     }
@@ -6186,8 +6464,31 @@ mod tests {
             emitted,
             soroban_sdk::vec![
                 &env,
-                { let e = crate::events::SubscriptionCreated { scout: scout.clone(), tier: SubscriptionTier::Pro, subscribed_at: sub.subscribed_at, expires_at: sub.expires_at }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
-                { let e = crate::events::ScoutSubscribed { scout: scout.clone(), tier: SubscriptionTier::Pro, fee_paid: default_fees().pro_sub_stroops }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
+                {
+                    let e = crate::events::SubscriptionCreated {
+                        scout: scout.clone(),
+                        tier: SubscriptionTier::Pro,
+                        subscribed_at: sub.subscribed_at,
+                        expires_at: sub.expires_at,
+                    };
+                    (
+                        contract_id.clone(),
+                        soroban_sdk::events::Event::topics(&e, &env),
+                        soroban_sdk::events::Event::data(&e, &env),
+                    )
+                },
+                {
+                    let e = crate::events::ScoutSubscribed {
+                        scout: scout.clone(),
+                        tier: SubscriptionTier::Pro,
+                        fee_paid: default_fees().pro_sub_stroops,
+                    };
+                    (
+                        contract_id.clone(),
+                        soroban_sdk::events::Event::topics(&e, &env),
+                        soroban_sdk::events::Event::data(&e, &env),
+                    )
+                }
             ]
         );
     }
@@ -6583,7 +6884,10 @@ mod tests {
             pro_contact_limit: 1,
             ..default_fees()
         };
-        let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), fees.clone(),));
+        let contract_id = env.register(
+            ScoutAccessContract,
+            (admin.clone(), xlm.clone(), fees.clone()),
+        );
         let client = ScoutAccessContractClient::new(&env, &contract_id);
         client.set_registration_contract(&env.register(RegistrationStub, ()));
 
@@ -7005,10 +7309,17 @@ mod tests {
         let events = env.events().all();
         assert_eq!(
             events,
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::AutoRenewSet { scout: scout.clone(), enabled: true }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::AutoRenewSet {
+                    scout: scout.clone(),
+                    enabled: true,
+                };
+                (
+                    contract_id.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            },]
         );
         assert!(client.get_auto_renew(&scout));
 
@@ -7214,13 +7525,19 @@ mod tests {
         env.as_contract(&client.address, || {
             assert!(!env.storage().persistent().has(&DataKey::PendingFeeConfig));
         });
-        assert_eq!(client.try_activate_fee_config(), Err(Ok(ScoutAccessError::NoPendingFeeConfig)));
+        assert_eq!(
+            client.try_activate_fee_config(),
+            Err(Ok(ScoutAccessError::NoPendingFeeConfig))
+        );
     }
 
     #[test]
     fn cancel_fee_config_without_proposal_returns_no_pending() {
         let (_env, _admin, _xlm, _contract_id, client) = setup();
-        assert_eq!(client.try_cancel_fee_config_proposal(), Err(Ok(ScoutAccessError::NoPendingFeeConfig)));
+        assert_eq!(
+            client.try_cancel_fee_config_proposal(),
+            Err(Ok(ScoutAccessError::NoPendingFeeConfig))
+        );
     }
 
     #[test]
@@ -7240,11 +7557,14 @@ mod tests {
         client.cancel_fee_config_proposal();
         assert_eq!(
             env.events().all().filter_by_contract(&contract_id),
-            soroban_sdk::vec![&env, (
-                contract_id,
-                (Symbol::new(&env, "fee_config_proposal_cancelled"), admin).into_val(&env),
-                ().into_val(&env),
-            )]
+            soroban_sdk::vec![
+                &env,
+                (
+                    contract_id,
+                    (Symbol::new(&env, "fee_config_proposal_cancelled"), admin).into_val(&env),
+                    ().into_val(&env),
+                )
+            ]
         );
     }
 
@@ -7265,9 +7585,21 @@ mod tests {
         let original = client.get_fee_config();
         client.propose_fee_config(&increased_fee_proposal());
         client.cancel_fee_config_proposal();
-        assert_eq!(client.get_fee_config().contact_fee_stroops, original.contact_fee_stroops);
-        assert_eq!(client.get_fee_config().basic_sub_stroops, original.basic_sub_stroops);
-        assert_eq!(client.get_fee_config().pro_sub_stroops, original.pro_sub_stroops);
-        assert_eq!(client.get_fee_config().elite_sub_stroops, original.elite_sub_stroops);
+        assert_eq!(
+            client.get_fee_config().contact_fee_stroops,
+            original.contact_fee_stroops
+        );
+        assert_eq!(
+            client.get_fee_config().basic_sub_stroops,
+            original.basic_sub_stroops
+        );
+        assert_eq!(
+            client.get_fee_config().pro_sub_stroops,
+            original.pro_sub_stroops
+        );
+        assert_eq!(
+            client.get_fee_config().elite_sub_stroops,
+            original.elite_sub_stroops
+        );
     }
 }

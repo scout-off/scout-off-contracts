@@ -72,7 +72,10 @@ fn test_no_history_returns_empty() {
 fn test_future_since_timestamp_returns_empty() {
     let h = setup();
     record_n(&h, 5);
-    assert_eq!(h.client.get_history_since(&h.player_id, &10_000, &10).len(), 0);
+    assert_eq!(
+        h.client.get_history_since(&h.player_id, &10_000, &10).len(),
+        0
+    );
 }
 
 #[test]

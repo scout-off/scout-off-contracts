@@ -53,7 +53,9 @@ fn setup() -> (Env, VerificationContractClient<'static>) {
     let admin = Address::generate(&env);
     let id = env.register(VerificationContract, (admin.clone(),));
     let client = VerificationContractClient::new(&env, &id);
-    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
+    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(
+        &env,
+    ));
     (env, client)
 }
 
@@ -173,7 +175,9 @@ fn cost_global_milestone_index_write_is_flat() {
         let admin = Address::generate(&env);
         let id = env.register(VerificationContract, (admin.clone(),));
         let client = VerificationContractClient::new(&env, &id);
-        client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
+        client.set_registration_contract(
+            &scoutchain_shared_types::testutils::active_registry_stub(&env),
+        );
 
         // Build the validator pool and fill the ring buffer.
         let pool = build_pool(&env, &client);

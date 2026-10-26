@@ -8,7 +8,7 @@ use scoutchain_verification::{
     Milestone, MilestoneDispute, VerificationContract, VerificationContractClient,
     VerificationError,
 };
-use soroban_sdk::{testutils::Address as _, Address, Env, String, Symbol};
+use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
 const VALID_CID_1: &str = "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB";
 const VALID_CID_2: &str = "QmT5NvUtoM5nWFfrQdVrFtvgfKFmG7Bze9R7WB7Wz2rFQR";

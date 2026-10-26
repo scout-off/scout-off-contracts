@@ -6,7 +6,7 @@
 use scoutchain_progress::{ProgressContract, ProgressContractClient, ProgressEntry, ProgressError};
 use scoutchain_shared_types::testutils::count_events;
 use scoutchain_shared_types::ProgressLevel;
-use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, Symbol};
+use soroban_sdk::{testutils::Address as _, Address, BytesN, Env};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 

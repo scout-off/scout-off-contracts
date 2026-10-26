@@ -56,7 +56,7 @@ fn setup() -> (
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    let sa_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), fees(),));
+    let sa_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), fees()));
     let scout_access = ScoutAccessContractClient::new(&env, &sa_id);
     common::wire_registration(&env, Some(&scout_access), None);
 
@@ -124,9 +124,14 @@ fn test_confirm_trial_offer_idempotency_nonce_prevents_replay() {
     // and whitelist scout_access as the secondary advance_level caller. The
     // milestone_ref (trial index 1) must validate, so also wire a
     // verification contract with one approved milestone.
-    let ver_id = env.register(scoutchain_verification::VerificationContract, (admin.clone(),));
+    let ver_id = env.register(
+        scoutchain_verification::VerificationContract,
+        (admin.clone(),),
+    );
     let verification = scoutchain_verification::VerificationContractClient::new(&env, &ver_id);
-    verification.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
+    verification.set_registration_contract(
+        &scoutchain_shared_types::testutils::active_registry_stub(&env),
+    );
 
     common::wire_registration(&env, None, Some(&progress));
     progress.set_verification_contract(&ver_id);

@@ -10,7 +10,9 @@ fn test_all_contracts_version_consistency() {
 
     // Deploy all four contracts
     let admin = Address::generate(&env);
-    let xlm = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let xlm = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     let reg_id = env.register(RegistrationContract, (admin.clone(),));
     let ver_id = env.register(VerificationContract, (admin.clone(),));
     let prog_id = env.register(ProgressContract, (admin.clone(),));

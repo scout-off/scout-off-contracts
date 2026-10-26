@@ -8,7 +8,6 @@
 
 use scoutchain_scout_access::{FeeConfig, ScoutAccessContract, ScoutAccessContractClient};
 use soroban_sdk::testutils::{Address as _, MockAuth, MockAuthInvoke};
-use soroban_sdk::IntoVal;
 use soroban_sdk::{vec, Address, Env, Val, Vec};
 
 struct Harness {
@@ -50,7 +49,10 @@ fn setup() -> Harness {
         trial_offer_expiry_secs: 3_600,
     };
 
-    let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), fees.clone(),));
+    let contract_id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), fees.clone()),
+    );
     let client = ScoutAccessContractClient::new(&env, &contract_id);
 
     Harness {

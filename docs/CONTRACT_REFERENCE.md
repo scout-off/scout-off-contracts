@@ -5629,6 +5629,7 @@ pub struct TrialOffer {
 | 18 | `ScoutRecordEvicted` | `restore_scout_record` targeted a fully evicted, unrecoverable scout entry |
 | 19 | `InvalidCooldown` | Cooldown value exceeds the maximum allowed (7 days) |
 | 20 | `ScoutCapReached` | `register_scout` / `admin_seed_scout` would exceed `MAX_SCOUTS` (10,000) live scouts — a hard stop (#1641) |
+| 21 | `InvalidPeerContract` | Wiring target failed the `contract_kind`/`version` handshake (#1610). |
 
 ### `VerificationError` (verification contract)
 
@@ -5695,6 +5696,9 @@ pub struct TrialOffer {
 | 59 | `InvalidRegionQuorum` | `set_min_region_quorum` value above `MAX_VALIDATORS` (#1632) |
 | 60 | `InvalidDiversityConfig` | `set_diversity_config` affiliations outside `[1, MAX_VALIDATORS]` or `starting_milestone_index == 0` (#1632) |
 | 64 | `BatchTooLarge` | `batch_revoke_validators` was called with more than 10 wallets |
+| 61 | `InvalidCooldown` | Cooldown value exceeds the maximum allowed (7 days). |
+| 62 | `RegistrationNotConfigured` | The registration contract is not wired (`set_registration_contract`); milestone commits fail closed rather than skipping the player check. |
+| 63 | `InvalidPeerContract` | Wiring target failed the `contract_kind`/`version` handshake (#1610). |
 
 ### `ProgressError` (progress contract)
 
@@ -5723,6 +5727,11 @@ pub struct TrialOffer {
 | 21 | `MigrationWindowSealed` | `open_migration_window` was called after the window was permanently closed by `close_migration_window` |
 | 22 | `SchemaVersionTooNew` | `migrate` target below the stored version |
 | 23 | `UnknownSchemaTarget` | `migrate` target above the compiled layout version |
+| 24 | `SeedPlayerMismatch` | `admin_seed_history` entry's `player_id` differs from the target player. |
+| 25 | `SeedLevelDiscontinuity` | `admin_seed_history` entry's `old_level` does not continue the chain. |
+| 26 | `SeedTimestampRegression` | `admin_seed_history` entry's timestamp or ledger precedes the previous entry. |
+| 27 | `InvalidPeerContract` | Wiring target failed the `contract_kind`/`version` handshake (#1610). |
+| 28 | `HistoryRootMissing` | `verify_and_seal_root` could not find a stored Merkle root for the player during an idempotent seeding replay. The player exists but the expected root is absent, so this is not a `PlayerNotFound` condition. |
 
 ### `ScoutAccessError` (scout_access contract)
 
@@ -5776,10 +5785,17 @@ pub struct TrialOffer {
 | 45 | `MigrationWindowSealed` | `open_migration_window` was called after the window was permanently closed by `close_migration_window` |
 | 46 | `ScoutNotRegistered` | Registration is wired but has no profile for the scout wallet (never registered, or erased via `deregister_scout`) — fails closed (#1641) |
 | 47 | `TrialOffersDisabled` | `log_trial_offer` was called while `trial_offer_escrow_stroops` is 0 (trial offers disabled) |
+| 48 | `UnsupportedTokenDecimals` | Payment token `decimals()` is not 7; fee bounds assume XLM stroops |
 | 54 | `GrantNotExpired` | `renew_evidence_access` called while the grant is still active |
 | 55 | `GrantNotRevoked` | `reinstate_evidence_access` called on a grant that is not revoked |
 | 56 | `GrantAdminRevoked` | `reinstate_evidence_access` cannot undo an admin takedown |
 | 57 | `ContactNotFound` | `renew_evidence_access` requires an existing `ContactRecord` |
+| 49 | `InvalidPeerContract` | Wiring target failed the `contract_kind`/`version` handshake (#1610). |
+| 50 | `NotPlayerOwner` | `revoke_evidence_access` caller's wallet does not own the `player_id` passed to the function (ownership mismatch). Distinct from `RegistrationContractNotSet` (44), which signals an unwired registration contract (issue #1675). |
+| 51 | `ProgressContractNotSet` | Progress contract is not wired; `confirm_trial_offer` requires it to advance the player's level. This is a deployment-wiring problem, not invalid caller input (issue #1676). |
+| 52 | `PlayerDeactivated` | The target player has been deactivated by the registration admin and is no longer discoverable; contacts and trial offers are rejected without charging the scout. |
+| 53 | `PlayerNotFound` | The target player is not registered (unknown `player_id`). Closes #301. |
+| 58 | `InvalidTrialIndex` | `admin_seed_trial_offer` was called with a `trial_index` that is not exactly `TrialCounter + 1` for the target player. Mirrors progress's `InvalidHistoryIndex` for the same contiguity violation. |
 
 ---
 
@@ -6040,8 +6056,51 @@ benefit) and the new subscription simply overwrites the old one. The
 `refund_subscription` admin function already handles the accidental-double-charge
 recovery path.
 
-# END OF DOCS CONTRACT_REFERENCE.md — all sections, TOC entries, and Design Discussion items are complete and resolved.
-
 ### Milestone description minimum (#1687)
 
 `MIN_DESCRIPTION_LEN = 3` bytes and `MAX_DESCRIPTION_LEN = 256` bytes apply to `approve_milestone`, `attest_milestone`, and `submit_attested_milestone`. Out-of-range values return `InvalidInput`. Validator specialization lists must contain unique tags (at most 10, each 1–64 bytes).
+
+---
+
+## Lifecycle, wiring handshake and erasure entrypoints
+
+#### `__constructor(admin)` — registration, verification, progress
+
+Runs once, atomically with deployment (#1369), and performs the one-time
+setup that `initialize` used to do. `initialize` is kept for contracts deployed
+before constructors and returns `AlreadyInitialized` on any contract deployed
+with one.
+
+#### `__constructor(admin, xlm_token, fee_config) -> Result<(), ScoutAccessError>` — scout_access
+
+As above, and additionally probes `xlm_token.decimals()` (must be 7) and
+validates `fee_config`. A rejected configuration makes the deployment fail, so
+a misconfigured contract can never exist.
+
+#### `contract_kind() -> Symbol` — all contracts
+
+Returns `registration`, `verification`, `progress` or `scout_access`. Every
+`set_*_contract` / `update_*_contract` setter calls `contract_kind()` and
+`version()` on the peer (`verify_peer`) and rejects non-matching addresses
+with `InvalidPeerContract` (#1610).
+
+#### `purge_player_data(player_id, cursor) -> Result<(u32, bool), Error>` — verification, progress, scout_access
+
+Admin-only, paged GDPR erasure of a player's current-state ledger entries.
+Call with `cursor = 0`, then pass the returned cursor back while the returned
+flag is `true`. scout_access refuses (`TrialOfferNotFound`) while any of the
+player's trial escrows is still outstanding.
+
+#### `unverify_scout(scout_id, reason) -> Result<(), ScoutChainError>` — registration
+
+Admin-only revocation of a scout's verification (#1608). Sets
+`verified = false`, records `revoked_at` and `revoked_reason` and emits
+`scout_unverified`.
+
+#### `is_scout_verified(wallet) -> bool` — registration
+
+Whether the scout registered to `wallet` is currently verified; `false` for
+unknown wallets. scout_access re-checks it for Pro/Elite contact, trial offers
+and renewal.
+
+# END OF DOCS CONTRACT_REFERENCE.md — all sections, TOC entries, and Design Discussion items are complete and resolved.

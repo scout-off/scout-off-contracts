@@ -174,9 +174,15 @@ fn test_progress_upgrade_preserves_state() {
     // --- Re-wire the remaining two instance-storage links (plain overwrites for
     // progress — no guard flags). These must succeed. ---
     h.progress
-        .set_registration_contract(&scoutchain_shared_types::testutils::peer_stub(&h.env, "registration"));
+        .set_registration_contract(&scoutchain_shared_types::testutils::peer_stub(
+            &h.env,
+            "registration",
+        ));
     h.progress
-        .set_scout_access_contract(&scoutchain_shared_types::testutils::peer_stub(&h.env, "scout_access"));
+        .set_scout_access_contract(&scoutchain_shared_types::testutils::peer_stub(
+            &h.env,
+            "scout_access",
+        ));
 }
 
 /// Deliberately-broken upgrade — proves the harness is not a no-op.

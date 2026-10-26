@@ -16,7 +16,7 @@ use scoutchain_scout_access::{
 use soroban_sdk::{
     testutils::{Address as _, Events, Ledger, MockAuth, MockAuthInvoke},
     token::StellarAssetClient,
-    Address, Env, IntoVal, Symbol,
+    Address, Env, IntoVal,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -62,7 +62,10 @@ fn setup() -> Harness {
     token_client.mint(&scout, &1_000_000_000);
 
     // Deploy and initialize scout_access
-    let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+    let contract_id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
     let client = ScoutAccessContractClient::new(&env, &contract_id);
     common::wire_registration(&env, Some(&client), None);
     common::wire_progress_level_stub(&env, &client);
@@ -149,7 +152,10 @@ fn test_propose_fee_config_requires_admin() {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+    let contract_id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
     let client = ScoutAccessContractClient::new(&env, &contract_id);
 
     // Propose should reject due to missing admin auth.
@@ -244,7 +250,10 @@ fn test_activate_fee_config_requires_admin() {
     new_config.elite_sub_stroops = 10_000_000;
 
     // Mock ONLY the admin's auth for the calls that must succeed.
-    let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+    let contract_id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
     let client = ScoutAccessContractClient::new(&env, &contract_id);
 
     env.mock_auths(&[MockAuth {
@@ -414,8 +423,30 @@ fn test_update_fee_config_emits_delay_bypassed_event() {
     let events = h.env.events().all();
     let expected = soroban_sdk::vec![
         &h.env,
-        { let e = scoutchain_scout_access::events::FeeConfigUpdated { admin: h.admin.clone(), old_config: old_config.clone(), new_config: new_config.clone() }; (h.contract_id.clone(), soroban_sdk::events::Event::topics(&e, &h.env), soroban_sdk::events::Event::data(&e, &h.env)) },
-        { let e = scoutchain_scout_access::events::FeeConfigDelayBypassed { admin: h.admin.clone(), old_config: old_config.clone(), new_config: new_config.clone() }; (h.contract_id.clone(), soroban_sdk::events::Event::topics(&e, &h.env), soroban_sdk::events::Event::data(&e, &h.env)) },
+        {
+            let e = scoutchain_scout_access::events::FeeConfigUpdated {
+                admin: h.admin.clone(),
+                old_config: old_config.clone(),
+                new_config: new_config.clone(),
+            };
+            (
+                h.contract_id.clone(),
+                soroban_sdk::events::Event::topics(&e, &h.env),
+                soroban_sdk::events::Event::data(&e, &h.env),
+            )
+        },
+        {
+            let e = scoutchain_scout_access::events::FeeConfigDelayBypassed {
+                admin: h.admin.clone(),
+                old_config: old_config.clone(),
+                new_config: new_config.clone(),
+            };
+            (
+                h.contract_id.clone(),
+                soroban_sdk::events::Event::topics(&e, &h.env),
+                soroban_sdk::events::Event::data(&e, &h.env),
+            )
+        },
     ];
     assert_eq!(
         events, expected,
@@ -448,10 +479,18 @@ fn test_activate_fee_config_does_not_emit_delay_bypassed_event() {
 
     // `events().all()` reflects only the most recent invocation (activate).
     let events = h.env.events().all();
-    let expected = soroban_sdk::vec![
-        &h.env,
-        { let e = scoutchain_scout_access::events::FeeConfigUpdated { admin: h.admin.clone(), old_config: old_config.clone(), new_config: new_config.clone() }; (h.contract_id.clone(), soroban_sdk::events::Event::topics(&e, &h.env), soroban_sdk::events::Event::data(&e, &h.env)) },
-    ];
+    let expected = soroban_sdk::vec![&h.env, {
+        let e = scoutchain_scout_access::events::FeeConfigUpdated {
+            admin: h.admin.clone(),
+            old_config: old_config.clone(),
+            new_config: new_config.clone(),
+        };
+        (
+            h.contract_id.clone(),
+            soroban_sdk::events::Event::topics(&e, &h.env),
+            soroban_sdk::events::Event::data(&e, &h.env),
+        )
+    },];
     assert_eq!(
         events, expected,
         "activate_fee_config must emit fee_config_updated and never fee_config_delay_bypassed"

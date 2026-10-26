@@ -35,7 +35,7 @@ use scoutchain_verification::{VerificationContract, VerificationContractClient};
 use soroban_sdk::{
     testutils::{Address as _, Events, Ledger},
     token::StellarAssetClient,
-    Address, Env, IntoVal, String, TryFromVal,
+    Address, Env, String, TryFromVal,
 };
 
 /// Find the first event whose leading topic symbol equals `name`.
@@ -115,7 +115,9 @@ fn setup() -> Harness {
 
     let ver_id = env.register(VerificationContract, (admin.clone(),));
     let verification = VerificationContractClient::new(&env, &ver_id);
-    verification.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
+    verification.set_registration_contract(
+        &scoutchain_shared_types::testutils::active_registry_stub(&env),
+    );
 
     let progress_id = env.register(ProgressContract, (admin.clone(),));
     let progress = ProgressContractClient::new(&env, &progress_id);
@@ -126,7 +128,10 @@ fn setup() -> Harness {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    let sa_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+    let sa_id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
     let scout_access = ScoutAccessContractClient::new(&env, &sa_id);
     common::wire_registration(&env, Some(&scout_access), None);
 
@@ -245,7 +250,11 @@ fn test_confirm_before_expiry_advances_level_and_emits_event() {
 
     // The data payload must be (player_id, index).
     let expected: soroban_sdk::Val = soroban_sdk::events::Event::data(
-        &scoutchain_scout_access::events::TrialOfferConfirmed { scout: scout.clone(), player_id, index },
+        &scoutchain_scout_access::events::TrialOfferConfirmed {
+            scout: scout.clone(),
+            player_id,
+            index,
+        },
         &h.env,
     );
     let expected_xdr = soroban_sdk::xdr::ScVal::try_from_val(&h.env, &expected).unwrap();
@@ -299,7 +308,11 @@ fn test_confirm_after_expiry_refunds_escrow_and_emits_event() {
         "trial_offer_expired event must be emitted on expiry-refund path"
     );
     let expected: soroban_sdk::Val = soroban_sdk::events::Event::data(
-        &scoutchain_scout_access::events::TrialOfferExpired { scout: scout.clone(), player_id, index },
+        &scoutchain_scout_access::events::TrialOfferExpired {
+            scout: scout.clone(),
+            player_id,
+            index,
+        },
         &h.env,
     );
     let expected_xdr = soroban_sdk::xdr::ScVal::try_from_val(&h.env, &expected).unwrap();
@@ -550,8 +563,7 @@ fn test_admin_refund_trial_escrow_rescues_outstanding_entry() {
     let rescue_to = scout.clone();
     let rescue_before = xlm_balance(&h, &rescue_to);
 
-    h.scout_access
-        .admin_refund_trial_escrow(&player_id, &index);
+    h.scout_access.admin_refund_trial_escrow(&player_id, &index);
     let refund_events = h.env.events().all();
 
     assert_eq!(
@@ -589,9 +601,7 @@ fn test_admin_refund_trial_escrow_rejects_non_outstanding_targets() {
     let h = setup();
 
     // Never logged at all — no TrialEscrow record ever existed.
-    let never_logged = h
-        .scout_access
-        .try_admin_refund_trial_escrow(&999u64, &1u32);
+    let never_logged = h.scout_access.try_admin_refund_trial_escrow(&999u64, &1u32);
     assert!(
         never_logged.is_err(),
         "refunding a never-created escrow must fail"
@@ -609,9 +619,9 @@ fn test_admin_refund_trial_escrow_rejects_non_outstanding_targets() {
         &index_a,
         &None::<String>,
     );
-    let already_confirmed =
-        h.scout_access
-            .try_admin_refund_trial_escrow(&player_confirmed, &index_a);
+    let already_confirmed = h
+        .scout_access
+        .try_admin_refund_trial_escrow(&player_confirmed, &index_a);
     assert!(
         already_confirmed.is_err(),
         "refunding an already-confirmed escrow must fail"
@@ -676,9 +686,16 @@ fn test_get_scout_trial_offers_indices_match_log_trial_offer() {
     let scout = setup_elite_scout(&h, player_id);
 
     let idx = log_offer(&h, &scout, player_id, CID_5, CID_6);
-    let (pid, stored_idx) = h.scout_access.get_scout_trial_offers(&scout).get(0).unwrap();
+    let (pid, stored_idx) = h
+        .scout_access
+        .get_scout_trial_offers(&scout)
+        .get(0)
+        .unwrap();
     assert_eq!((pid, stored_idx), (player_id, idx));
-    assert!(h.scout_access.try_get_trial_offer(&pid, &stored_idx).is_ok());
+    assert!(h
+        .scout_access
+        .try_get_trial_offer(&pid, &stored_idx)
+        .is_ok());
 }
 
 /// Pins current behaviour: confirming an offer does not remove it from the
@@ -733,7 +750,9 @@ fn escrow_ttl(h: &Harness, player_id: u64, index: u32) -> u32 {
         h.env
             .storage()
             .persistent()
-            .get_ttl(&scoutchain_scout_access::DataKey::TrialEscrow(player_id, index))
+            .get_ttl(&scoutchain_scout_access::DataKey::TrialEscrow(
+                player_id, index,
+            ))
     })
 }
 
@@ -755,7 +774,10 @@ fn test_get_trial_escrow_extends_escrow_ttl() {
     h.env.ledger().with_mut(|l| l.sequence_number += jump);
     assert!(escrow_ttl(&h, player_id, index) < TRIAL_TTL_THRESHOLD);
 
-    assert!(h.scout_access.get_trial_escrow(&player_id, &index).is_some());
+    assert!(h
+        .scout_access
+        .get_trial_escrow(&player_id, &index)
+        .is_some());
     assert_eq!(escrow_ttl(&h, player_id, index), TRIAL_TTL_EXTEND_TO);
 
     // Absent key: returns None without trapping on extend_ttl.
@@ -808,11 +830,9 @@ fn test_log_trial_offer_rejected_when_escrow_zero() {
         trial_offer_escrow_stroops: 0,
         ..default_fees()
     });
-    let result = h.scout_access.try_log_trial_offer(
-        &scout,
-        &player_id,
-        &String::from_str(&h.env, CID_3),
-    );
+    let result =
+        h.scout_access
+            .try_log_trial_offer(&scout, &player_id, &String::from_str(&h.env, CID_3));
     assert_eq!(result, Err(Ok(ScoutAccessError::TrialOffersDisabled)));
 
     // Pending offers are unaffected by the switch.

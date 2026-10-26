@@ -22,7 +22,7 @@ use scoutchain_scout_access::{
 use soroban_sdk::{
     testutils::{Address as _, Events, Ledger},
     token::StellarAssetClient,
-    vec, Address, Env, IntoVal, Symbol,
+    vec, Address, Env,
 };
 
 const CONTACT_FEE: i128 = 100_000;
@@ -62,7 +62,10 @@ fn setup() -> Harness {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    let id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+    let id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
     let contract = ScoutAccessContractClient::new(&env, &id);
     common::wire_registration(&env, Some(&contract), None);
     common::wire_progress_level_stub(&env, &contract);
@@ -133,8 +136,30 @@ fn pay_to_contact_emits_evidence_access_granted_event() {
         h.env.events().all().filter_by_contract(&h.contract.address),
         vec![
             &h.env,
-            { let e = scoutchain_scout_access::events::EvidenceAccessGranted { scout: scout.clone(), player_id, tier: SubscriptionTier::Pro }; (h.contract.address.clone(), soroban_sdk::events::Event::topics(&e, &h.env), soroban_sdk::events::Event::data(&e, &h.env)) },
-            { let e = scoutchain_scout_access::events::PlayerContacted { scout: scout.clone(), player_id, fee_paid: CONTACT_FEE }; (h.contract.address.clone(), soroban_sdk::events::Event::topics(&e, &h.env), soroban_sdk::events::Event::data(&e, &h.env)) },
+            {
+                let e = scoutchain_scout_access::events::EvidenceAccessGranted {
+                    scout: scout.clone(),
+                    player_id,
+                    tier: SubscriptionTier::Pro,
+                };
+                (
+                    h.contract.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &h.env),
+                    soroban_sdk::events::Event::data(&e, &h.env),
+                )
+            },
+            {
+                let e = scoutchain_scout_access::events::PlayerContacted {
+                    scout: scout.clone(),
+                    player_id,
+                    fee_paid: CONTACT_FEE,
+                };
+                (
+                    h.contract.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &h.env),
+                    soroban_sdk::events::Event::data(&e, &h.env),
+                )
+            },
         ]
     );
 }
@@ -449,10 +474,18 @@ fn admin_revoke_evidence_access_emits_event() {
 
     assert_eq!(
         h.env.events().all().filter_by_contract(&h.contract.address),
-        vec![
-            &h.env,
-            { let e = scoutchain_scout_access::events::EvidenceAccessRevoked { scout: scout.clone(), player_id, admin: h.admin.clone() }; (h.contract.address.clone(), soroban_sdk::events::Event::topics(&e, &h.env), soroban_sdk::events::Event::data(&e, &h.env)) },
-        ]
+        vec![&h.env, {
+            let e = scoutchain_scout_access::events::EvidenceAccessRevoked {
+                scout: scout.clone(),
+                player_id,
+                admin: h.admin.clone(),
+            };
+            (
+                h.contract.address.clone(),
+                soroban_sdk::events::Event::topics(&e, &h.env),
+                soroban_sdk::events::Event::data(&e, &h.env),
+            )
+        },]
     );
 }
 
@@ -510,7 +543,9 @@ fn admin_revoke_evidence_access_requires_initialized_contract() {
     env.mock_all_auths();
     let admin = Address::generate(&env);
     let scout = Address::generate(&env);
-    let xlm = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let xlm = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     // Deployment initializes via the constructor (#1369); clear the marker to
     // exercise the uninitialized guard.
     let id = env.register(ScoutAccessContract, (admin, xlm, default_fees()));

@@ -16,7 +16,9 @@ fn setup() -> (Env, VerificationContractClient<'static>) {
     env.mock_all_auths();
     let id = env.register(VerificationContract, (Address::generate(&env),));
     let client = VerificationContractClient::new(&env, &id);
-    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
+    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(
+        &env,
+    ));
     (env, client)
 }
 

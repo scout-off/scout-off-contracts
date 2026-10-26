@@ -31,7 +31,9 @@ fn setup() -> (Env, VerificationContractClient<'static>, Address, Address) {
     let admin = Address::generate(&env);
     let id = env.register(VerificationContract, (admin.clone(),));
     let client = VerificationContractClient::new(&env, &id);
-    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
+    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(
+        &env,
+    ));
     (env, client, admin, id)
 }
 
@@ -187,7 +189,9 @@ fn cross_contract_attestation_rejected() {
     let admin_b = Address::generate(&env);
     let id_b = env.register(VerificationContract, (admin_b.clone(),));
     let client_b = VerificationContractClient::new(&env, &id_b);
-    client_b.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
+    client_b.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(
+        &env,
+    ));
 
     let validator = Address::generate(&env);
     let relayer = Address::generate(&env);

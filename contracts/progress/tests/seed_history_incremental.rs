@@ -24,8 +24,16 @@ fn make_entry(player_id: u64, index: u32, by: &Address) -> ProgressEntry {
     let advance = index % 2 == 1;
     ProgressEntry {
         player_id,
-        old_level: if advance { ProgressLevel::Unverified } else { ProgressLevel::VerifiedIdentity },
-        new_level: if advance { ProgressLevel::VerifiedIdentity } else { ProgressLevel::Unverified },
+        old_level: if advance {
+            ProgressLevel::Unverified
+        } else {
+            ProgressLevel::VerifiedIdentity
+        },
+        new_level: if advance {
+            ProgressLevel::VerifiedIdentity
+        } else {
+            ProgressLevel::Unverified
+        },
         updated_by: by.clone(),
         updated_at: 1_700_000_000 + index as u64 * 100,
         milestone_ref: if advance { index } else { 0 },

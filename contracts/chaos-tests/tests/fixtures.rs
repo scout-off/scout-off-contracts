@@ -75,7 +75,10 @@ impl Harness {
         let xlm = env
             .register_stellar_asset_contract_v2(admin.clone())
             .address();
-        let sa_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+        let sa_id = env.register(
+            ScoutAccessContract,
+            (admin.clone(), xlm.clone(), default_fees()),
+        );
         let scout_access = ScoutAccessContractClient::new(&env, &sa_id);
 
         // Wire the four contracts so milestone approval can actually advance

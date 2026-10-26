@@ -83,8 +83,9 @@ def preceding_doc_comment(src, fn_name):
     if not m:
         return None
     lines = src[:m.start()].split('\n')
-    # Drop the trailing empty string produced by the final newline.
-    if lines and lines[-1] == '':
+    # Drop the partial line before `pub fn` (empty, or the method's
+    # indentation inside an impl block).
+    if lines and lines[-1].strip() == '':
         lines.pop()
     doc = []
     for line in reversed(lines):

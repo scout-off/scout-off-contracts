@@ -133,7 +133,7 @@ fn test_filter_players_pagination_retrieves_all() {
         "page 2 must return the remaining 10 results"
     );
     assert_eq!(page2.next_cursor, 0, "page 2 must indicate no more results");
-    assert_eq!(page2.has_more, false, "page 2 must have has_more=false");
+    assert!(!page2.has_more, "page 2 must have has_more=false");
 
     // Total across both pages = 60.
     let total = page1.profiles.len() + page2.profiles.len();
@@ -211,7 +211,7 @@ fn test_filter_players_has_more_flag() {
         &50u32,
     );
     assert_eq!(page2.profiles.len(), 10);
-    assert_eq!(page2.has_more, false, "last page must have has_more=false");
+    assert!(!page2.has_more, "last page must have has_more=false");
 }
 
 // ---------------------------------------------------------------------------

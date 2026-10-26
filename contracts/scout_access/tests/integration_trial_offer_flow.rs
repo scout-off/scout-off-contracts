@@ -57,7 +57,9 @@ fn setup() -> Harness {
     // whitelisted caller of advance_level).
     let ver_id = env.register(VerificationContract, (admin.clone(),));
     let verification = VerificationContractClient::new(&env, &ver_id);
-    verification.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
+    verification.set_registration_contract(
+        &scoutchain_shared_types::testutils::active_registry_stub(&env),
+    );
 
     // Deploy and initialize the progress contract.
     let progress_id = env.register(ProgressContract, (admin.clone(),));
@@ -71,7 +73,10 @@ fn setup() -> Harness {
         .address();
 
     // Deploy and initialize the scout_access contract.
-    let sa_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+    let sa_id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
     let scout_access = ScoutAccessContractClient::new(&env, &sa_id);
     common::wire_registration(&env, Some(&scout_access), None);
 

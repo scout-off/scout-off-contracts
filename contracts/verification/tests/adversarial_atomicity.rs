@@ -67,7 +67,9 @@ fn setup_unwired() -> (Env, VerificationContractClient<'static>, Address) {
     let admin = Address::generate(&env);
     let contract_id = env.register(VerificationContract, (admin.clone(),));
     let client = VerificationContractClient::new(&env, &contract_id);
-    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
+    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(
+        &env,
+    ));
     let validator = Address::generate(&env);
     client.register_validator(
         &validator,
@@ -86,7 +88,9 @@ fn setup_bad_wiring() -> (Env, VerificationContractClient<'static>, Address) {
     let admin = Address::generate(&env);
     let contract_id = env.register(VerificationContract, (admin.clone(),));
     let client = VerificationContractClient::new(&env, &contract_id);
-    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
+    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(
+        &env,
+    ));
 
     // Wire a random address that has no contract — any cross-contract call will fail.
     let bad_progress = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
@@ -288,7 +292,9 @@ fn test_retry_with_fresh_evidence_hash_succeeds_after_wiring_fixed() {
     let admin = Address::generate(&env);
     let ver_id = env.register(VerificationContract, (admin.clone(),));
     let client = VerificationContractClient::new(&env, &ver_id);
-    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
+    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(
+        &env,
+    ));
 
     // Deploy a real progress contract and wire it after initialization.
     let prog_id = env.register(ProgressContract, (admin.clone(),));

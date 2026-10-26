@@ -49,6 +49,7 @@ fn default_fees() -> FeeConfig {
 struct Harness {
     env: Env,
     xlm: Address,
+    #[allow(dead_code)]
     admin: Address,
     contract: ScoutAccessContractClient<'static>,
 }
@@ -63,7 +64,10 @@ fn setup() -> Harness {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    let id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+    let id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
     let contract = ScoutAccessContractClient::new(&env, &id);
     common::wire_registration(&env, Some(&contract), None);
     common::wire_progress_level_stub(&env, &contract);

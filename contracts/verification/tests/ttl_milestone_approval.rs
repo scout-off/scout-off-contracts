@@ -29,7 +29,9 @@ fn test_commit_approved_milestone_extends_all_related_keys() {
     let admin = Address::generate(&env);
     let contract_id = env.register(VerificationContract, (admin.clone(),));
     let client = VerificationContractClient::new(&env, &contract_id);
-    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
+    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(
+        &env,
+    ));
 
     // Register two validators with different affiliations so PlayerAffiliations
     // accumulates more than one entry.

@@ -19,6 +19,7 @@ use soroban_sdk::{
 };
 
 struct Harness {
+    #[allow(dead_code)]
     registration: RegistrationContractClient<'static>,
     progress: ProgressContractClient<'static>,
     ver_id: Address,
@@ -38,7 +39,7 @@ fn setup() -> Harness {
     let progress = ProgressContractClient::new(&env, &prog_id);
 
     let ver_id = env.register(VerificationContract, (admin.clone(),));
-    let verification = VerificationContractClient::new(&env, &ver_id);
+    let _verification = VerificationContractClient::new(&env, &ver_id);
 
     // Whitelist the verification contract as the primary advance_level caller.
     progress.set_verification_contract(&ver_id);

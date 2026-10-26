@@ -20,15 +20,15 @@ fn setup(n: u32) -> (Env, ScoutAccessContractClient<'static>) {
             admin.clone(),
             xlm.clone(),
             FeeConfig {
-            contact_fee_stroops: 100_000,
-            basic_sub_stroops: 1_000_000,
-            pro_sub_stroops: 3_000_000,
-            elite_sub_stroops: 7_000_000,
-            sub_duration_secs: 30 * 24 * 60 * 60,
-            pro_contact_limit: 50,
-            trial_offer_escrow_stroops: 500_000,
-            trial_offer_expiry_secs: 3_600,
-        },
+                contact_fee_stroops: 100_000,
+                basic_sub_stroops: 1_000_000,
+                pro_sub_stroops: 3_000_000,
+                elite_sub_stroops: 7_000_000,
+                sub_duration_secs: 30 * 24 * 60 * 60,
+                pro_contact_limit: 50,
+                trial_offer_escrow_stroops: 500_000,
+                trial_offer_expiry_secs: 3_600,
+            },
         ),
     );
     let client = ScoutAccessContractClient::new(&env, &id);
@@ -41,13 +41,13 @@ fn setup(n: u32) -> (Env, ScoutAccessContractClient<'static>) {
         env.as_contract(&id, || {
             for i in start..=end {
                 let offer = TrialOffer {
-                player_id: PLAYER,
-                scout: scout.clone(),
-                details_hash: String::from_str(
-                    &env,
-                    "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB",
-                ),
-                logged_at: i as u64,
+                    player_id: PLAYER,
+                    scout: scout.clone(),
+                    details_hash: String::from_str(
+                        &env,
+                        "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB",
+                    ),
+                    logged_at: i as u64,
                 };
                 env.storage()
                     .persistent()

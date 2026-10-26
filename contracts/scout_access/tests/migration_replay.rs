@@ -12,7 +12,7 @@ use scoutchain_scout_access::{
 use scoutchain_shared_types::testutils::count_events;
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    Address, Env, String, Symbol,
+    Address, Env, String,
 };
 
 fn make_fee_config() -> FeeConfig {
@@ -40,7 +40,10 @@ fn setup() -> (Env, ScoutAccessContractClient<'static>, Address) {
     let xlm_id = env.register_stellar_asset_contract_v2(admin.clone());
     let xlm_addr = xlm_id.address();
 
-    let id = env.register(ScoutAccessContract, (admin.clone(), xlm_addr.clone(), make_fee_config(),));
+    let id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm_addr.clone(), make_fee_config()),
+    );
     let client = ScoutAccessContractClient::new(&env, &id);
     (env, client, admin)
 }

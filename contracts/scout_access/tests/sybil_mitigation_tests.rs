@@ -12,9 +12,9 @@ use scoutchain_scout_access::{
     FeeConfig, ScoutAccessContract, ScoutAccessContractClient, ScoutAccessError, SubscriptionTier,
 };
 use soroban_sdk::{
-    testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke},
+    testutils::{Address as _, Ledger},
     token::StellarAssetClient,
-    Address, Env, IntoVal, String,
+    Address, Env, String,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -73,7 +73,10 @@ fn setup() -> Harness {
     let _scout2_id = registration_client.register_scout(&scout2, &String::from_str(&env, "FR"));
 
     // Deploy scout_access contract
-    let sa_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+    let sa_id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
     let scout_access_client = ScoutAccessContractClient::new(&env, &sa_id);
 
     // Wire registration contract into scout_access
@@ -246,7 +249,10 @@ fn test_set_registration_contract_requires_admin() {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    let contract_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+    let contract_id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
     let client = ScoutAccessContractClient::new(&env, &contract_id);
 
     let random_contract = scoutchain_shared_types::testutils::peer_stub(&env, "registration");
@@ -269,7 +275,10 @@ fn test_unwired_registration_fails_closed_for_paid_tiers() {
     token_client.mint(&scout3, &1_000_000_000);
 
     // Do NOT wire registration contract; create a new scout_access instance
-    let sa_id = h.env.register(ScoutAccessContract, (h.admin.clone(), h.xlm.clone(), default_fees(),));
+    let sa_id = h.env.register(
+        ScoutAccessContract,
+        (h.admin.clone(), h.xlm.clone(), default_fees()),
+    );
     let sa_client = ScoutAccessContractClient::new(&h.env, &sa_id);
 
     for tier in [SubscriptionTier::Pro, SubscriptionTier::Elite] {

@@ -157,7 +157,12 @@ impl ProgressContract {
     pub fn pause_contract(env: Env) -> Result<(), ProgressError> {
         Self::bump_instance_ttl(&env);
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
-        if env.storage().instance().get::<_, bool>(&DataKey::Paused).unwrap_or(false) == true {
+        if env
+            .storage()
+            .instance()
+            .get::<_, bool>(&DataKey::Paused)
+            .unwrap_or(false)
+        {
             return Ok(());
         }
         env.storage().instance().set(&DataKey::Paused, &true);
@@ -168,7 +173,12 @@ impl ProgressContract {
     pub fn unpause_contract(env: Env) -> Result<(), ProgressError> {
         Self::bump_instance_ttl(&env);
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
-        if env.storage().instance().get::<_, bool>(&DataKey::Paused).unwrap_or(false) == false {
+        if !env
+            .storage()
+            .instance()
+            .get::<_, bool>(&DataKey::Paused)
+            .unwrap_or(false)
+        {
             return Ok(());
         }
         env.storage().instance().set(&DataKey::Paused, &false);
@@ -1345,17 +1355,16 @@ impl ProgressContract {
         let more = next_cursor < total;
 
         // On final page, remove the counter itself.
-        if !more {
-            if env
+        if !more
+            && env
                 .storage()
                 .persistent()
                 .has(&DataKey::HistoryCounter(player_id))
-            {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::HistoryCounter(player_id));
-                removed += 1;
-            }
+        {
+            env.storage()
+                .persistent()
+                .remove(&DataKey::HistoryCounter(player_id));
+            removed += 1;
         }
 
         events::player_data_purged(&env, &admin, player_id, removed, more);
@@ -2222,7 +2231,9 @@ mod tests {
         // Reading an Unverified default must not create the persistent key.
         assert_eq!(client.get_level(&999u64), ProgressLevel::Unverified);
         let absent = env.as_contract(&client.address, || {
-            env.storage().persistent().has(&DataKey::PlayerLevel(999u64))
+            env.storage()
+                .persistent()
+                .has(&DataKey::PlayerLevel(999u64))
         });
         assert!(!absent);
     }
@@ -2246,10 +2257,17 @@ mod tests {
         client.restore_player_level_record(&player);
         assert_eq!(
             env.events().all(),
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::PlayerLevelRecordRestored { admin: admin, player_id: player }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::PlayerLevelRecordRestored {
+                    admin,
+                    player_id: player,
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            },]
         );
         let after = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&key));
         assert!(after > before);
@@ -2269,7 +2287,7 @@ mod tests {
     use super::*;
     use soroban_sdk::{
         testutils::{Address as _, Events as _, MockAuth, MockAuthInvoke},
-        vec, Env, IntoVal, Symbol,
+        vec, Env,
     };
 
     /// Registration stand-in that accepts every level sync. Since #1409,
@@ -2339,7 +2357,9 @@ mod tests {
         // Remove every page but the newest: an early return must not touch them.
         env.as_contract(&id, || {
             for p in 0..9u32 {
-                env.storage().persistent().remove(&DataKey::HistoryPage(1, p));
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::HistoryPage(1, p));
             }
         });
         let r = client.get_history_since_v2(&1, &u64::MAX, &50);
@@ -2494,9 +2514,14 @@ mod tests {
         // suite so existing level-progression tests (unrelated to milestone
         // validation itself) keep passing.
         let ver_admin = Address::generate(&env);
-        let ver_id = env.register(scoutchain_verification::VerificationContract, (ver_admin.clone(),));
+        let ver_id = env.register(
+            scoutchain_verification::VerificationContract,
+            (ver_admin.clone(),),
+        );
         let ver_client = scoutchain_verification::VerificationContractClient::new(&env, &ver_id);
-        ver_client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
+        ver_client.set_registration_contract(
+            &scoutchain_shared_types::testutils::active_registry_stub(&env),
+        );
         let mut cid_seed: u32 = 0;
         for player_id in [1u64, 2, 5, 7, 10, 20, 42, 55] {
             for _ in 0..2u32 {
@@ -2829,10 +2854,19 @@ mod tests {
         let contract_id = client.address.clone();
         assert_eq!(
             env.events().all(),
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::ProgressUpdated { updated_by: validator.clone(), player_id, old_level: ProgressLevel::Unverified, new_level: ProgressLevel::VerifiedIdentity }; (contract_id, soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::ProgressUpdated {
+                    updated_by: validator.clone(),
+                    player_id,
+                    old_level: ProgressLevel::Unverified,
+                    new_level: ProgressLevel::VerifiedIdentity,
+                };
+                (
+                    contract_id,
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
         );
     }
 
@@ -2862,10 +2896,17 @@ mod tests {
         client.propose_admin(&stale_admin);
         assert_eq!(
             env.events().all(),
-            vec![
-                &env,
-                { let e = crate::events::AdminTransferProposed { old_admin: old_admin.clone(), new_admin: stale_admin.clone() }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
-            ]
+            vec![&env, {
+                let e = crate::events::AdminTransferProposed {
+                    old_admin: old_admin.clone(),
+                    new_admin: stale_admin.clone(),
+                };
+                (
+                    contract_id.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
         );
 
         // The old admin remains fully functional while acceptance is pending.
@@ -2900,10 +2941,17 @@ mod tests {
         client.accept_admin();
         assert_eq!(
             env.events().all(),
-            vec![
-                &env,
-                { let e = crate::events::AdminTransferred { old_admin: old_admin.clone(), new_admin: new_admin.clone() }; (contract_id.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
-            ]
+            vec![&env, {
+                let e = crate::events::AdminTransferred {
+                    old_admin: old_admin.clone(),
+                    new_admin: new_admin.clone(),
+                };
+                (
+                    contract_id.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
         );
         env.as_contract(&contract_id, || {
             assert_eq!(
@@ -3039,7 +3087,6 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
 
-
         let admin = Address::generate(&env);
         let id = env.register(ProgressContract, (admin.clone(),));
         let client = ProgressContractClient::new(&env, &id);
@@ -3047,9 +3094,14 @@ mod tests {
         // Wire a real verification contract with one approved milestone so
         // advance_level's on-chain milestone_ref validation (#457) succeeds.
         let ver_admin = Address::generate(&env);
-        let ver_id = env.register(scoutchain_verification::VerificationContract, (ver_admin.clone(),));
+        let ver_id = env.register(
+            scoutchain_verification::VerificationContract,
+            (ver_admin.clone(),),
+        );
         let ver_client = scoutchain_verification::VerificationContractClient::new(&env, &ver_id);
-        ver_client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
+        ver_client.set_registration_contract(
+            &scoutchain_shared_types::testutils::active_registry_stub(&env),
+        );
         let milestone_validator = Address::generate(&env);
         ver_client.register_validator(
             &milestone_validator,
@@ -3134,10 +3186,19 @@ mod tests {
         // (Symbol, admin); data is (player_id, old_level, target_level).
         assert_eq!(
             env.events().all(),
-            vec![
-                &env,
-                { let e = crate::events::PlayerLevelReset { admin: admin, player_id: player_id, old_level: ProgressLevel::PerformanceMilestones, target_level: ProgressLevel::Unverified }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
-            ]
+            vec![&env, {
+                let e = crate::events::PlayerLevelReset {
+                    admin,
+                    player_id,
+                    old_level: ProgressLevel::PerformanceMilestones,
+                    target_level: ProgressLevel::Unverified,
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
         );
 
         assert_eq!(client.get_level(&player_id), ProgressLevel::Unverified);
@@ -3309,7 +3370,9 @@ mod tests {
         let ver_admin = Address::generate(&env);
         let ver_id = env.register(VerificationContract, (ver_admin.clone(),));
         let ver_client = VerificationContractClient::new(&env, &ver_id);
-        ver_client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(&env));
+        ver_client.set_registration_contract(
+            &scoutchain_shared_types::testutils::active_registry_stub(&env),
+        );
 
         // Deploy progress contract and wire the verification + scout_access addresses.
         let prog_admin = Address::generate(&env);
@@ -3411,10 +3474,16 @@ mod tests {
         let events = env.events().all();
         assert_eq!(
             events,
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::ContractPaused { admin: admin.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::ContractPaused {
+                    admin: admin.clone(),
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
         );
     }
 
@@ -3437,10 +3506,16 @@ mod tests {
         // supports equality against a `Vec<(Address, Vec<Val>, Val)>`.
         assert_eq!(
             env.events().all(),
-            vec![
-                &env,
-                { let e = crate::events::ContractUnpaused { admin: admin.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
-            ]
+            vec![&env, {
+                let e = crate::events::ContractUnpaused {
+                    admin: admin.clone(),
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
         );
     }
 

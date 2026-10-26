@@ -54,7 +54,7 @@ fn setup() -> Harness {
             String::from_str(&env, "EU").into_val(&env),
         ],
     );
-    let scout_id = client.register_scout(&wallet, &String::from_str(&env, "EU"));
+    let _scout_id = client.register_scout(&wallet, &String::from_str(&env, "EU"));
 
     Harness {
         env,
@@ -213,7 +213,10 @@ fn test_reactivate_no_event_when_active() {
     h.client.reactivate_scout(&1);
 
     let count = count_events(&h.env, "scout_reactivated", Some(&h.contract_id));
-    assert_eq!(count, 0, "scout_reactivated must not be emitted when active");
+    assert_eq!(
+        count, 0,
+        "scout_reactivated must not be emitted when active"
+    );
 }
 
 /// Non-admin caller is rejected.

@@ -49,11 +49,18 @@ impl RegStub {
     /// The owner wallet owns player 1, the only player these tests dispute.
     pub fn get_player_id_by_wallet(env: Env, wallet: Address) -> u64 {
         let owner: Address = env.storage().persistent().get(&RegStubKey::Owner).unwrap();
-        if wallet == owner { 1 } else { 0 }
+        if wallet == owner {
+            1
+        } else {
+            0
+        }
     }
 
     /// Every player counts as active for verification's #1622 check.
-    pub fn get_player_status(_env: Env, _player_id: u64) -> scoutchain_verification::RegPlayerStatus {
+    pub fn get_player_status(
+        _env: Env,
+        _player_id: u64,
+    ) -> scoutchain_verification::RegPlayerStatus {
         scoutchain_verification::RegPlayerStatus::Active
     }
 
@@ -213,7 +220,7 @@ fn setup_jury_dispute(env: &Env, client: &VerificationContractClient, player: &A
 
 #[test]
 fn test_get_jury_config_defaults() {
-    let (env, client, _admin, player) = setup();
+    let (_env, client, _admin, _player) = setup();
     let cfg = client.get_jury_config();
     assert_eq!(cfg.impact_threshold, 100);
     assert_eq!(cfg.quorum, 3);
@@ -222,7 +229,7 @@ fn test_get_jury_config_defaults() {
 
 #[test]
 fn test_set_jury_config_updates_values() {
-    let (env, client, _admin, player) = setup();
+    let (env, client, _admin, _player) = setup();
     seed_validators(&env, &client, 5);
     client.set_jury_config(&50u32, &5u32, &86_400u64);
     let cfg = client.get_jury_config();

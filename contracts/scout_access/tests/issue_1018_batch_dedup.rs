@@ -42,7 +42,6 @@ fn setup() -> (
     let env = Env::default();
     env.mock_all_auths();
 
-
     let admin = Address::generate(&env);
     let scout = Address::generate(&env);
 
@@ -51,7 +50,10 @@ fn setup() -> (
         .address();
     StellarAssetClient::new(&env, &xlm).mint(&scout, &20_000_000i128);
 
-    let scout_access_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+    let scout_access_id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
     let client = ScoutAccessContractClient::new(&env, &scout_access_id);
     common::wire_registration(&env, Some(&client), None);
     common::wire_progress_level_stub(&env, &client);

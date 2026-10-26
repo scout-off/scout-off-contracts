@@ -1,3 +1,8 @@
+// Events not yet migrated to #[contractevent] keep the legacy
+// `env.events().publish` call so their wire format (topics and positional
+// data) stays unchanged for indexers.
+#![allow(deprecated)]
+
 use crate::types::{FeeConfig, SubscriptionTier};
 use soroban_sdk::{contractevent, Address, BytesN, Env, Symbol};
 

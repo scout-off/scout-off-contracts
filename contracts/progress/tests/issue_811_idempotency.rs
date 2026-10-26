@@ -70,7 +70,7 @@ use scoutchain_progress::{
 use scoutchain_registration::{PlayerVitals, RegistrationContract, RegistrationContractClient};
 use scoutchain_shared_types::ProgressLevel;
 use scoutchain_verification::VerificationContract;
-use soroban_sdk::{testutils::Address as _, Address, Bytes, Env, String, Vec};
+use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
 
 fn valid_vitals(env: &Env) -> PlayerVitals {
     PlayerVitals {

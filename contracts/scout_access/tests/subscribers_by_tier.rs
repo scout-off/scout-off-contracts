@@ -45,7 +45,10 @@ fn setup() -> Harness {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    let id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+    let id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
     let client = ScoutAccessContractClient::new(&env, &id);
     common::wire_registration(&env, Some(&client), None);
 
@@ -62,9 +65,24 @@ fn funded_scout(h: &Harness) -> Address {
 #[test]
 fn test_subscribers_by_tier_empty_tier_returns_empty() {
     let h = setup();
-    assert_eq!(h.client.get_subscribers_by_tier(&SubscriptionTier::Basic).len(), 0);
-    assert_eq!(h.client.get_subscribers_by_tier(&SubscriptionTier::Pro).len(), 0);
-    assert_eq!(h.client.get_subscribers_by_tier(&SubscriptionTier::Elite).len(), 0);
+    assert_eq!(
+        h.client
+            .get_subscribers_by_tier(&SubscriptionTier::Basic)
+            .len(),
+        0
+    );
+    assert_eq!(
+        h.client
+            .get_subscribers_by_tier(&SubscriptionTier::Pro)
+            .len(),
+        0
+    );
+    assert_eq!(
+        h.client
+            .get_subscribers_by_tier(&SubscriptionTier::Elite)
+            .len(),
+        0
+    );
 }
 
 #[test]
@@ -76,8 +94,14 @@ fn test_subscribers_by_tier_basic_lists_scout_under_basic_only() {
     let basic = h.client.get_subscribers_by_tier(&SubscriptionTier::Basic);
     assert_eq!(basic.len(), 1);
     assert_eq!(basic.get(0).unwrap(), scout);
-    assert!(!h.client.get_subscribers_by_tier(&SubscriptionTier::Pro).contains(&scout));
-    assert!(!h.client.get_subscribers_by_tier(&SubscriptionTier::Elite).contains(&scout));
+    assert!(!h
+        .client
+        .get_subscribers_by_tier(&SubscriptionTier::Pro)
+        .contains(&scout));
+    assert!(!h
+        .client
+        .get_subscribers_by_tier(&SubscriptionTier::Elite)
+        .contains(&scout));
 }
 
 #[test]
@@ -89,11 +113,17 @@ fn test_subscribers_by_tier_upgrade_moves_scout_from_basic_to_pro() {
     h.env.ledger().with_mut(|l| l.timestamp += 3_600);
     h.client.subscribe(&scout, &SubscriptionTier::Pro);
 
-    assert!(!h.client.get_subscribers_by_tier(&SubscriptionTier::Basic).contains(&scout));
+    assert!(!h
+        .client
+        .get_subscribers_by_tier(&SubscriptionTier::Basic)
+        .contains(&scout));
     let pro = h.client.get_subscribers_by_tier(&SubscriptionTier::Pro);
     assert_eq!(pro.len(), 1);
     assert_eq!(pro.get(0).unwrap(), scout);
-    assert_eq!(h.client.get_subscription(&scout).tier, SubscriptionTier::Pro);
+    assert_eq!(
+        h.client.get_subscription(&scout).tier,
+        SubscriptionTier::Pro
+    );
 }
 
 #[test]
@@ -120,5 +150,8 @@ fn test_subscribers_by_tier_expired_subscription_still_listed() {
 
     h.env.ledger().with_mut(|l| l.timestamp += SUB_DURATION + 1);
 
-    assert!(h.client.get_subscribers_by_tier(&SubscriptionTier::Basic).contains(&scout));
+    assert!(h
+        .client
+        .get_subscribers_by_tier(&SubscriptionTier::Basic)
+        .contains(&scout));
 }

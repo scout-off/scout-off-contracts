@@ -28,6 +28,8 @@ const ADVANCE_LEVEL_CPU_BUDGET: u64 = 1_100_000;
 const RESET_PLAYER_LEVEL_CPU_BUDGET: u64 = 1_250_000;
 const GET_PROGRESS_HISTORY_PAGE_CPU_BUDGET: u64 = 195_802;
 const LONG_HISTORY_ADVANCE_LEVEL_CPU_BUDGET: u64 = 35_000_000;
+// No cost test currently exercises verify_history_proof.
+#[allow(dead_code)]
 const VERIFY_HISTORY_PROOF_CPU_BUDGET: u64 = 139_669;
 
 /// Budget for advance_level called against a player with ≥ 64 history entries.
@@ -43,6 +45,8 @@ const ADVANCE_LEVEL_MEM_BUDGET: u64 = 1_200_000;
 const RESET_PLAYER_LEVEL_MEM_BUDGET: u64 = 1_200_000;
 const GET_PROGRESS_HISTORY_PAGE_MEM_BUDGET: u64 = 240_000;
 const LONG_HISTORY_ADVANCE_LEVEL_MEM_BUDGET: u64 = 40_000_000;
+// No cost test currently exercises verify_history_proof.
+#[allow(dead_code)]
 const VERIFY_HISTORY_PROOF_MEM_BUDGET: u64 = 180_000;
 const ADVANCE_LEVEL_LONG_HISTORY_MEM_BUDGET: u64 = 60_000_000;
 

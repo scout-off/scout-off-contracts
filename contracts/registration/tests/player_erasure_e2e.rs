@@ -5,14 +5,12 @@
 //! current-state keys remain readable (except documented tombstones).
 
 use scoutchain_progress::{ProgressContract, ProgressContractClient};
-use scoutchain_registration::{
-    PlayerVitals, RegistrationContract, RegistrationContractClient,
-};
+use scoutchain_registration::{PlayerVitals, RegistrationContract, RegistrationContractClient};
 use scoutchain_scout_access::{
     FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
 };
-use scoutchain_verification::{VerificationContract, VerificationContractClient};
 use scoutchain_shared_types::ProgressLevel;
+use scoutchain_verification::{VerificationContract, VerificationContractClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
     token::StellarAssetClient,
@@ -49,6 +47,7 @@ fn one_hash(env: &Env) -> Vec<String> {
 
 struct Harness {
     env: Env,
+    #[allow(dead_code)]
     admin: Address,
     xlm: Address,
     registration: RegistrationContractClient<'static>,
@@ -84,7 +83,10 @@ fn setup() -> Harness {
         .address();
 
     // ScoutAccess
-    let sa_id = env.register(ScoutAccessContract, (admin.clone(), xlm.clone(), default_fees(),));
+    let sa_id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
     let scout_access = ScoutAccessContractClient::new(&env, &sa_id);
     scout_access.set_progress_contract(&prog_id);
     progress.set_scout_access_contract(&sa_id);
@@ -143,20 +145,20 @@ fn test_full_erasure_leaves_no_readable_state() {
 
     // --- Step 3: Scout subscribes and contacts player ---
     let scout_wallet = Address::generate(env);
-    let sa_id = h.scout_access.address.clone();
+    let _sa_id = h.scout_access.address.clone();
     let xlm_client = StellarAssetClient::new(env, &h.xlm);
     xlm_client.mint(&scout_wallet, &10_000_000i128);
     // Approve scout_access to spend scout funds.
     let reg_id = h.registration.address.clone();
-    let scout_id = h.registration.register_scout(
-        &scout_wallet,
-        &String::from_str(env, "EU"),
-    );
+    let scout_id = h
+        .registration
+        .register_scout(&scout_wallet, &String::from_str(env, "EU"));
     // Elite subscriptions require a wired registration and a verified scout.
     h.scout_access.set_registration_contract(&reg_id);
     h.registration.verify_scout(&scout_id);
     // Subscribe (Elite tier for contact + trial access)
-    h.scout_access.subscribe(&scout_wallet, &SubscriptionTier::Elite);
+    h.scout_access
+        .subscribe(&scout_wallet, &SubscriptionTier::Elite);
 
     // Create a ContactRecord.
     h.scout_access.pay_to_contact(&scout_wallet, &player_id);
@@ -245,22 +247,23 @@ fn test_erasure_blocks_on_outstanding_escrow() {
     let scout_wallet = Address::generate(env);
     let xlm_client = StellarAssetClient::new(env, &h.xlm);
     xlm_client.mint(&scout_wallet, &10_000_000i128);
-    let scout_id = h.registration.register_scout(
-        &scout_wallet,
-        &String::from_str(env, "EU"),
-    );
+    let scout_id = h
+        .registration
+        .register_scout(&scout_wallet, &String::from_str(env, "EU"));
     h.scout_access
         .set_registration_contract(&h.registration.address.clone());
     h.registration.verify_scout(&scout_id);
-    h.scout_access.subscribe(&scout_wallet, &SubscriptionTier::Elite);
-    h.scout_access.pay_to_contact(&scout_wallet, &player_id);
     h.scout_access
-        .log_trial_offer(&scout_wallet, &player_id, &String::from_str(env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB"));
+        .subscribe(&scout_wallet, &SubscriptionTier::Elite);
+    h.scout_access.pay_to_contact(&scout_wallet, &player_id);
+    h.scout_access.log_trial_offer(
+        &scout_wallet,
+        &player_id,
+        &String::from_str(env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB"),
+    );
 
     // Attempt purge while escrow is outstanding — must be rejected.
-    let result = h
-        .scout_access
-        .try_purge_player_data(&player_id, &0u32);
+    let result = h.scout_access.try_purge_player_data(&player_id, &0u32);
     assert!(
         result.is_err(),
         "purge must be blocked while outstanding escrow exists"

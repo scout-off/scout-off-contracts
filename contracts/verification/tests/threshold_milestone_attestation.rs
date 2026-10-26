@@ -621,11 +621,16 @@ impl RegStub {
         if wallet != owner {
             return 0;
         }
-        env.storage().persistent().get(&RegStubKey::PlayerId).unwrap_or(1)
+        env.storage()
+            .persistent()
+            .get(&RegStubKey::PlayerId)
+            .unwrap_or(1)
     }
 
     pub fn set_player_id(env: Env, player_id: u64) {
-        env.storage().persistent().set(&RegStubKey::PlayerId, &player_id);
+        env.storage()
+            .persistent()
+            .set(&RegStubKey::PlayerId, &player_id);
     }
 
     /// Wiring handshake (#1610): report the kind of contract this stub stands in for.

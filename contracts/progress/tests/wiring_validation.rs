@@ -115,7 +115,7 @@ fn test_reset_player_level_rejected_when_registration_unwired() {
 
 #[test]
 fn test_advance_level_rejected_for_unknown_player_when_wired() {
-    let (registration, progress, verification, _admin, ver_id) = setup_full_stack();
+    let (_registration, progress, _verification, _admin, ver_id) = setup_full_stack();
 
     // Player 999 does NOT exist in registration
     let unknown_player_id: u64 = 999;
@@ -137,7 +137,7 @@ fn test_advance_level_rejected_for_unknown_player_when_wired() {
 
 #[test]
 fn test_reset_player_level_rejected_for_unknown_player_when_wired() {
-    let (registration, progress, _verification, _admin, ver_id) = setup_full_stack();
+    let (_registration, progress, _verification, _admin, _ver_id) = setup_full_stack();
 
     // Player 999 does NOT exist in registration
     let unknown_player_id: u64 = 999;

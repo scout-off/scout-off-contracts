@@ -9,9 +9,8 @@ mod events;
 mod types;
 
 use types::{
-    ContractHealth, DataKey, FilterResult, PlayerProfile, PlayerSummary,
-    ProgressLevel, RegistrationWiringState, ScoutProfile, ScoutVerificationRecord,
-    StoredPlayerProfile,
+    ContractHealth, DataKey, FilterResult, PlayerProfile, PlayerSummary, ProgressLevel,
+    RegistrationWiringState, ScoutProfile, ScoutVerificationRecord, StoredPlayerProfile,
 };
 
 pub use errors::ScoutChainError;
@@ -318,7 +317,12 @@ impl RegistrationContract {
 
     pub fn pause_contract(env: Env) -> Result<(), ScoutChainError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
-        if env.storage().instance().get::<_, bool>(&DataKey::Paused).unwrap_or(false) == true {
+        if env
+            .storage()
+            .instance()
+            .get::<_, bool>(&DataKey::Paused)
+            .unwrap_or(false)
+        {
             return Ok(());
         }
         env.storage().instance().set(&DataKey::Paused, &true);
@@ -328,7 +332,12 @@ impl RegistrationContract {
 
     pub fn unpause_contract(env: Env) -> Result<(), ScoutChainError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
-        if env.storage().instance().get::<_, bool>(&DataKey::Paused).unwrap_or(false) == false {
+        if !env
+            .storage()
+            .instance()
+            .get::<_, bool>(&DataKey::Paused)
+            .unwrap_or(false)
+        {
             return Ok(());
         }
         env.storage().instance().set(&DataKey::Paused, &false);
@@ -2218,10 +2227,14 @@ mod tests {
         client.restore_scout_record(&scout_id);
         assert_eq!(
             env.events().all(),
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::ScoutRecordRestored { admin: admin, scout_id: scout_id }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::ScoutRecordRestored { admin, scout_id };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            },]
         );
         let after = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&key));
         assert!(after > before);
@@ -2355,10 +2368,17 @@ mod tests {
         client.propose_admin(&stale_admin);
         assert_eq!(
             env.events().all(),
-            vec![
-                &env,
-                { let e = crate::events::AdminTransferProposed { old_admin: old_admin.clone(), new_admin: stale_admin.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
-            ]
+            vec![&env, {
+                let e = crate::events::AdminTransferProposed {
+                    old_admin: old_admin.clone(),
+                    new_admin: stale_admin.clone(),
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            },]
         );
 
         // The current admin remains fully functional while a proposal is pending.
@@ -2394,10 +2414,17 @@ mod tests {
         client.accept_admin();
         assert_eq!(
             env.events().all(),
-            vec![
-                &env,
-                { let e = crate::events::AdminTransferred { old_admin: old_admin.clone(), new_admin: new_admin.clone() }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) },
-            ]
+            vec![&env, {
+                let e = crate::events::AdminTransferred {
+                    old_admin: old_admin.clone(),
+                    new_admin: new_admin.clone(),
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            },]
         );
         env.as_contract(&client.address, || {
             assert_eq!(
@@ -3037,7 +3064,6 @@ mod tests {
     fn test_upgrade_preserves_admin() {
         let env = Env::default();
         env.mock_all_auths();
-
 
         let admin = Address::generate(&env);
         let contract_id = env.register(RegistrationContract, (admin.clone(),));
@@ -3683,7 +3709,7 @@ mod tests {
     #[test]
     fn test_deactivate_player_emits_event() {
         use soroban_sdk::testutils::Events;
-        use soroban_sdk::IntoVal;
+
         let env = setup_env();
         let admin = Address::generate(&env);
         let client = deploy(&env, &admin);
@@ -3700,17 +3726,24 @@ mod tests {
         let events = env.events().all();
         assert_eq!(
             events,
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::PlayerDeactivated { admin: admin.clone(), player_id }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::PlayerDeactivated {
+                    admin: admin.clone(),
+                    player_id,
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
         );
     }
 
     #[test]
     fn test_reactivate_player_emits_event() {
         use soroban_sdk::testutils::Events;
-        use soroban_sdk::IntoVal;
+
         let env = setup_env();
         let admin = Address::generate(&env);
         let client = deploy(&env, &admin);
@@ -3729,17 +3762,24 @@ mod tests {
         let events = env.events().all();
         assert_eq!(
             events,
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::PlayerReactivated { admin: admin.clone(), player_id }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::PlayerReactivated {
+                    admin: admin.clone(),
+                    player_id,
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
         );
     }
 
     #[test]
     fn test_set_player_level_emits_event_with_level() {
         use soroban_sdk::testutils::Events;
-        use soroban_sdk::IntoVal;
+
         let env = setup_env();
         let admin = Address::generate(&env);
         let client = deploy(&env, &admin);
@@ -3766,10 +3806,18 @@ mod tests {
         let events = env.events().all();
         assert_eq!(
             events,
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::PlayerLevelSynced { caller: progress_contract.clone(), player_id, level: ProgressLevel::VerifiedIdentity }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::PlayerLevelSynced {
+                    caller: progress_contract.clone(),
+                    player_id,
+                    level: ProgressLevel::VerifiedIdentity,
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
         );
     }
 
@@ -3824,14 +3872,20 @@ mod tests {
 
         client.verify_scout(&scout_id);
 
-        use soroban_sdk::IntoVal;
         let events = env.events().all();
         assert_eq!(
             events,
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::ScoutVerified { wallet: wallet.clone(), scout_id }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::ScoutVerified {
+                    wallet: wallet.clone(),
+                    scout_id,
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
         );
     }
 
@@ -3952,10 +4006,19 @@ mod tests {
 
         assert_eq!(
             env.events().all(),
-            soroban_sdk::vec![
-                &env,
-                { let e = crate::events::WiringUpdated { admin: admin.clone(), link: Symbol::new(&env, "progress_contract"), new_address: progress_addr, new_epoch: 1u32 }; (client.address.clone(), soroban_sdk::events::Event::topics(&e, &env), soroban_sdk::events::Event::data(&e, &env)) }
-            ]
+            soroban_sdk::vec![&env, {
+                let e = crate::events::WiringUpdated {
+                    admin: admin.clone(),
+                    link: Symbol::new(&env, "progress_contract"),
+                    new_address: progress_addr,
+                    new_epoch: 1u32,
+                };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            }]
         );
     }
 
@@ -4038,7 +4101,6 @@ mod tests {
     /// bucket, and the deactivation flag must be clean — no stale references.
     #[test]
     fn test_deregister_player_cleans_all_indexes() {
-        use soroban_sdk::testutils::storage::Persistent as _;
         let env = setup_env();
         let admin = Address::generate(&env);
         let client = deploy(&env, &admin);
