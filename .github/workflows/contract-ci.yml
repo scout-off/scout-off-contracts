@@ -66,7 +66,7 @@ jobs:
             | tee cpu-cost-budget-report.txt
 
       - name: Upload CPU-cost budget report artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cpu-cost-budget-${{ github.sha }}
           path: cpu-cost-budget-report.txt
@@ -599,7 +599,7 @@ jobs:
           PYEOF
 
       - name: Upload ABI and size-budget artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: contract-abis-${{ github.sha }}
           path: abi/*.json
@@ -639,7 +639,7 @@ jobs:
 
       - name: Upload ABI diff report
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: abi-diff-report-${{ github.sha }}
           path: abi/*.json
@@ -770,7 +770,7 @@ jobs:
         run: diff -u out-1/SHA256SUMS out-2/SHA256SUMS && cmp out-1/wasm-hashes.json out-2/wasm-hashes.json
 
       - name: Upload WASM hashes
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wasm-hashes
           path: |
