@@ -29,19 +29,34 @@ export async function isTokenRevoked(jti: string): Promise<boolean> {
   return !!existingRevocation;
 }
 
+// RFC 6750: the auth scheme is case-insensitive; tolerate extra whitespace
+// before the token. The token must be a compact JWT (three segments).
+const BEARER_JWT_PATTERN =
+  /^Bearer\s+([A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]*)$/i;
+
 export async function requireAuth(
   req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> {
-  const authHeader = req.headers["authorization"];
+  const authHeader = req.headers["authorization"]?.trim();
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  if (!authHeader || !/^Bearer(\s|$)/i.test(authHeader)) {
     res.status(401).json({ error: "Unauthorized - no token provided" });
     return;
   }
 
-  const token = authHeader.split(" ")[1];
+  const match = BEARER_JWT_PATTERN.exec(authHeader);
+
+  if (!match) {
+    res
+      .set("WWW-Authenticate", 'Bearer error="invalid_request"')
+      .status(401)
+      .json({ error: "Unauthorized - malformed authorization header" });
+    return;
+  }
+
+  const token = match[1];
 
   try {
     const payload = jwt.verify(token, config.jwtSecret, { algorithms: ["HS256"] }) as {
