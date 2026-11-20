@@ -892,7 +892,7 @@ registration is permitted; duplicate prevention is enforced per role only.
 | `admin_seed_scout(wallet, region, scout_id, registered_at, verified) -> Result<u64, ScoutChainError>` | admin | Seed a historical scout profile at a fixed `scout_id` during a migration window. |
 | `restore_player_record(player_id) -> Result<(), ScoutChainError>` | admin | Re-extend the TTL of an archived player record and re-insert it into the filter indexes before it is permanently evicted. Errors `PlayerRecordEvicted` if the key is already gone. |
 | `restore_scout_record(scout_id) -> Result<(), ScoutChainError>` | admin | Re-extend the TTL of an archived scout record before it is permanently evicted. Errors `ScoutRecordEvicted` if the key is already gone. |
-| `is_player_deactivated(player_id) -> bool` | none | Whether the player is currently soft-hidden from `filter_players` results. |
+| `is_player_deactivated(player_id) -> bool` | none | Whether the player is currently soft-hidden from `filter_players` results. Never errors: returns `false` for unknown or deregistered ids. |
 | `get_player_status(player_id) -> Result<PlayerStatus, ScoutChainError>` | none | Combined existence / deactivation status for a player. |
 | `get_scout_status(scout_id) -> ScoutStatus` | none | Registration / verification status for a scout (`NotRegistered`, `Registered`, `Verified`). |
 
