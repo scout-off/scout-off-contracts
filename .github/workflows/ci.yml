@@ -149,6 +149,12 @@ jobs:
       - name: Type-check
         run: npx tsc --noEmit
 
+      - name: Build
+        run: npm run build
+
+      - name: Verify start path exists after build
+        run: test -f dist/server.js
+
       - name: Run tests
         run: npm test
 
