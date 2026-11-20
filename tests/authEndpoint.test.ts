@@ -53,6 +53,24 @@ describe("POST /auth", () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
+  it("rejects a non-string transaction with 'invalid transaction'", async () => {
+    for (const transaction of [{ foo: "bar" }, 123, ["tx"]]) {
+      const res = await request(app)
+        .post("/auth")
+        .send({ transaction, account: VALID_ACCOUNT });
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: "invalid transaction" });
+    }
+  });
+
+  it("rejects an invalid account with 'invalid account'", async () => {
+    const res = await request(app)
+      .post("/auth")
+      .send({ transaction: "tx", account: "not-a-key" });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "invalid account" });
+  });
+
   it("maps verification failures to stable codes", async () => {
     (verifyChallengeTx as jest.Mock).mockRejectedValue(
       new Error("The transaction has expired")
