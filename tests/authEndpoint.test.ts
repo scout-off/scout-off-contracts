@@ -9,7 +9,12 @@ jest.mock("../src/services/sep10", () => ({
 }));
 
 import { app } from "../src/app";
-import { buildChallengeTx, verifyChallengeTx } from "../src/services/sep10";
+import {
+  buildChallengeTx,
+  verifyChallengeTx,
+  deriveRole,
+  issueSep10Token,
+} from "../src/services/sep10";
 
 const VALID_ACCOUNT = "GD2DO5BIZZDWS5URPBXFHFZJR3VFXGGAFSRSAGNJA5AWVKXE53LRZM5N";
 
@@ -71,5 +76,64 @@ describe("POST /auth", () => {
       .send({ transaction: "tx", account: VALID_ACCOUNT });
     expect(res.status).toBe(500);
     expect(JSON.stringify(res.body)).not.toContain("db connection refused");
+  });
+});
+
+describe("unknown-role policy", () => {
+  beforeEach(() => {
+    jest.spyOn(console, "error").mockImplementation(() => {});
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it("issues an onboarding-scoped token with the short refresh TTL for an unknown wallet", async () => {
+    (verifyChallengeTx as jest.Mock).mockResolvedValue({ account: VALID_ACCOUNT });
+    (deriveRole as jest.Mock).mockResolvedValue("unknown");
+    (issueSep10Token as jest.Mock).mockResolvedValue({
+      accessToken: "access-unknown",
+      refreshToken: "refresh-unknown",
+      role: "unknown",
+      scope: "onboarding",
+      refreshExpiresIn: 3600,
+    });
+
+    const res = await request(app)
+      .post("/auth")
+      .send({ transaction: "tx", account: VALID_ACCOUNT });
+
+    expect(res.status).toBe(200);
+    expect(res.body.role).toBe("unknown");
+    expect(res.body.scope).toBe("onboarding");
+    expect(res.body.refreshExpiresIn).toBe(3600);
+    expect(issueSep10Token).toHaveBeenCalledWith(
+      expect.objectContaining({ role: "unknown" })
+    );
+  });
+
+  it("rejects an unknown-role token on a protected route by default", async () => {
+    const res = await request(app)
+      .get("/api/validators")
+      .set("Authorization", "Bearer unknown-role-token");
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: "not_registered" });
+  });
+
+  it("accepts an unknown-role token on the opt-in /api/tokens/me route", async () => {
+    const res = await request(app)
+      .get("/api/tokens/me")
+      .set("Authorization", "Bearer unknown-role-token");
+    expect(res.status).toBe(200);
+    expect(res.body.role).toBe("unknown");
+    expect(res.body.scope).toBe("onboarding");
+  });
+
+  it("returns the real role after the wallet registers and refreshes", async () => {
+    (deriveRole as jest.Mock).mockResolvedValue("player");
+    const res = await request(app)
+      .post("/api/tokens/refresh")
+      .send({ refreshToken: "refresh-unknown" });
+    expect(res.status).toBe(200);
+    expect(res.body.role).toBe("player");
+    expect(res.body.scope).not.toBe("onboarding");
   });
 });

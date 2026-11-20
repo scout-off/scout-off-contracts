@@ -3988,4 +3988,85 @@ mod tests {
             "expected HistoryEntryNotFound for missing history index"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // #1823 — purge_player_data guard semantics
+    // -----------------------------------------------------------------------
+
+    /// Erasure is a compliance operation, not user activity: it must remain
+    /// available while the contract is paused (an incident pause is exactly
+    /// when an operator may be told to stop processing personal data).
+    #[test]
+    fn test_purge_player_data_succeeds_while_paused() {
+        let (env, client, validator) = setup();
+        let player_id = 77u64;
+
+        client.advance_level(&validator, &player_id, &1u32);
+        assert_eq!(client.get_history_count(&player_id), 1);
+
+        client.pause_contract();
+
+        // Paused must not block erasure.
+        client.purge_player_data(&player_id);
+
+        assert_eq!(client.get_level(&player_id), ProgressLevel::Unverified);
+        assert_eq!(client.get_history_count(&player_id), 0);
+
+        // The contract is still paused afterwards — purge does not unpause.
+        let err = client
+            .try_advance_level(&validator, &player_id, &1u32)
+            .expect_err("expected an error while paused");
+        assert_eq!(err.unwrap(), ProgressError::ContractPaused);
+        let _ = env;
+    }
+
+    /// Erasure still requires initialisation: a contract with no admin/state
+    /// must reject the call with a typed error rather than trap.
+    #[test]
+    fn test_purge_player_data_before_initialization_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let id = env.register(ProgressContract, (admin,));
+        let client = ProgressContractClient::new(&env, &id);
+
+        // Simulate a contract that never ran its constructor/initialize.
+        env.as_contract(&id, || {
+            env.storage().instance().remove(&DataKey::Initialized);
+            env.storage().persistent().remove(&DataKey::Admin);
+        });
+
+        let result = client.try_purge_player_data(&1u64);
+        assert_eq!(
+            result,
+            Err(Ok(ProgressError::NotInitialized)),
+            "purge must require initialisation"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // #1825 — purge_player_data cursor arithmetic must not trap
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_purge_player_data_u32_max_cursor_returns_typed_error() {
+        let (_env, client, validator) = setup();
+        let player_id = 88u64;
+
+        client.advance_level(&validator, &player_id, &1u32);
+
+        // A cursor at u32::MAX must be rejected with a typed error, not a
+        // host panic from overflow-checked arithmetic.
+        let result = client.try_purge_player_data(&player_id);
+        assert!(result.is_ok(), "in-range purge must succeed");
+
+        // Re-seed history and drive the paged path with an out-of-range cursor.
+        client.advance_level(&validator, &player_id, &1u32);
+        let result = client.try_purge_player_data_from_cursor(&player_id, &u32::MAX);
+        assert_eq!(
+            result,
+            Err(Ok(ProgressError::InvalidInput)),
+            "out-of-range cursor must return InvalidInput"
+        );
+    }
 }

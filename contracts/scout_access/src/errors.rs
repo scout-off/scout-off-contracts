@@ -223,6 +223,12 @@ pub enum ScoutAccessError {
     /// exactly `TrialCounter + 1` for the target player. Mirrors progress's
     /// `InvalidHistoryIndex` for the same contiguity violation.
     InvalidTrialIndex = 58,
+
+    // ── Cursor validation (issue #1825) ──
+    /// A paged purge function was called with a `cursor` greater than the
+    /// total number of entries, so the requested page cannot exist. Returned
+    /// instead of trapping on cursor arithmetic near `u32::MAX`.
+    CursorOutOfRange = 59,
 }
 
 impl AdminError for ScoutAccessError {
@@ -302,5 +308,10 @@ mod tests {
     #[test]
     fn scout_deactivated_is_code_39() {
         assert_eq!(ScoutAccessError::ScoutDeactivated as u32, 39);
+    }
+
+    #[test]
+    fn cursor_out_of_range_is_code_59() {
+        assert_eq!(ScoutAccessError::CursorOutOfRange as u32, 59);
     }
 }
