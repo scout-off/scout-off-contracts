@@ -839,3 +839,34 @@ fn test_log_trial_offer_rejected_when_escrow_zero() {
     h.scout_access
         .confirm_trial_offer(&player_wallet, &player_id, &pending, &None::<String>);
 }
+
+/// #1824: `purge_player_data` must report `TrialEscrowOutstanding` (not
+/// `TrialOfferNotFound`) while an unexpired, non-zero escrow still exists,
+/// and succeed once the escrow has expired and been swept.
+#[test]
+fn test_purge_player_data_blocked_by_outstanding_trial_escrow() {
+    let h = setup();
+    let player_id: u64 = 35;
+    advance_player(&h, player_id, 2);
+    let scout = setup_elite_scout(&h, player_id);
+    log_offer(&h, &scout, player_id, CID_1, CID_2);
+
+    // Escrow is still active: purge must refuse with the dedicated error.
+    let blocked = h.scout_access.try_purge_player_data(&player_id);
+    assert_eq!(
+        blocked,
+        Err(Ok(ScoutAccessError::TrialEscrowOutstanding)),
+        "purge must report TrialEscrowOutstanding while escrow is unexpired"
+    );
+
+    // Advance past the expiry window and sweep the escrow, then purge again.
+    h.env.ledger().with_mut(|l| l.timestamp += EXPIRY_SECS + 1);
+    h.scout_access.expire_trial_offers(&20u32);
+
+    let purged = h.scout_access.try_purge_player_data(&player_id);
+    assert_eq!(
+        purged,
+        Ok(Ok(())),
+        "purge must succeed once the escrow has expired and been refunded"
+    );
+}
