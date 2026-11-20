@@ -225,6 +225,10 @@ pub enum VerificationError {
     // ── Bulk revocation (issue #1605) ──
     /// `batch_revoke_validators` was called with more than `MAX_BATCH_REVOKE` wallets.
     BatchTooLarge = 64,
+    // ── Purge cursor validation (issue #1825) ──
+    /// A paged purge function was called with a `cursor` beyond the total
+    /// number of entries, or with cursor arithmetic that would overflow.
+    CursorOutOfRange = 65,
 }
 
 impl AdminError for VerificationError {

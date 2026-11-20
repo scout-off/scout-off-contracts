@@ -331,6 +331,51 @@ impl VerificationContract {
         config
     }
 
+    /// Erase all personal data for `player_id` (admin only).
+    ///
+    /// Erasure is a compliance operation, not user activity, so it is
+    /// intentionally **allowed while the contract is paused** (see
+    /// `docs/PLAYER_ERASURE.md` and `docs/RUNBOOK.md`). It still requires the
+    /// contract to be initialised. Guard order matches the project convention
+    /// (`require_admin` → `require_initialized` → `bump_instance_ttl`).
+    ///
+    /// `cursor` is the number of already-purged milestones; it must be
+    /// `<= total` for the player. Out-of-range cursors return
+    /// `VerificationError::InvalidInput` rather than trapping on overflow.
+    pub fn purge_player_data(
+        env: Env,
+        player_id: u64,
+        cursor: u32,
+    ) -> Result<u32, VerificationError> {
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        Self::require_initialized(&env)?;
+        env.storage()
+            .instance()
+            .extend_ttl(PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+
+        let total: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalMilestoneCount)
+            .unwrap_or(0u32);
+        if cursor > total {
+            return Err(VerificationError::InvalidInput);
+        }
+        let start = cursor;
+        let end = start.saturating_add(MILESTONE_FLAG_PAGE_SIZE).min(total);
+        let mut purged: u32 = 0;
+        let mut i = start;
+        while i < end {
+            let key = DataKey::Milestone(player_id, i);
+            if env.storage().persistent().has(&key) {
+                env.storage().persistent().remove(&key);
+                purged = purged.saturating_add(1);
+            }
+            i = i.saturating_add(1);
+        }
+        Ok(purged)
+    }
+
     pub fn get_player_affiliation_count(env: Env, player_id: u64) -> u32 {
         env.storage()
             .persistent()
@@ -9169,6 +9214,45 @@ mod tests {
                 ),
                 _ => None,
             })
+    }
+
+    // -------------------------------------------------------------------------
+    // Erasure: purge_player_data guard semantics and cursor safety
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn purge_player_data_succeeds_while_paused() {
+        let env = setup_env();
+        let admin = Address::generate(&env);
+        let client = deploy(&env, &admin);
+        client.pause();
+        // Erasure is a compliance operation and must remain available while
+        // the contract is paused.
+        assert_eq!(client.purge_player_data(&1u64, &0u32), 0u32);
+    }
+
+    #[test]
+    fn purge_player_data_fails_before_initialization() {
+        let env = setup_env();
+        let admin = Address::generate(&env);
+        // Deploy without running the constructor/initialize.
+        let contract_id = env.register(VerificationContract, ());
+        let client = VerificationContractClient::new(&env, &contract_id);
+        assert_eq!(
+            client.try_purge_player_data(&1u64, &0u32),
+            Err(Ok(VerificationError::NotInitialized))
+        );
+    }
+
+    #[test]
+    fn purge_player_data_rejects_out_of_range_cursor() {
+        let env = setup_env();
+        let admin = Address::generate(&env);
+        let client = deploy(&env, &admin);
+        assert_eq!(
+            client.try_purge_player_data(&1u64, &u32::MAX),
+            Err(Ok(VerificationError::InvalidInput))
+        );
     }
 
     #[test]
