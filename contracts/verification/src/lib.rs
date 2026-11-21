@@ -2927,7 +2927,8 @@ impl VerificationContract {
     /// 1. `get_validator(wallet)`          → credentials, registered_at, active
     /// 2. `get_validator_status(wallet)`   → ValidatorStatus
     /// 3. `get_validator_milestone_count(wallet)` → milestone_count
-    /// 4. `get_validator_players(wallet)`  → distinct_players list
+    /// 4. `ValidatorPlayerCount(wallet)`   → distinct_player_count (bounded; use
+    ///    `get_validator_players_page` for the list)
     ///
     /// Returns `ValidatorNotFound` if the wallet has never been registered.
     /// This is a pure read-only aggregation — no new storage or business logic.
@@ -2958,14 +2959,22 @@ impl VerificationContract {
             .get(&DataKey::ValidatorMilestoneCount(wallet.clone()))
             .unwrap_or(0u32);
 
-        // 4. Distinct players (same logic as get_validator_players)
-        let distinct_players: Vec<u64> = env
+        // 4. Distinct player count: read the O(1) counter. Legacy validators
+        //    (pre-counter) fall back to the stored index length. The list itself
+        //    is not returned; use `get_validator_players_page`.
+        let distinct_player_count: u32 = match env
             .storage()
             .persistent()
-            .get(&DataKey::ValidatorPlayers(wallet.clone()))
-            .unwrap_or_else(|| Vec::new(&env));
-
-        let distinct_player_count = distinct_players.len();
+            .get::<DataKey, u32>(&DataKey::ValidatorPlayerCount(wallet.clone()))
+        {
+            Some(c) => c,
+            None => env
+                .storage()
+                .persistent()
+                .get::<DataKey, Vec<u64>>(&DataKey::ValidatorPlayers(wallet.clone()))
+                .map(|v| v.len())
+                .unwrap_or(0),
+        };
 
         Ok(ValidatorActivityReport {
             wallet,
@@ -2975,7 +2984,6 @@ impl VerificationContract {
             status,
             milestone_count,
             distinct_player_count,
-            distinct_players,
         })
     }
 
@@ -3200,6 +3208,7 @@ impl VerificationContract {
         if !vp.iter().any(|id| id == player_id) {
             vp.push_back(player_id);
             env.storage().persistent().set(&vp_key, &vp);
+            Self::set_validator_player_count(&env, &validator, vp.len());
             env.storage()
                 .persistent()
                 .extend_ttl(&vp_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
@@ -4457,6 +4466,15 @@ impl VerificationContract {
             })
     }
 
+    /// Persist the O(1) distinct-player counter used by the activity report.
+    fn set_validator_player_count(env: &Env, validator: &Address, count: u32) {
+        let key = DataKey::ValidatorPlayerCount(validator.clone());
+        env.storage().persistent().set(&key, &count);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+    }
+
     /// Increment both milestone totals. Neither can fail: the u64 count cannot
     /// realistically overflow and the legacy u32 count saturates, so a full
     /// counter can never brick approvals (#1454).
@@ -5124,6 +5142,7 @@ impl VerificationContract {
         if !vp_players.contains(player_id) {
             vp_players.push_back(player_id);
             env.storage().persistent().set(&vp_index_key, &vp_players);
+            Self::set_validator_player_count(env, validator_wallet, vp_players.len());
             env.storage().persistent().extend_ttl(
                 &vp_index_key,
                 PERSISTENT_TTL_MAX,
@@ -8729,10 +8748,6 @@ mod tests {
             individual_players.len(),
             "distinct_player_count mismatch"
         );
-        assert_eq!(
-            report.distinct_players, individual_players,
-            "distinct_players mismatch"
-        );
 
         // Sanity-check expected values
         assert_eq!(report.milestone_count, 2);
@@ -8770,7 +8785,6 @@ mod tests {
         let report = client.get_validator_activity_report(&validator);
         assert_eq!(report.milestone_count, 0);
         assert_eq!(report.distinct_player_count, 0);
-        assert_eq!(report.distinct_players.len(), 0);
         assert_eq!(report.status, types::ValidatorStatus::Active);
     }
 

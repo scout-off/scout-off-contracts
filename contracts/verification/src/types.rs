@@ -7,7 +7,7 @@ use soroban_sdk::{contracttype, Address, BytesN, String, Vec};
 /// - `get_validator`               → credentials, registered_at, active
 /// - `get_validator_status`        → status
 /// - `get_validator_milestone_count` → milestone_count
-/// - `get_validator_players`       → distinct_players (and distinct_player_count)
+/// - `ValidatorPlayerCount`        → distinct_player_count (list: `get_validator_players_page`)
 ///
 /// This is a pure read-only aggregate — no new storage or business logic.
 #[contracttype]
@@ -27,8 +27,6 @@ pub struct ValidatorActivityReport {
     pub milestone_count: u32,
     /// Number of distinct players for whom this validator has approved at least one milestone.
     pub distinct_player_count: u32,
-    /// List of distinct player IDs (same data as `get_validator_players`).
-    pub distinct_players: Vec<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -600,6 +598,10 @@ pub enum DataKey {
     /// Start timestamp of the current per-(validator, player) cap window
     /// (issue #1615). Absent for counts written before windows existed.
     ValidatorPlayerWindowStart(Address, u64),
+    /// O(1) count of distinct players in `ValidatorPlayers(wallet)`, read by
+    /// `get_validator_activity_report` (issue #1806). Absent for validators
+    /// written before the counter existed (the report falls back to the index).
+    ValidatorPlayerCount(Address),
 }
 
 /// Snapshot of both cross-contract peer address pointers held by the

@@ -18,6 +18,10 @@ The initial v0.1.0 entry below retains the year-only date because no exact histo
 
 ## Unreleased
 
+- Contracts affected: `verification`
+- Summary: `ValidatorActivityReport.distinct_players` removed so `get_validator_activity_report` cost no longer scales with a validator's player count; `distinct_player_count` is served from the new `ValidatorPlayerCount` counter (appended storage key, with legacy fallback). Use `get_validator_players_page` for the list (#1806).
+- Classification: Breaking (MAJOR)
+
 - Contracts affected: `registration`
 - Summary: Added a bounded (last 10) append-only scout verification history (`DataKey::ScoutVerificationHistory`, appended storage key) with `get_scout_verification_history`; `scout_verified` now carries the acting `admin` in its data (topics unchanged) (#1808). Run `scripts/check-storage-layout-compat.sh` for the new key.
 - Classification: Non-breaking (MINOR)
