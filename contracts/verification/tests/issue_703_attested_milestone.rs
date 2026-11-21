@@ -459,6 +459,73 @@ fn attestation_nonce_bitmap_allows_out_of_order_within_window() {
     assert_eq!(result, Err(Ok(VerificationError::InvalidNonce)));
 }
 
+// ── Issue #1884: get_attestation_key view ──
+
+#[test]
+fn get_attestation_key_returns_none_for_validator_without_key() {
+    let (env, client, _admin, _contract_id) = setup();
+    let validator = Address::generate(&env);
+    client.register_validator(
+        &validator,
+        &String::from_str(&env, CREDENTIALS),
+        &String::from_str(&env, "Default Academy"),
+        &soroban_sdk::Vec::new(&env),
+    );
+
+    assert_eq!(
+        client.get_attestation_key(&validator),
+        None,
+        "a validator that never registered a key must return None"
+    );
+}
+
+#[test]
+fn get_attestation_key_returns_registered_key() {
+    let (env, client, _admin, _contract_id) = setup();
+    let validator = Address::generate(&env);
+    let sk = signing_key(20);
+    register_validator_with_key(&env, &client, &validator, &sk);
+
+    assert_eq!(
+        client.get_attestation_key(&validator),
+        Some(pubkey_bytesn(&env, &sk)),
+        "the view must return the registered ed25519 key bytes"
+    );
+}
+
+#[test]
+fn get_attestation_key_returns_new_key_after_reregistration() {
+    let (env, client, _admin, _contract_id) = setup();
+    let validator = Address::generate(&env);
+    let old_sk = signing_key(21);
+    let new_sk = signing_key(22);
+    register_validator_with_key(&env, &client, &validator, &old_sk);
+    assert_eq!(
+        client.get_attestation_key(&validator),
+        Some(pubkey_bytesn(&env, &old_sk))
+    );
+
+    client.register_attestation_key(&validator, &pubkey_bytesn(&env, &new_sk));
+
+    assert_eq!(
+        client.get_attestation_key(&validator),
+        Some(pubkey_bytesn(&env, &new_sk)),
+        "re-registration must replace the previously stored key"
+    );
+}
+
+#[test]
+fn get_attestation_key_returns_none_for_unknown_wallet() {
+    let (env, client, _admin, _contract_id) = setup();
+    let unknown = Address::generate(&env);
+
+    assert_eq!(
+        client.get_attestation_key(&unknown),
+        None,
+        "an unknown wallet must return None"
+    );
+}
+
 #[test]
 fn attestation_nonce_window_advances_when_far_ahead() {
     let (env, client, _admin, contract_id) = setup();
