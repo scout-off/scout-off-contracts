@@ -52,6 +52,8 @@ export function issueSep10Token(payload: Sep10TokenPayload, secret: string) {
     algorithm: "HS256",
     expiresIn: accessTokenTtlSeconds(),
     jwtid: uuidv4(),
+    issuer: config.jwtIssuer,
+    audience: config.jwtAudience,
   });
 }
 

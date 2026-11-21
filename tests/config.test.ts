@@ -20,6 +20,26 @@ describe("loadConfig", () => {
     expect(loadConfig(env).stellarNetwork).toBe("testnet");
   });
 
+  it("defaults JWT_ISSUER to https://<HOME_DOMAIN>", () => {
+    const config = loadConfig(VALID);
+    expect(config.jwtIssuer).toBe(`https://${VALID.HOME_DOMAIN}`);
+  });
+
+  it("defaults JWT_AUDIENCE to scoutchain-api", () => {
+    const config = loadConfig(VALID);
+    expect(config.jwtAudience).toBe("scoutchain-api");
+  });
+
+  it("honours explicit JWT_ISSUER and JWT_AUDIENCE overrides", () => {
+    const config = loadConfig({
+      ...VALID,
+      JWT_ISSUER: "https://issuer.example.com",
+      JWT_AUDIENCE: "custom-audience",
+    });
+    expect(config.jwtIssuer).toBe("https://issuer.example.com");
+    expect(config.jwtAudience).toBe("custom-audience");
+  });
+
   it("lists every missing variable", () => {
     expect(() => loadConfig({})).toThrow(
       /JWT_SECRET is required[\s\S]*SEP10_SIGNING_SECRET is required[\s\S]*HOME_DOMAIN is required[\s\S]*WEB_AUTH_DOMAIN is required/

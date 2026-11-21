@@ -1,15 +1,30 @@
 import { StrKey } from "@stellar/stellar-sdk";
+import jwt from "jsonwebtoken";
 
 export const SUPPORTED_NETWORKS = ["testnet", "mainnet"] as const;
 export type StellarNetwork = (typeof SUPPORTED_NETWORKS)[number];
 
+export const DEFAULT_JWT_AUDIENCE = "scoutchain-api";
+
 export interface Config {
   jwtSecret: string;
+  jwtIssuer: string;
+  jwtAudience: string;
   sep10SigningSecret: string;
   homeDomain: string;
   webAuthDomain: string;
   stellarNetwork: StellarNetwork;
   adminAddress?: string;
+}
+
+export interface JwtPayload {
+  sub: string;
+  role: string;
+  iat?: number;
+  exp?: number;
+  jti?: string;
+  iss?: string;
+  aud?: string | string[];
 }
 
 const MIN_JWT_SECRET_BYTES = 32;
@@ -54,8 +69,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`Invalid environment configuration:\n  - ${errors.join("\n  - ")}`);
   }
 
+  const jwtIssuer = env.JWT_ISSUER?.trim() || (homeDomain ? `https://${homeDomain}` : "");
+  const jwtAudience = env.JWT_AUDIENCE?.trim() || DEFAULT_JWT_AUDIENCE;
+
   return {
     jwtSecret,
+    jwtIssuer,
+    jwtAudience,
     sep10SigningSecret,
     homeDomain,
     webAuthDomain,
@@ -65,3 +85,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 }
 
 export const config = loadConfig();
+
+/**
+ * Single verification path for backend-issued JWTs.
+ *
+ * Enforces the HS256 algorithm plus the configured `iss` and `aud` claims so
+ * tokens minted by any other service sharing JWT_SECRET are rejected.
+ */
+export function verifyJwt(token: string): JwtPayload {
+  return jwt.verify(token, config.jwtSecret, {
+    algorithms: ["HS256"],
+    issuer: config.jwtIssuer,
+    audience: config.jwtAudience,
+  }) as JwtPayload;
+}

@@ -1,7 +1,6 @@
 import express, { Request, Response, NextFunction } from "express";
-import jwt from "jsonwebtoken";
 import { StrKey } from "@stellar/stellar-sdk";
-import { config } from "./config";
+import { config, verifyJwt } from "./config";
 import {
   buildChallengeTx,
   verifyChallengeTx,
@@ -125,9 +124,7 @@ app.post(
     let jti: string;
 
     try {
-      const payload = jwt.verify(token, config.jwtSecret, { algorithms: ["HS256"] }) as {
-        jti?: string;
-      };
+      const payload = verifyJwt(token) as { jti?: string };
       if (!payload.jti) {
         return res
           .status(400)
