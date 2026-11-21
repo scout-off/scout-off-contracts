@@ -781,6 +781,10 @@ pub fn contract_upgraded(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>)
     );
 }
 
+/// Emitted by `open_migration_window`. While the window is open the
+/// `admin_seed_*` entrypoints are enabled, so indexers should alert on this
+/// event in production (see docs/EVENT_REFERENCE.md and docs/RUNBOOK.md).
+///
 /// topics: (event_name, admin)  data: ()
 pub fn migration_window_opened(env: &Env, admin: &Address) {
     env.events().publish(
@@ -789,6 +793,9 @@ pub fn migration_window_opened(env: &Env, admin: &Address) {
     );
 }
 
+/// Emitted by `close_migration_window`; disables the `admin_seed_*`
+/// entrypoints again.
+///
 /// topics: (event_name, admin)  data: ()
 pub fn migration_window_closed(env: &Env, admin: &Address) {
     env.events().publish(
