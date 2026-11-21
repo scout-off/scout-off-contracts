@@ -36,12 +36,22 @@ export async function requireAuth(
 ): Promise<void> {
   const authHeader = req.headers["authorization"];
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  if (!authHeader) {
     res.status(401).json({ error: "Unauthorized - no token provided" });
     return;
   }
 
-  const token = authHeader.split(" ")[1];
+  const bearerMatch = /^Bearer\s+([A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]*)$/i.exec(
+    authHeader.trim()
+  );
+
+  if (!bearerMatch) {
+    res.setHeader("WWW-Authenticate", 'Bearer error="invalid_request"');
+    res.status(401).json({ error: "Unauthorized - malformed authorization header" });
+    return;
+  }
+
+  const token = bearerMatch[1];
 
   try {
     const payload = jwt.verify(token, config.jwtSecret, { algorithms: ["HS256"] }) as {

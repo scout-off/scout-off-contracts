@@ -72,4 +72,31 @@ describe("POST /auth", () => {
     expect(res.status).toBe(500);
     expect(JSON.stringify(res.body)).not.toContain("db connection refused");
   });
+
+  it("returns 400 invalid transaction when transaction is an object", async () => {
+    const res = await request(app)
+      .post("/auth")
+      .send({ transaction: { foo: "bar" }, account: VALID_ACCOUNT });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "invalid transaction" });
+    expect(verifyChallengeTx).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 invalid transaction when transaction is a number", async () => {
+    const res = await request(app)
+      .post("/auth")
+      .send({ transaction: 12345, account: VALID_ACCOUNT });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "invalid transaction" });
+    expect(verifyChallengeTx).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 invalid account when account is invalid", async () => {
+    const res = await request(app)
+      .post("/auth")
+      .send({ transaction: "tx", account: "not-a-key" });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "invalid account" });
+    expect(verifyChallengeTx).not.toHaveBeenCalled();
+  });
 });
