@@ -8,6 +8,8 @@ const VALID = {
   STELLAR_NETWORK: "testnet",
 };
 
+const LOCAL_PASSPHRASE = "Standalone Network ; February 2017";
+
 describe("loadConfig", () => {
   it("parses a valid environment", () => {
     const config = loadConfig(VALID);
@@ -40,5 +42,42 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...VALID, STELLAR_NETWORK: "devnet" })).toThrow(
       /STELLAR_NETWORK must be one of/
     );
+  });
+
+  it("accepts STELLAR_NETWORK=local with NETWORK_PASSPHRASE", () => {
+    const config = loadConfig({
+      ...VALID,
+      STELLAR_NETWORK: "local",
+      NETWORK_PASSPHRASE: LOCAL_PASSPHRASE,
+    });
+    expect(config.stellarNetwork).toBe("local");
+    expect(config.networkPassphrase).toBe(LOCAL_PASSPHRASE);
+  });
+
+  it("accepts STELLAR_NETWORK=custom with NETWORK_PASSPHRASE", () => {
+    const config = loadConfig({
+      ...VALID,
+      STELLAR_NETWORK: "custom",
+      NETWORK_PASSPHRASE: LOCAL_PASSPHRASE,
+    });
+    expect(config.stellarNetwork).toBe("custom");
+    expect(config.networkPassphrase).toBe(LOCAL_PASSPHRASE);
+  });
+
+  it("rejects STELLAR_NETWORK=local without NETWORK_PASSPHRASE", () => {
+    expect(() => loadConfig({ ...VALID, STELLAR_NETWORK: "local" })).toThrow(
+      /NETWORK_PASSPHRASE is required/
+    );
+  });
+
+  it("rejects STELLAR_NETWORK=local when NODE_ENV=production", () => {
+    expect(() =>
+      loadConfig({
+        ...VALID,
+        STELLAR_NETWORK: "local",
+        NETWORK_PASSPHRASE: LOCAL_PASSPHRASE,
+        NODE_ENV: "production",
+      })
+    ).toThrow(/local network is not allowed in production/);
   });
 });

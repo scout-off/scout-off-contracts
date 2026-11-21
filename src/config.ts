@@ -1,7 +1,10 @@
-import { StrKey } from "@stellar/stellar-sdk";
+import { Networks, StrKey } from "@stellar/stellar-sdk";
 
-export const SUPPORTED_NETWORKS = ["testnet", "mainnet"] as const;
+export const SUPPORTED_NETWORKS = ["testnet", "mainnet", "local", "custom"] as const;
 export type StellarNetwork = (typeof SUPPORTED_NETWORKS)[number];
+
+/** Networks that require an explicit NETWORK_PASSPHRASE. */
+const CUSTOM_PASSPHRASE_NETWORKS: readonly StellarNetwork[] = ["local", "custom"];
 
 export interface Config {
   jwtSecret: string;
@@ -9,6 +12,7 @@ export interface Config {
   homeDomain: string;
   webAuthDomain: string;
   stellarNetwork: StellarNetwork;
+  networkPassphrase: string;
   adminAddress?: string;
 }
 
@@ -46,8 +50,27 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const webAuthDomain = required("WEB_AUTH_DOMAIN");
 
   const network = env.STELLAR_NETWORK?.trim() || "testnet";
-  if (!(SUPPORTED_NETWORKS as readonly string[]).includes(network)) {
+  const networkIsSupported = (SUPPORTED_NETWORKS as readonly string[]).includes(network);
+  if (!networkIsSupported) {
     errors.push(`STELLAR_NETWORK must be one of: ${SUPPORTED_NETWORKS.join(", ")}`);
+  }
+
+  let networkPassphrase = "";
+  if (networkIsSupported) {
+    const stellarNetwork = network as StellarNetwork;
+    if (CUSTOM_PASSPHRASE_NETWORKS.includes(stellarNetwork)) {
+      if (stellarNetwork === "local" && env.NODE_ENV?.trim() === "production") {
+        errors.push("STELLAR_NETWORK=local is not allowed when NODE_ENV=production");
+      }
+      networkPassphrase = env.NETWORK_PASSPHRASE?.trim() || "";
+      if (!networkPassphrase) {
+        errors.push(`NETWORK_PASSPHRASE is required when STELLAR_NETWORK=${stellarNetwork}`);
+      }
+    } else {
+      networkPassphrase =
+        env.NETWORK_PASSPHRASE?.trim() ||
+        (stellarNetwork === "mainnet" ? Networks.PUBLIC : Networks.TESTNET);
+    }
   }
 
   if (errors.length > 0) {
@@ -60,6 +83,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     homeDomain,
     webAuthDomain,
     stellarNetwork: network as StellarNetwork,
+    networkPassphrase,
     adminAddress: env.ADMIN_ADDRESS?.trim() || undefined,
   };
 }
