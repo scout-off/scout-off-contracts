@@ -41,4 +41,69 @@ describe("loadConfig", () => {
       /STELLAR_NETWORK must be one of/
     );
   });
+
+  describe("token TTLs", () => {
+    it("applies defaults when unset", () => {
+      const config = loadConfig(VALID);
+      expect(config.accessTokenTtlSeconds).toBe(900);
+      expect(config.refreshTokenTtlSeconds).toBe(604800);
+    });
+
+    it("parses valid custom values", () => {
+      const config = loadConfig({
+        ...VALID,
+        ACCESS_TOKEN_TTL_SECONDS: "300",
+        REFRESH_TOKEN_TTL_SECONDS: "3600",
+      });
+      expect(config.accessTokenTtlSeconds).toBe(300);
+      expect(config.refreshTokenTtlSeconds).toBe(3600);
+    });
+
+    it("rejects a non-numeric ACCESS_TOKEN_TTL_SECONDS", () => {
+      expect(() =>
+        loadConfig({ ...VALID, ACCESS_TOKEN_TTL_SECONDS: "15m" })
+      ).toThrow(/ACCESS_TOKEN_TTL_SECONDS must be a positive integer/);
+    });
+
+    it("rejects a non-numeric REFRESH_TOKEN_TTL_SECONDS", () => {
+      expect(() =>
+        loadConfig({ ...VALID, REFRESH_TOKEN_TTL_SECONDS: "7d" })
+      ).toThrow(/REFRESH_TOKEN_TTL_SECONDS must be a positive integer/);
+    });
+
+    it("rejects a zero ACCESS_TOKEN_TTL_SECONDS", () => {
+      expect(() =>
+        loadConfig({ ...VALID, ACCESS_TOKEN_TTL_SECONDS: "0" })
+      ).toThrow(/ACCESS_TOKEN_TTL_SECONDS must be a positive integer/);
+    });
+
+    it("rejects a zero REFRESH_TOKEN_TTL_SECONDS", () => {
+      expect(() =>
+        loadConfig({ ...VALID, REFRESH_TOKEN_TTL_SECONDS: "0" })
+      ).toThrow(/REFRESH_TOKEN_TTL_SECONDS must be a positive integer/);
+    });
+
+    it("rejects a negative ACCESS_TOKEN_TTL_SECONDS", () => {
+      expect(() =>
+        loadConfig({ ...VALID, ACCESS_TOKEN_TTL_SECONDS: "-60" })
+      ).toThrow(/ACCESS_TOKEN_TTL_SECONDS must be a positive integer/);
+    });
+
+    it("rejects a negative REFRESH_TOKEN_TTL_SECONDS", () => {
+      expect(() =>
+        loadConfig({ ...VALID, REFRESH_TOKEN_TTL_SECONDS: "-60" })
+      ).toThrow(/REFRESH_TOKEN_TTL_SECONDS must be a positive integer/);
+    });
+
+    it("rejects an ACCESS_TOKEN_TTL_SECONDS above the 15-minute ceiling", () => {
+      expect(() =>
+        loadConfig({ ...VALID, ACCESS_TOKEN_TTL_SECONDS: "901" })
+      ).toThrow(/ACCESS_TOKEN_TTL_SECONDS must not exceed 900 seconds/);
+    });
+
+    it("accepts an ACCESS_TOKEN_TTL_SECONDS at the 15-minute ceiling", () => {
+      const config = loadConfig({ ...VALID, ACCESS_TOKEN_TTL_SECONDS: "900" });
+      expect(config.accessTokenTtlSeconds).toBe(900);
+    });
+  });
 });

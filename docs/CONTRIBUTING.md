@@ -63,9 +63,16 @@ bash scripts/check-error-code-continuity.sh  # append-only error code continuity
 bash scripts/check-cargo-doc.sh  # public-item docs coverage check
 ```
 
+## Branch model
+
+- **`main`** is the release branch. It should always be in a releasable state; merges to `main` are what ship.
+- **`develop`** is the active integration branch. Day-to-day feature and fix PRs target `develop`, and `develop` is merged into `main` for releases.
+
+Both `.github/workflows/ci.yml` and `.github/workflows/contract-ci.yml` run on `push` and `pull_request` events targeting **both** `main` and `develop`, so a PR against `develop` gets exactly the same backend, database, and contract checks as one against `main`. The CI checks table below applies to both branches.
+
 ## CI checks
 
-The repository defines seven CI jobs across `.github/workflows/ci.yml` and `.github/workflows/contract-ci.yml`. The table below lists each job, its purpose, and whether it is configured as a **required** status check (i.e., blocks merging to `main`) per GitHub's branch-protection rules.
+The repository defines seven CI jobs across `.github/workflows/ci.yml` and `.github/workflows/contract-ci.yml`. The table below lists each job, its purpose, and whether it is configured as a **required** status check (i.e., blocks merging to `main`) per GitHub's branch-protection rules. Both workflows run on push and pull requests to `main` and `develop` (see [Branch model](#branch-model)), so the same jobs gate changes on either branch.
 
 | Job | File | What it checks | Required |
 |-----|------|----------------|----------|
