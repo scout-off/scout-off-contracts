@@ -121,6 +121,9 @@ jobs:
           shellcheck scripts/check-prisma-drift.sh
       - name: Docs completeness check
         run: bash scripts/check-docs.sh
+
+      - name: README/ai.md entrypoint check (warn-only)
+        run: bash scripts/check-readme-ai-docs.sh
       - name: Event-topic consistency check
         run: bash scripts/check-event-topic-consistency.sh
       - name: Guard-ordering audit
