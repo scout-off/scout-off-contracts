@@ -41,4 +41,24 @@ describe("loadConfig", () => {
       /STELLAR_NETWORK must be one of/
     );
   });
+
+  it("defaults PORT to 3000 when unset", () => {
+    expect(loadConfig(VALID).port).toBe(3000);
+  });
+
+  it("parses a valid PORT", () => {
+    expect(loadConfig({ ...VALID, PORT: "8080" }).port).toBe(8080);
+  });
+
+  it("rejects a non-integer PORT", () => {
+    expect(() => loadConfig({ ...VALID, PORT: "abc" })).toThrow(/PORT must be an integer/);
+  });
+
+  it("rejects an out-of-range PORT above 65535", () => {
+    expect(() => loadConfig({ ...VALID, PORT: "99999" })).toThrow(/PORT must be an integer/);
+  });
+
+  it("rejects an out-of-range PORT of 0", () => {
+    expect(() => loadConfig({ ...VALID, PORT: "0" })).toThrow(/PORT must be an integer/);
+  });
 });

@@ -10,6 +10,7 @@ export interface Config {
   webAuthDomain: string;
   stellarNetwork: StellarNetwork;
   adminAddress?: string;
+  port: number;
 }
 
 const MIN_JWT_SECRET_BYTES = 32;
@@ -50,6 +51,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     errors.push(`STELLAR_NETWORK must be one of: ${SUPPORTED_NETWORKS.join(", ")}`);
   }
 
+  const DEFAULT_PORT = 3000;
+  const rawPort = env.PORT?.trim();
+  let port = DEFAULT_PORT;
+  if (rawPort) {
+    if (!/^\d+$/.test(rawPort)) {
+      errors.push(`PORT must be an integer between 1 and 65535 (got "${rawPort}")`);
+    } else {
+      const parsed = Number(rawPort);
+      if (parsed < 1 || parsed > 65535) {
+        errors.push(`PORT must be an integer between 1 and 65535 (got "${rawPort}")`);
+      } else {
+        port = parsed;
+      }
+    }
+  }
+
   if (errors.length > 0) {
     throw new Error(`Invalid environment configuration:\n  - ${errors.join("\n  - ")}`);
   }
@@ -61,6 +78,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webAuthDomain,
     stellarNetwork: network as StellarNetwork,
     adminAddress: env.ADMIN_ADDRESS?.trim() || undefined,
+    port,
   };
 }
 

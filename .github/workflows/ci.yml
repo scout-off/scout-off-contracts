@@ -169,5 +169,7 @@ jobs:
           done
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Check formatting
+        run: npm run format:check
       - name: Run reconcile-indexer smoke test
         run: npx jest scripts/__tests__/reconcile-indexer.test.js --roots='<rootDir>/scripts'
