@@ -377,6 +377,14 @@ jobs:
             echo "  OK: dist/index.js present"
           done
 
+      - name: Validate bindings packages (publint, attw, import smoke test)
+        run: |
+          set -euo pipefail
+          for pkg in registration verification progress scout_access; do
+            (cd "bindings/$pkg" && npm run check:package)
+          done
+          node scripts/smoke-test-bindings-exports.mjs
+
       - name: Run bindings example integration tests against the sandbox
         run: |
           set -euo pipefail
