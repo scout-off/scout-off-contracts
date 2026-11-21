@@ -758,3 +758,23 @@ See [`docs/TTL_POLICY.md`](TTL_POLICY.md) for:
 - Rationale for 30-day choice
 - Cost analysis (CPU and storage)
 - Adding new persistent keys with proper TTL handling
+
+## Backend service
+
+The Node/Express SEP-10 backend ships as `Dockerfile.backend` (multi-stage, `node:20-slim`, non-root `node` user, `NODE_ENV=production`, production dependencies only, Prisma client and engines generated for the image platform). The build uses `tsconfig.docker.json`, which emits `dist/server.js`.
+
+```bash
+docker build -f Dockerfile.backend -t scoutchain-backend .
+docker run --rm -p 3000:3000 --env-file .env.production scoutchain-backend
+```
+
+Required environment variables: `JWT_SECRET`, `SEP10_SIGNING_SECRET`, `HOME_DOMAIN`, `WEB_AUTH_DOMAIN`, `DATABASE_URL`; optional `STELLAR_NETWORK` (`testnet`|`mainnet`) and `PORT` (default 3000). Pass secrets at runtime; they are never baked into the image (`.dockerignore` excludes `.env*`).
+
+Run database migrations before starting a new version:
+
+```bash
+docker build -f Dockerfile.backend --target build -t scoutchain-backend:migrate .
+docker run --rm --env-file .env.production scoutchain-backend:migrate npx prisma migrate deploy
+```
+
+The image `HEALTHCHECK` requests `GET /auth` and treats any HTTP response as alive. CI (`.github/workflows/backend-docker.yml`) builds the image on PRs touching `src/`, `prisma/` or `package*.json` without pushing.

@@ -1,6 +1,5 @@
 import express, { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-import { StrKey } from "@stellar/stellar-sdk";
 import { config } from "./config";
 import {
   buildChallengeTx,
@@ -10,13 +9,10 @@ import {
 } from "./services/sep10";
 import { requireAuth, requireRole } from "./middleware/auth";
 import { prisma } from "./db";
+import { validate, AccountQuery, VerifyBody, RefreshBody, RevokeBody } from "./requestValidation";
 
 const app = express();
 app.use(express.json());
-
-function isValidAccount(account: unknown): account is string {
-  return typeof account === "string" && StrKey.isValidEd25519PublicKey(account);
-}
 
 /**
  * Map a SEP-10 verification failure to a stable error code so raw SDK /
@@ -38,14 +34,8 @@ function classifyAuthError(error: unknown): string | null {
 
 // SEP-10 challenge endpoint — returns a server-signed challenge
 // transaction that the client must sign and return.
-app.get("/auth", async (req: Request, res: Response) => {
-  const account = req.query.account;
-  if (account === undefined || account === "") {
-    return res.status(400).json({ error: "account query parameter is required" });
-  }
-  if (!isValidAccount(account)) {
-    return res.status(400).json({ error: "invalid account" });
-  }
+app.get("/auth", validate({ query: AccountQuery }), async (req: Request, res: Response) => {
+  const account = req.query.account as string;
 
   try {
     const challenge = await buildChallengeTx(account);
@@ -59,20 +49,8 @@ app.get("/auth", async (req: Request, res: Response) => {
 // SEP-10 verification endpoint — client submits the signed challenge
 // transaction; server verifies it and issues an access token plus a rotating
 // refresh token, with the role derived from on-chain / indexer state.
-app.post("/auth", async (req: Request, res: Response) => {
-  const { transaction, account } = req.body as {
-    transaction?: string;
-    account?: string;
-  };
-
-  if (!transaction || !account) {
-    return res
-      .status(400)
-      .json({ error: "transaction and account are required" });
-  }
-  if (typeof transaction !== "string" || !isValidAccount(account)) {
-    return res.status(400).json({ error: "invalid account" });
-  }
+app.post("/auth", validate({ body: VerifyBody }), async (req: Request, res: Response) => {
+  const { transaction, account } = req.body as { transaction: string; account: string };
 
   try {
     const verifiedAccount = await verifyChallengeTx(transaction, account);
@@ -91,12 +69,8 @@ app.post("/auth", async (req: Request, res: Response) => {
 });
 
 // Refresh endpoint — rotates the refresh token and re-derives the role.
-app.post("/auth/refresh", async (req: Request, res: Response) => {
-  const { refreshToken } = req.body as { refreshToken?: string };
-
-  if (!refreshToken || typeof refreshToken !== "string") {
-    return res.status(400).json({ error: "refreshToken is required" });
-  }
+app.post("/auth/refresh", validate({ body: RefreshBody }), async (req: Request, res: Response) => {
+  const { refreshToken } = req.body as { refreshToken: string };
 
   try {
     res.json(await refreshSession(refreshToken));
@@ -115,12 +89,9 @@ app.post(
   "/api/admin/tokens/revoke",
   requireAuth,
   requireRole(["admin"]),
+  validate({ body: RevokeBody }),
   async (req: Request, res: Response) => {
-    const { token } = req.body;
-
-    if (!token) {
-      return res.status(400).json({ error: "Token is required" });
-    }
+    const { token } = req.body as { token: string };
 
     let jti: string;
 

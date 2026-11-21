@@ -1,0 +1,9 @@
+target/
+node_modules/
+contracts/
+bindings/
+.env
+.env.*
+.git/
+dist/
+tests/

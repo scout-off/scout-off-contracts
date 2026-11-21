@@ -127,6 +127,8 @@ for name in "${CONTRACTS[@]}"; do
   # re-apply the workspace version afterwards to keep bindings in lockstep
   # with the contracts they wrap.
   sync_binding_version "$name"
+  # Re-apply the ESM-only / peer-dependency package.json fixes (#1816).
+  python3 scripts/fix-bindings-package.py "bindings/${name}/package.json"
 done
 
 # Extract function lists from CONTRACT_REFERENCE.md and inject into each bindings README
