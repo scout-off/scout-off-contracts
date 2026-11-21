@@ -12,7 +12,7 @@ Ensure the following tools are installed at the specified minimum versions befor
 | **clippy** | ships with Rust stable | `rustup component add clippy` |
 | **rustfmt** | ships with Rust stable | `rustup component add rustfmt` |
 | **stellar-cli** | **28.0.0** (pinned in `ci/stellar-cli-version`) | See install note below |
-| **Node.js** | 20 LTS | Required only for TypeScript bindings generation — `./scripts/generate-bindings.sh` |
+| **Node.js** | 20 LTS (minimum; `engines` requires `>=20`) | Required only for TypeScript bindings generation — `./scripts/generate-bindings.sh`. CI tests Node 20 and 22; `.nvmrc` pins the primary version (20) — run `nvm use` to match it |
 | **npm** | 10+ (ships with Node 20) | Required only for building/testing bindings packages |
 
 > The repository includes `rust-toolchain.toml`, so `rustup` automatically selects the same pinned Rust version, `wasm32v1-none` target, and formatter/linter components used by CI whenever you run `cargo` or `rustup` from this directory. If a local build diverges from CI, reinstall stellar-cli at the pinned version.

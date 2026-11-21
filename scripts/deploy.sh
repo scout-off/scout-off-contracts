@@ -117,30 +117,97 @@ done
   echo "SCOUT_ACCESS_CONTRACT_WASM_HASH=${CONTRACT_WASM_HASHES[scout_access]}"
 } > .env.contracts
 
-# Write the same data as JSON for downstream tooling.
-cat > .env.contracts.json <<EOF
-{
-  "network": "${NETWORK}",
-  "contracts": {
-    "registration": {
-      "id": "${CONTRACT_IDS[registration]}",
-      "wasm_hash": "${CONTRACT_WASM_HASHES[registration]}"
-    },
-    "verification": {
-      "id": "${CONTRACT_IDS[verification]}",
-      "wasm_hash": "${CONTRACT_WASM_HASHES[verification]}"
-    },
-    "progress": {
-      "id": "${CONTRACT_IDS[progress]}",
-      "wasm_hash": "${CONTRACT_WASM_HASHES[progress]}"
-    },
-    "scout_access": {
-      "id": "${CONTRACT_IDS[scout_access]}",
-      "wasm_hash": "${CONTRACT_WASM_HASHES[scout_access]}"
-    }
-  }
+# Gather deployment metadata for .env.contracts.json. Never write secrets:
+# deployer_public_key is derived from the identity, not the secret key.
+GIT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+  GIT_DIRTY="true"
+else
+  GIT_DIRTY="false"
+fi
+STELLAR_CLI_VERSION=$(stellar --version 2>/dev/null | head -n1 || echo "unknown")
+DEPLOYER_PUBLIC_KEY=$(stellar keys address "$DEPLOYER" 2>/dev/null || echo "")
+DEPLOYED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+NETWORK_PASSPHRASE="${NETWORK_PASSPHRASE:-}"
+
+# Best-effort latest ledger sequence from RPC; empty if unavailable.
+LATEST_LEDGER=""
+if [[ -n "${SOROBAN_RPC_URL:-}" ]]; then
+  LATEST_LEDGER=$(curl -s -X POST "$SOROBAN_RPC_URL" \
+    -H 'Content-Type: application/json' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"getLatestLedger"}' 2>/dev/null \
+    | python3 -c 'import json,sys
+try:
+    print(json.load(sys.stdin)["result"]["sequence"])
+except Exception:
+    pass' 2>/dev/null || true)
+fi
+
+# Write the same data as JSON for downstream tooling, including a meta object.
+NETWORK="$NETWORK" \
+GIT_COMMIT="$GIT_COMMIT" \
+GIT_DIRTY="$GIT_DIRTY" \
+STELLAR_CLI_VERSION="$STELLAR_CLI_VERSION" \
+DEPLOYER_PUBLIC_KEY="$DEPLOYER_PUBLIC_KEY" \
+NETWORK_PASSPHRASE="$NETWORK_PASSPHRASE" \
+DEPLOYED_AT="$DEPLOYED_AT" \
+LATEST_LEDGER="$LATEST_LEDGER" \
+PREBUILT_WASM_DIR="$PREBUILT_WASM_DIR" \
+REGISTRATION_ID="${CONTRACT_IDS[registration]}" \
+REGISTRATION_HASH="${CONTRACT_WASM_HASHES[registration]}" \
+VERIFICATION_ID="${CONTRACT_IDS[verification]}" \
+VERIFICATION_HASH="${CONTRACT_WASM_HASHES[verification]}" \
+PROGRESS_ID="${CONTRACT_IDS[progress]}" \
+PROGRESS_HASH="${CONTRACT_WASM_HASHES[progress]}" \
+SCOUT_ACCESS_ID="${CONTRACT_IDS[scout_access]}" \
+SCOUT_ACCESS_HASH="${CONTRACT_WASM_HASHES[scout_access]}" \
+python3 - > .env.contracts.json <<'PYEOF'
+import json
+import os
+
+env = os.environ
+
+meta = {
+    "git_commit": env["GIT_COMMIT"],
+    "git_dirty": env["GIT_DIRTY"] == "true",
+    "stellar_cli_version": env["STELLAR_CLI_VERSION"],
+    "deployer_public_key": env["DEPLOYER_PUBLIC_KEY"],
+    "network_passphrase": env["NETWORK_PASSPHRASE"],
+    "deployed_at": env["DEPLOYED_AT"],
 }
-EOF
+if env.get("LATEST_LEDGER"):
+    try:
+        meta["latest_ledger"] = int(env["LATEST_LEDGER"])
+    except ValueError:
+        pass
+if env.get("PREBUILT_WASM_DIR"):
+    meta["prebuilt_wasm_dir"] = env["PREBUILT_WASM_DIR"]
+
+data = {
+    "network": env["NETWORK"],
+    "meta": meta,
+    "contracts": {
+        "registration": {
+            "id": env["REGISTRATION_ID"],
+            "wasm_hash": env["REGISTRATION_HASH"],
+        },
+        "verification": {
+            "id": env["VERIFICATION_ID"],
+            "wasm_hash": env["VERIFICATION_HASH"],
+        },
+        "progress": {
+            "id": env["PROGRESS_ID"],
+            "wasm_hash": env["PROGRESS_HASH"],
+        },
+        "scout_access": {
+            "id": env["SCOUT_ACCESS_ID"],
+            "wasm_hash": env["SCOUT_ACCESS_HASH"],
+        },
+    },
+}
+
+print(json.dumps(data, indent=2))
+PYEOF
 
 echo ""
 echo "==> All contracts deployed. IDs saved to .env.contracts"
