@@ -156,6 +156,15 @@ chmod +x scripts/deploy.sh
 # Contract IDs written to .env.contracts
 ```
 
+`deploy.sh` performs the workspace build (`cargo build --workspace --target
+wasm32v1-none --release --locked`) itself before optimising the WASMs, so this
+is the only build in the flow. `scripts/setup-testnet.sh` wraps steps 1–3 and
+relies on that single build — it does not build the workspace separately. To
+skip building entirely, point `deploy.sh` at prebuilt release WASMs with
+`PREBUILT_WASM_DIR` (see [Reproducible builds and deployed-WASM
+verification](#reproducible-builds-and-deployed-wasm-verification-issue-1614)).
+=======
+
 ### 3. Initialize and wire contracts
 
 ```bash
