@@ -664,6 +664,25 @@ known good contract addresses automatically.
 `deploy.sh` writes a snapshot of the current `.env.contracts` to `.env.contracts.snapshot`
 **before** making any changes. If a deployment fails, you can restore from that snapshot.
 
+### Two rollback modes (#1812)
+
+| Situation | Command |
+|-----------|---------|
+| A fresh deployment produced bad contract IDs | `./scripts/rollback.sh --deployment <network>` (default; backs up the replaced file to `.env.contracts.pre-rollback`) |
+| An in-place `upgrade()` installed a faulty WASM on existing contracts | `./scripts/rollback.sh --upgrade <contract\|all> --network <net> --source <identity> [--tag <release>]` |
+
+`scripts/upgrade.sh` records each contract's current on-chain WASM hash as
+`<NAME>_PREVIOUS_WASM_HASH` in `.env.contracts` (and `.env.contracts.json` if
+present) before upgrading. `--upgrade` calls `upgrade(previous_hash)` (the old
+code is still installed on the network), then checks the on-chain hash matches;
+with `--tag` it also runs `scripts/verify-deployed-wasm.sh`.
+
+**Caveat:** storage migrations performed by the new WASM (`migrate()`) are not
+reverted. A WASM rollback is unsafe once `schema_version` was bumped and data
+was rewritten, because the old code may not understand the new layout. In that
+case pause the contracts and use a forward-fix upgrade. Sandbox check:
+`scripts/test-rollback-upgrade.sh` (upgrade, rollback, verify hash).
+
 ### Automatic rollback (CI)
 
 If the CI deploy pipeline fails, it prints rollback instructions. Run:
