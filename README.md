@@ -177,6 +177,9 @@ Each tier controls which player progress levels a scout can view and what action
 - `pause_contract()` / `unpause_contract()` — Emergency circuit breaker (admin only)
 - `propose_admin(new_admin)` / `accept_admin()` — Rotate each contract's admin after the new address proves control
 - `verify_scout(scout_id)` — Mark a scout profile as verified, gating Sybil-resistant discovery (admin only)
+- `unverify_scout(scout_id)` — Revoke a scout's verified status (admin only). This also affects `scout_access` Pro/Elite gating: an unverified scout no longer satisfies the Pro-tier verification / Sybil-resistance lookups.
+- `deregister_scout(scout_id)` — GDPR erasure for a scout: permanently remove the scout profile and its on-chain data (admin only)
+- `purge_player_data(player_id, cursor) -> (u32, bool)` — GDPR erasure for a player, available on the `scout_access`, `verification`, and `progress` contracts (admin only). Processes one page of records starting at `cursor` and returns `(next_cursor, more)`; loop until `more == false`, always starting from `cursor = 0`. Erasure must be run in the order `scout_access` → `verification` → `progress` → `registration`. See [docs/PLAYER_ERASURE.md](docs/PLAYER_ERASURE.md) for the full procedure.
 - `set_diversity_config(required_distinct_affiliations, starting_milestone_index)` / `get_diversity_config()` — Configure (or read) the minimum distinct validator-affiliation count required before a milestone counts toward level advancement (admin only to set)
 - `set_min_region_quorum(min_regions)` — Set the minimum number of distinct validator regions required before Level-2/Level-3 advancement (admin only)
 - `set_milestone_threshold(threshold)` — Set the k-of-n distinct-validator threshold required to commit an attested milestone claim (admin only)
