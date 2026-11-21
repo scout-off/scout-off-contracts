@@ -4,7 +4,8 @@
 # Usage: ./scripts/rollback.sh [testnet|mainnet|local]
 set -euo pipefail
 
-NETWORK="${1:-testnet}"
+# shellcheck source=scripts/network.sh
+source "$(dirname "$0")/network.sh" "${1:-}"
 
 SNAPSHOT=".env.contracts.snapshot"
 

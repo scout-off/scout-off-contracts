@@ -10,9 +10,16 @@ export interface Config {
   webAuthDomain: string;
   stellarNetwork: StellarNetwork;
   adminAddress?: string;
+  accessTokenTtlSeconds: number;
+  refreshTokenTtlSeconds: number;
 }
 
 const MIN_JWT_SECRET_BYTES = 32;
+
+export const DEFAULT_ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
+export const DEFAULT_REFRESH_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
+export const MAX_ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
+=======
 
 /**
  * Validate and parse the backend's environment variables.
@@ -50,6 +57,39 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     errors.push(`STELLAR_NETWORK must be one of: ${SUPPORTED_NETWORKS.join(", ")}`);
   }
 
+  const positiveInteger = (name: string, defaultValue: number): number => {
+    const raw = env[name]?.trim();
+    if (!raw) {
+      return defaultValue;
+    }
+    if (!/^\d+$/.test(raw)) {
+      errors.push(`${name} must be a positive integer (seconds), got "${raw}"`);
+      return defaultValue;
+    }
+    const value = Number(raw);
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      errors.push(`${name} must be a positive integer (seconds), got "${raw}"`);
+      return defaultValue;
+    }
+    return value;
+  };
+
+  const accessTokenTtlSeconds = positiveInteger(
+    "ACCESS_TOKEN_TTL_SECONDS",
+    DEFAULT_ACCESS_TOKEN_TTL_SECONDS,
+  );
+  if (accessTokenTtlSeconds > MAX_ACCESS_TOKEN_TTL_SECONDS) {
+    errors.push(
+      `ACCESS_TOKEN_TTL_SECONDS must not exceed ${MAX_ACCESS_TOKEN_TTL_SECONDS} seconds ` +
+        `(15 minutes); values above the ceiling are rejected, not clamped`,
+    );
+  }
+
+  const refreshTokenTtlSeconds = positiveInteger(
+    "REFRESH_TOKEN_TTL_SECONDS",
+    DEFAULT_REFRESH_TOKEN_TTL_SECONDS,
+  );
+
   if (errors.length > 0) {
     throw new Error(`Invalid environment configuration:\n  - ${errors.join("\n  - ")}`);
   }
@@ -61,6 +101,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webAuthDomain,
     stellarNetwork: network as StellarNetwork,
     adminAddress: env.ADMIN_ADDRESS?.trim() || undefined,
+    accessTokenTtlSeconds,
+    refreshTokenTtlSeconds,
   };
 }
 

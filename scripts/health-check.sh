@@ -5,7 +5,8 @@
 # Requires .env.contracts to exist (written by deploy.sh).
 set -euo pipefail
 
-NETWORK="${1:-testnet}"
+# shellcheck source=network.sh
+source "$(dirname "$0")/network.sh" "${1:-}"
 # `stellar contract invoke` requires a --source-account even for read-only
 # calls. Any funded account works for a simulation-only read; callers set
 # STELLAR_SOURCE_ACCOUNT (an identity name or secret key), falling back to

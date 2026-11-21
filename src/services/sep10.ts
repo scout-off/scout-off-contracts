@@ -12,9 +12,6 @@ interface Sep10TokenPayload {
 
 /** Challenge validity window; also used as the WebAuth `timeout`. */
 const CHALLENGE_TTL_SECONDS = 300;
-/** Hard ceiling on access-token lifetime (#1606). */
-const MAX_ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
-const DEFAULT_REFRESH_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -31,20 +28,17 @@ function challengeHash(challengeTx: string, networkPassphrase: string): string {
     .toString("hex");
 }
 
-/** Access-token lifetime in seconds: ACCESS_TOKEN_TTL_SECONDS, capped at 15 minutes. */
+/**
+ * Access-token lifetime in seconds, validated and clamped to the 15-minute
+ * ceiling (#1606) by `loadConfig`.
+ */
 export function accessTokenTtlSeconds(): number {
-  const configured = Number(process.env.ACCESS_TOKEN_TTL_SECONDS);
-  if (!Number.isFinite(configured) || configured <= 0) {
-    return MAX_ACCESS_TOKEN_TTL_SECONDS;
-  }
-  return Math.min(Math.floor(configured), MAX_ACCESS_TOKEN_TTL_SECONDS);
+  return config.accessTokenTtlSeconds;
 }
 
+/** Refresh-token lifetime in seconds, validated by `loadConfig`. */
 function refreshTokenTtlSeconds(): number {
-  const configured = Number(process.env.REFRESH_TOKEN_TTL_SECONDS);
-  return Number.isFinite(configured) && configured > 0
-    ? Math.floor(configured)
-    : DEFAULT_REFRESH_TOKEN_TTL_SECONDS;
+  return config.refreshTokenTtlSeconds;
 }
 
 export function issueSep10Token(payload: Sep10TokenPayload, secret: string) {
