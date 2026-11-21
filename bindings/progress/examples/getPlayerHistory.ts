@@ -99,7 +99,7 @@ function unwrapResult<T>(result: unknown, context: string): T {
 export async function getPlayerHistory(
   params: GetPlayerHistoryParams,
 ): Promise<GetPlayerHistoryResult> {
-  const { playerId, network, rpcUrl, sinceTimestamp, page } = params;
+  const { playerId, network, rpcUrl, sinceTimestamp, sinceLimit, page } = params;
 
   // Read-only queries need no publicKey or signTransaction.
   const client = new ProgressClient({

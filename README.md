@@ -181,6 +181,8 @@ Each tier controls which player progress levels a scout can view and what action
 - `set_min_region_quorum(min_regions)` — Set the minimum number of distinct validator regions required before Level-2/Level-3 advancement (admin only)
 - `set_milestone_threshold(threshold)` — Set the k-of-n distinct-validator threshold required to commit an attested milestone claim (admin only)
 - `set_voting_window_secs(window_secs)` — Set how long an attestation claim stays open for k-of-n voting before it expires (admin only)
+- `admin_rescue_orphan_trial_escrow(player_id, offer_index, to)` — Admin safety valve that releases an escrowed trial fee to `to` when the escrow's `TrialOffer` record no longer exists (admin only). Use this **instead of** `admin_refund_trial_escrow` when the offer record itself is gone: `admin_refund_trial_escrow` refunds a specific, still-identified stuck entry that retains its offer record, whereas `admin_rescue_orphan_trial_escrow` targets an orphaned escrow with no surviving `TrialOffer`. See [docs/TRIAL_ESCROW_IMPACT.md](docs/TRIAL_ESCROW_IMPACT.md) and [docs/RUNBOOK.md](docs/RUNBOOK.md) for the rescue procedure.
+=======
 
 ### Query Functions
 
@@ -189,6 +191,7 @@ Each tier controls which player progress levels a scout can view and what action
 - `get_progress_history_page(player_id, offset, limit)` — Offset-based paginated history, `limit` capped at 50 entries per page
 - `get_history_page_with_cursor(player_id, cursor_snapshot, cursor_next_index, limit)` — Cursor-based paginated history that snapshots the entry count on the first call, so pages stay consistent even if `advance_level` is called concurrently; `limit` capped at 50 entries per page
 - `filter_players(region, position, min_level, offset, limit)` — Paginated scout discovery query; returns a `FilterResult` with a `profiles` page and a `next_cursor` (pass it back as `offset` to continue, `0` means no more results)
+- `get_trial_offers_page(player_id, offset, limit)` — Offset-based paginated trial offers for a player; `limit` is capped at the contract's maximum page size and the returned page carries a `more` flag indicating whether further offers remain. This **replaces** `get_all_trial_offers`, which silently returns only the 20 oldest offers — use `get_trial_offers_page` whenever a player may have more than 20 offers.
 - `get_validators()` — Active validator registry
 - `health()` — On-chain health check
 

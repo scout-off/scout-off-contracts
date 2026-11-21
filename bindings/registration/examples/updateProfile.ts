@@ -20,7 +20,11 @@
  *
  *   update_profile(player_id: u64, ipfs_hashes: Vec<String>) -> Result<(), ScoutChainError>
  *   Auth: the player's wallet must sign.
- *   Errors: PlayerNotFound, InvalidInput (empty or >10 hashes), ContractPaused
+ *   Errors (fixed, append-only discriminants from
+ *   `contracts/registration/src/errors.rs`):
+ *     PlayerNotFound (code 1)  — no player registered for `player_id`
+ *     InvalidInput   (code 2)  — empty hash list or more than 10 hashes
+ *     ContractPaused (code 3)  — contract is paused; no updates accepted
  *
  * Note on generated types: the exact shape of `AssembledTransaction<T>.result`
  * for a fallible contract method (`Ok<T> | Err<E>` vs. an auto-thrown error)

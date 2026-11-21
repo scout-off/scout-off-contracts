@@ -309,6 +309,15 @@ pub fn get_fee_config(env: Env) -> FeeConfig
 pub fn has_contacted(env: Env, scout: Address, player_id: u64) -> bool
 pub fn get_trial_offer(env: Env, player_id: u64, index: u32) -> Result<TrialOffer, ScoutAccessError>
 pub fn get_trial_count(env: Env, player_id: u64) -> u32
+// Paginated trial-offer listing — prefer this over `get_all_trial_offers`.
+pub fn get_trial_offers_page(
+    env: Env,
+    player_id: u64,
+    offset: u32,
+    limit: u32,
+) -> Vec<TrialOffer>
+// Deprecated: silently returns only the 20 oldest offers for `player_id`.
+pub fn get_all_trial_offers(env: Env, player_id: u64) -> Vec<TrialOffer>
 pub fn has_evidence_access(env: Env, player_id: u64, scout: Address) -> bool
 pub fn get_evidence_access_grant(env: Env, player_id: u64, scout: Address) -> Option<EvidenceAccessGrant>
 pub fn get_player_access_grants(env: Env, player_id: u64, offset: u32, limit: u32) -> Vec<EvidenceAccessGrant>
@@ -322,6 +331,15 @@ pub fn set_progress_contract(env: Env, addr: Address) -> Result<(), ScoutAccessE
 pub fn update_progress_contract(env: Env, addr: Address) -> Result<(), ScoutAccessError>
 pub fn set_registration_contract(env: Env, addr: Address) -> Result<(), ScoutAccessError>
 pub fn admin_revoke_evidence_access(env: Env, player_id: u64, scout: Address) -> Result<(), ScoutAccessError>
+// Admin safety valve: releases an outstanding `TrialEscrow` whose `TrialOffer`
+// record no longer exists (e.g. evicted/archived). Use `admin_refund_trial_escrow`
+// when the offer record is still present.
+pub fn admin_rescue_orphan_trial_escrow(
+    env: Env,
+    player_id: u64,
+    offer_index: u32,
+    to: Address,
+) -> Result<(), ScoutAccessError>
 pub fn propose_admin(env: Env, new_admin: Address) -> Result<(), ScoutAccessError>
 pub fn accept_admin(env: Env) -> Result<(), ScoutAccessError>
 pub fn pause_contract(env: Env) -> Result<(), ScoutAccessError>
@@ -712,6 +730,8 @@ When the progress contract is not wired, a `progress_contract_not_set` event is 
 - **`revoke_validator` now takes an explicit `RevocationSeverity` as the second parameter.** Pass `RevocationSeverity::Routine` for a routine deactivation (no cascade) or `RevocationSeverity::ForCause` for a misconduct revocation that flags all prior milestone approvals as pending re-review. Pass `None` for reason if no reason is needed. The old single-`reason` signature no longer exists — update all callers. For validators with more than 50 prior approvals, call `continue_revocation_cascade(wallet)` (admin only) one or more times until the `revocation_cascade_complete` event is emitted.
 - **`log_trial_offer` does NOT immediately advance the player's level.** It records the offer and escrows a fee. Level advancement happens in `confirm_trial_offer`, which must be called by the player wallet.
 - **Trial offer two-step flow:** `log_trial_offer` (scout) → `confirm_trial_offer` (player). Missing the confirmation step means the player stays at Level 2.
+- **Prefer `get_trial_offers_page(player_id, offset, limit)` over `get_all_trial_offers(player_id)`.** `get_all_trial_offers` silently returns only the 20 oldest offers for a player — it does not error and does not indicate truncation, so clients that rely on it will miss newer offers. `get_trial_offers_page` returns a bounded slice starting at `offset` (page size capped server-side); iterate with increasing `offset` until a short page is returned. Use `get_trial_count` to size the iteration.
+- **Refund vs. rescue for stuck trial escrows.** `admin_refund_trial_escrow(player_id, offer_index, to)` is the normal admin path and requires the `TrialOffer` record to still exist (it returns `TrialEscrowNotOutstanding`, code 37, if no escrow is outstanding). If the `TrialOffer` record has been evicted or is otherwise missing while the escrow remains, use `admin_rescue_orphan_trial_escrow(player_id, offer_index, to)` — the admin safety valve that releases the orphaned escrow to `to` without needing the offer record. Both are admin-only. Follow the procedure in [`docs/TRIAL_ESCROW_IMPACT.md`](docs/TRIAL_ESCROW_IMPACT.md) and [`docs/RUNBOOK.md`](docs/RUNBOOK.md) before invoking either; do not call them speculatively.
 - **Admin rotation is two-step.** Current admin calls `propose_admin`, then the pending address calls `accept_admin`. The old admin remains active until acceptance.
 - **Error codes are per-contract, not global.** Code `4` means `Unauthorized` in verification but also `Unauthorized` (different context) in scout_access. Code `9` means `ContractPaused` in registration but `RegistrationCallFailed` in progress. Always check which contract returned the error.
 - **Subscription tier check is enforced on-chain.** Basic scouts cannot call `pay_to_contact`. Elite is required for `log_trial_offer`.
