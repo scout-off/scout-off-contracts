@@ -29,9 +29,28 @@ fi
 # (#1369), so the admin and scout_access's token/fee config are needed here.
 ADMIN="${ADMIN_ADDRESS:?Set ADMIN_ADDRESS (the admin passed to every constructor)}"
 CONFIG_FILE="config/${NETWORK}.json"
-[[ -f "$CONFIG_FILE" ]] || CONFIG_FILE="config/testnet.json"
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  echo "ERROR: $CONFIG_FILE not found."
+  echo "Create it (see docs/CONFIG_REFERENCE.md) or check the network name."
+  exit 1
+fi
+
+# The local network has no fixed native-asset contract address: derive it from
+# the running quickstart unless the operator supplied XLM_TOKEN_ADDRESS.
+if [[ "$NETWORK" == "local" && -z "${XLM_TOKEN_ADDRESS:-}" ]]; then
+  echo "==> Deriving local native asset contract address..."
+  if ! XLM_TOKEN_ADDRESS=$(stellar contract id asset --asset native --network local 2>/dev/null) \
+     || [[ -z "$XLM_TOKEN_ADDRESS" ]]; then
+    echo "ERROR: Could not derive the local native asset contract address."
+    echo "Make sure a local Stellar network is running, or set XLM_TOKEN_ADDRESS explicitly."
+    exit 1
+  fi
+  echo "    native asset => $XLM_TOKEN_ADDRESS"
+fi
+
 CONFIG_OUT=$(python3 "$(dirname "$0")/lib/read_network_config.py" "$CONFIG_FILE" "${XLM_TOKEN_ADDRESS:-}") || exit 1
 read -r XLM_TOKEN _REG_COOLDOWN_SECS FEE_CONFIG_JSON <<<"$CONFIG_OUT"
+=======
 
 # Mainnet safety check: verify config file has no placeholders
 if [[ "$NETWORK" == "mainnet" ]]; then
@@ -46,11 +65,24 @@ fi
 # make deploys look in the wrong build directory.
 WASM_DIR="target/wasm32v1-none/release"  # wasm32v1-none replaced the legacy wasm32-unknown-unknown target (soroban-sdk 25.x+)
 
-# Save a pre-deploy snapshot so rollback.sh can restore the last known good state
+# Save a pre-deploy snapshot so rollback.sh can restore the last known good
+# state. Snapshots are timestamped and never overwritten, so consecutive
+# deploys keep a full history; .env.contracts.snapshot mirrors the latest one
+# for backward compatibility.
+SNAPSHOT_DIR=".env.contracts.snapshots"
 if [[ -f ".env.contracts" ]]; then
+  mkdir -p "$SNAPSHOT_DIR"
+  SNAPSHOT_TS=$(date -u +%Y%m%dT%H%M%SZ)
+  SNAPSHOT_BASE="${SNAPSHOT_DIR}/${SNAPSHOT_TS}-${NETWORK}"
+  cp .env.contracts "${SNAPSHOT_BASE}.env"
+  if [[ -f ".env.contracts.json" ]]; then
+    cp .env.contracts.json "${SNAPSHOT_BASE}.json"
+  fi
   cp .env.contracts .env.contracts.snapshot
-  echo "==> Pre-deploy snapshot saved to .env.contracts.snapshot"
+  echo "==> Pre-deploy snapshot saved to ${SNAPSHOT_BASE}.env"
+  echo "    Latest snapshot mirrored to .env.contracts.snapshot"
 fi
+=======
 
 if command -v sha256sum >/dev/null 2>&1; then
   hash_wasm() { sha256sum "$1" | awk '{print $1}'; }
@@ -144,5 +176,7 @@ EOF
 
 echo ""
 echo "==> All contracts deployed. IDs saved to .env.contracts"
-echo "    Pre-deploy snapshot is at .env.contracts.snapshot"
+echo "    Snapshots are kept in $SNAPSHOT_DIR (latest mirrored to .env.contracts.snapshot)"
+echo "    To list snapshots: ./scripts/rollback.sh --list"
 echo "    To roll back: ./scripts/rollback.sh $NETWORK"
+=======
