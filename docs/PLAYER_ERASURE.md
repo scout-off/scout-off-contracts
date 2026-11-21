@@ -51,6 +51,13 @@ Run the following steps **in order**. Each cross-contract purge must complete
 (`more == false`) before moving to the next step.
 
 ```
+0. Start erasure (safety interlock, #1807).
+   Call:  registration.begin_erasure(player_id)
+   Effect: deactivates the player and records ErasurePending(player_id).
+           Every purge_player_data below fails with ErasureNotAuthorized
+           unless this was called (or the player is already deregistered),
+           and fails closed when registration is not wired.
+
 1. Expire or refund all outstanding trial escrows for the player.
    Call:  scout_access.expire_trial_offers(limit)
    Until: no escrow remains for this player.

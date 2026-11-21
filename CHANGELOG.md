@@ -18,6 +18,18 @@ The initial v0.1.0 entry below retains the year-only date because no exact histo
 
 ## Unreleased
 
+- Contracts affected: `registration`, `progress`, `verification`, `scout_access`
+- Summary: Added `registration.begin_erasure` / `is_erasure_pending` / `is_erasure_authorized` and an `ErasurePending` storage key; `purge_player_data` on progress, verification and scout_access now returns the new appended `ErasureNotAuthorized` error unless erasure is pending (fails closed when registration is unwired) (#1807).
+- Classification: Breaking (MAJOR)
+
+- Contracts affected: `verification`
+- Summary: `ValidatorActivityReport.distinct_players` removed so `get_validator_activity_report` cost no longer scales with a validator's player count; `distinct_player_count` is served from the new `ValidatorPlayerCount` counter (appended storage key, with legacy fallback). Use `get_validator_players_page` for the list (#1806).
+- Classification: Breaking (MAJOR)
+
+- Contracts affected: `registration`
+- Summary: Added a bounded (last 10) append-only scout verification history (`DataKey::ScoutVerificationHistory`, appended storage key) with `get_scout_verification_history`; `scout_verified` now carries the acting `admin` in its data (topics unchanged) (#1808). Run `scripts/check-storage-layout-compat.sh` for the new key.
+- Classification: Non-breaking (MINOR)
+
 - Contracts affected: `registration`, `scout_access`, `progress`, `verification`, `shared-types`
 - Summary: Added `registration.unverify_scout` / `is_scout_verified` and the `scout_unverified` event; `ScoutVerificationRecord` gains `revoked_at` and `revoked_reason` (#1608). scout_access re-checks verification for Pro/Elite on contact, batch contact, trial offers and renewal. Added `contract_kind()` to every contract and an on-chain `verify_peer` handshake in all wiring setters, with new `InvalidPeerContract` errors (#1610).
 - Classification: `Breaking (MAJOR)` — storage layout of `ScoutVerificationRecord` changes; wiring setters now reject non-ScoutChain addresses.
