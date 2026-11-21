@@ -12,6 +12,32 @@ import { requireAuth, requireRole } from "./middleware/auth";
 import { prisma } from "./db";
 
 const app = express();
+
+// Health endpoints are registered before the JSON body parser and any
+// auth/rate-limiting/logging middleware so they stay unauthenticated and
+// generate no logging noise.
+app.get("/healthz", (_req: Request, res: Response) => {
+  res.status(200).json({ status: "ok" });
+});
+
+app.get("/readyz", async (_req: Request, res: Response) => {
+  const timeoutMs = 2000;
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("readiness timeout")), timeoutMs);
+  });
+
+  try {
+    await Promise.race([prisma.$queryRaw`SELECT 1`, timeout]);
+    res.status(200).json({ status: "ok" });
+  } catch (error) {
+    console.error("GET /readyz: readiness check failed", error);
+    res.status(503).json({ status: "unavailable" });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+});
+
 app.use(express.json());
 
 function isValidAccount(account: unknown): account is string {

@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { createHash, randomBytes } from "crypto";
 import jwt from "jsonwebtoken";
-import { WebAuth, Keypair, Networks, TransactionBuilder } from "@stellar/stellar-sdk";
+import { WebAuth, Keypair, TransactionBuilder } from "@stellar/stellar-sdk";
 import { prisma } from "../db";
 import { config } from "../config";
 
@@ -60,10 +60,7 @@ function sep10Config() {
     serverKeypair: Keypair.fromSecret(config.sep10SigningSecret),
     homeDomain: config.homeDomain,
     webAuthDomain: config.webAuthDomain,
-    networkPassphrase:
-      config.stellarNetwork === "mainnet"
-        ? Networks.PUBLIC
-        : Networks.TESTNET,
+    networkPassphrase: config.networkPassphrase,
   };
 }
 
