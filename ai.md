@@ -208,6 +208,7 @@ pub fn get_validators(env: Env) -> Vec<Address>
 pub fn get_validator_milestone_count(env: Env, wallet: Address) -> u32
 pub fn get_active_validator_count(env: Env) -> u32
 pub fn is_active_validator(env: Env, wallet: Address) -> bool
+pub fn get_limits(env: Env) -> VerificationLimits
 pub fn health(env: Env) -> ContractHealth
 pub fn version(env: Env) -> String
 
@@ -220,6 +221,31 @@ pub fn pause_contract(env: Env) -> Result<(), VerificationError>
 pub fn unpause_contract(env: Env) -> Result<(), VerificationError>
 pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), VerificationError>
 ```
+
+### Protocol limits — `get_limits()`
+
+`get_limits()` returns the compile-time protocol constants so clients can
+pre-validate input instead of hard-coding numbers that may change between
+contract versions:
+
+```rust
+pub struct VerificationLimits {
+    pub max_validators: u32,        // 100
+    pub min_credentials_len: u32,   // 1
+    pub max_credentials_len: u32,   // 256
+    pub max_description_len: u32,   // 512
+    pub max_specializations: u32,   // 10
+    pub max_dispute_rounds: u32,    // 3
+}
+```
+
+**Client-side validation:** call `get_limits()` once at startup (and cache it
+per contract ID / version) and validate credentials, descriptions, and
+specialization lists against these values before submitting a transaction.
+Hard-coded constants will drift from the contract and produce avoidable
+`InvalidInput` (code 9) failures.
+
+See `bindings/verification/examples/getLimits.ts` for a worked example.
 
 ---
 
@@ -253,7 +279,21 @@ pub fn get_history_page_with_cursor(
     cursor_next_index: Option<u32>,
     limit: u32,
 ) -> (Vec<ProgressEntry>, u32, u32)
+// ⚠️ Superseded — prefer `get_history_since_v2`. This variant silently truncates
+// at the internal limit (and at the 10-page scan cap) with no signal that entries
+// were dropped. Kept for backwards compatibility only.
 pub fn get_history_since(env: Env, player_id: u64, since_timestamp: u64) -> Vec<ProgressEntry>
+
+// ✅ Preferred history getter. Returns every matching entry up to `limit` plus a
+// `truncated` flag telling you whether more matching entries exist beyond what
+// was returned (because of `limit` or the internal 10-page scan cap).
+pub fn get_history_since_v2(
+    env: Env,
+    player_id: u64,
+    since_timestamp: u64,
+    limit: u32,
+) -> HistorySince
+
 pub fn health(env: Env) -> ContractHealth
 pub fn version(env: Env) -> String
 
@@ -267,6 +307,37 @@ pub fn pause_contract(env: Env) -> Result<(), ProgressError>
 pub fn unpause_contract(env: Env) -> Result<(), ProgressError>
 pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), ProgressError>
 ```
+
+### Reading progress history — use `get_history_since_v2`
+
+```rust
+pub struct HistorySince {
+    pub entries: Vec<ProgressEntry>,
+    pub truncated: bool,
+}
+```
+
+`get_history_since_v2(player_id, since_timestamp, limit)` returns a `HistorySince`:
+
+- `entries` — up to `limit` progress entries with `timestamp >= since_timestamp`.
+- `truncated` — `true` when **more matching entries may exist** beyond those
+  returned. This happens when either `limit` was hit or the internal 10-page
+  scan cap was reached before the end of the history.
+
+**Why v2 exists:** `get_history_since` silently drops entries at the same
+limits and gives the caller no way to detect it. Client code that syncs history
+incrementally can therefore miss entries without any error. Use
+`get_history_since_v2` and check `truncated`.
+
+**Paging further when `truncated == true`:** advance `since_timestamp` to the
+timestamp of the last returned entry (or use `get_history_page_with_cursor`
+with the cursor returned by that call) and call again until `truncated` is
+`false`. `get_history_page_with_cursor(player_id, cursor_snapshot,
+cursor_next_index, limit)` returns `(Vec<ProgressEntry>, u32, u32)` — the page,
+the snapshot, and the next index — and is the recommended way to walk the full
+history deterministically.
+
+See `bindings/progress/examples/getPlayerHistory.ts` for a worked example.
 
 ---
 
@@ -716,6 +787,8 @@ When the progress contract is not wired, a `progress_contract_not_set` event is 
 - **Error codes are per-contract, not global.** Code `4` means `Unauthorized` in verification but also `Unauthorized` (different context) in scout_access. Code `9` means `ContractPaused` in registration but `RegistrationCallFailed` in progress. Always check which contract returned the error.
 - **Subscription tier check is enforced on-chain.** Basic scouts cannot call `pay_to_contact`. Elite is required for `log_trial_offer`.
 - **`filter_players` requires `offset` and `limit`.** The limit is capped at 50 server-side.
+- **Use `progress.get_history_since_v2`, not `get_history_since`.** The old getter silently truncates at its internal limit / 10-page scan cap. v2 returns `HistorySince { entries, truncated }`; when `truncated` is `true`, more matching entries exist — page further with `get_history_page_with_cursor` (or advance `since_timestamp`) until it is `false`.
+- **Don't hard-code verification limits.** Call `verification.get_limits()` and validate credentials length, description length, and specialization count client-side against the returned `VerificationLimits` before submitting.
 - **`set_progress_contract` on verification is first-call-only.** Returns `AlreadyConfigured` (code 11) if called again. Use `update_progress_contract` to re-wire.
 - **`approve_milestone` stops working once k-of-n threshold mode is enabled.** Once an admin calls `set_milestone_threshold(n)` with `n >= 2`, both `approve_milestone` and `submit_attested_milestone` return `ThresholdModeRequiresAttestation` (code 28) for every subsequent call — all milestone submissions must go through `attest_milestone` instead. Call `get_milestone_threshold()` to check the current mode before integrating; a return value of `1` (the default) means single-signature mode is still active and `approve_milestone` works as normal. A return value of `2` or higher means every validator must call `attest_milestone` independently, and the milestone commits automatically once the threshold number of distinct active validators have voted for the same `(player_id, evidence_hash)` claim within the configured voting window.
 
