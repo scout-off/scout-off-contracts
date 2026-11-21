@@ -79,7 +79,10 @@ describe("issueSep10Token", () => {
     expect(decoded.sub).toBe(sub);
     expect(decoded.role).toBe("scout");
     expect(typeof decoded.jti).toBe("string");
-    expect(decoded.jti).not.toHaveLength(0);
+    // crypto.randomUUID() produces an RFC 4122 v4 UUID.
+    expect(decoded.jti).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    );
   });
 
   it("expires after the access-token lifetime (capped at 15 minutes)", () => {

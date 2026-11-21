@@ -1,5 +1,4 @@
-import { v4 as uuidv4 } from "uuid";
-import { createHash, randomBytes } from "crypto";
+import { createHash, randomBytes, randomUUID } from "crypto";
 import jwt from "jsonwebtoken";
 import { WebAuth, Keypair, Networks, TransactionBuilder } from "@stellar/stellar-sdk";
 import { prisma } from "../db";
@@ -51,7 +50,7 @@ export function issueSep10Token(payload: Sep10TokenPayload, secret: string) {
   return jwt.sign(payload, secret, {
     algorithm: "HS256",
     expiresIn: accessTokenTtlSeconds(),
-    jwtid: uuidv4(),
+    jwtid: randomUUID(),
   });
 }
 
