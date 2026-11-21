@@ -188,6 +188,34 @@ fn test_advance_level_succeeds_for_registered_player_when_wired() {
 }
 
 #[test]
+fn test_set_registration_contract_rejects_wrong_contract_kind() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+
+    let prog_id = env.register(ProgressContract, (admin.clone(),));
+    let progress = ProgressContractClient::new(&env, &prog_id);
+
+    // Register a verification contract and try to wire it as the registration link.
+    let ver_id = env.register(VerificationContract, (admin.clone(),));
+    let result = progress.try_set_registration_contract(&ver_id);
+
+    assert!(
+        matches!(result, Err(Ok(ProgressError::InvalidContractKind))),
+        "set_registration_contract must reject a verification contract: {result:?}"
+    );
+
+    // A correctly wired registration contract must still succeed, pinning the
+    // kind check rather than a generic failure.
+    let reg_id = env.register(RegistrationContract, (admin.clone(),));
+    let ok = progress.try_set_registration_contract(&reg_id);
+    assert!(
+        ok.is_ok(),
+        "set_registration_contract must accept a registration contract: {ok:?}"
+    );
+}
+
+#[test]
 fn test_reset_player_level_succeeds_for_registered_player_when_wired() {
     let (registration, progress, _verification, _admin, ver_id) = setup_full_stack();
 
