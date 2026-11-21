@@ -10,7 +10,7 @@ Rust (needs `cargo install cargo-llvm-cov` and the `llvm-tools-preview` componen
 
 ```
 cargo llvm-cov --workspace --exclude scoutchain-chaos-tests \
-  --exclude scoutchain-migration-e2e --lcov --output-path lcov.info
+  --exclude migration-e2e --lcov --output-path lcov.info
 cargo llvm-cov report --summary-only
 ```
 

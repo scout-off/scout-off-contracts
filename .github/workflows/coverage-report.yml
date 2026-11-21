@@ -51,7 +51,7 @@ jobs:
       - name: Generate lcov report
         run: >
           cargo llvm-cov --workspace
-          --exclude scoutchain-chaos-tests --exclude scoutchain-migration-e2e
+          --exclude scoutchain-chaos-tests --exclude migration-e2e
           --lcov --output-path lcov.info
 
       - name: Enforce line-coverage floor and write summary
