@@ -51,6 +51,15 @@ git config core.hooksPath scripts/git-hooks
 
 Reminder: `core.hooksPath` is a per-clone git config setting, so re-apply it after every fresh clone or when working from a new machine.
 
+### Local quick start (no testnet)
+
+```bash
+./scripts/setup-local.sh      # start/reuse stellar/quickstart, fund identity, deploy, seed
+./scripts/teardown-local.sh   # remove the sandbox container
+```
+
+The script is idempotent and is also used by CI (`--sandbox-only`).
+
 ## Before opening a PR
 
 ```bash
