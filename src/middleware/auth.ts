@@ -22,7 +22,7 @@ export async function isTokenRevoked(jti: string): Promise<boolean> {
     return false;
   }
 
-  const existingRevocation = await prisma.revokedToken.findFirst({
+  const existingRevocation = await prisma.revokedToken.findUnique({
     where: { jti },
   });
 

@@ -150,12 +150,6 @@ app.post(
 app.get("/api/tokens/me", requireAuth, async (req: Request, res: Response) => {
   const { sub, role, jti } = req.user!;
 
-  const isRevoked = await prisma.revokedToken.findFirst({ where: { jti } });
-
-  if (isRevoked) {
-    return res.status(401).json({ error: "Token has been revoked" });
-  }
-
   return res.json({ sub, role, jti });
 });
 

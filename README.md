@@ -445,7 +445,30 @@ import { Client as ProgressClient }     from "@scoutchain/bindings-progress";
 
 See `bindings/README.md` for usage details.
 
+## Backend Auth Session Response
+
+Both session-issuing endpoints — `POST /auth` (SEP-10 login) and `POST /auth/refresh` — return the same JSON shape:
+
+```json
+{
+  "token": "<access token>",
+  "refreshToken": "<refresh token>",
+  "expiresIn": 900,
+  "refreshExpiresIn": 604800
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `token` | Access token to send as `Authorization: Bearer <token>` on API calls |
+| `refreshToken` | Token to exchange at `POST /auth/refresh` for a new session |
+| `expiresIn` | Access-token lifetime in seconds |
+| `refreshExpiresIn` | Refresh-token lifetime in seconds (default 7 days, configurable via `REFRESH_TOKEN_TTL_SECONDS`) |
+
+Clients should use `refreshExpiresIn` to proactively re-authenticate before the refresh token lapses, rather than discovering expiry through a `401 invalid_refresh_token` response.
+
 ## Database Schema
+=======
 
 The `migrations/` directory contains the PostgreSQL migration files the backend event indexer needs. **Run every file in numeric order** — skipping any migration leaves tables, columns, or indexes missing and causes silent indexer errors at runtime.
 

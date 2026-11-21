@@ -176,7 +176,12 @@ export async function issueSession(account: string) {
     },
   });
 
-  return { token, refreshToken, expiresIn: accessTokenTtlSeconds() };
+  return {
+    token,
+    refreshToken,
+    expiresIn: accessTokenTtlSeconds(),
+    refreshExpiresIn: refreshTokenTtlSeconds(),
+  };
 }
 
 /**
