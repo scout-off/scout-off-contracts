@@ -815,6 +815,93 @@ fn test_admin_rescue_orphan_trial_escrow() {
     assert!(find_event(events.events(), "trial_escrow_orphan_rescued").is_some());
 }
 
+/// #1828: rescuing an orphan escrow to the contract's own address must be
+/// rejected with `InvalidInput`, and the escrow record must survive intact.
+#[test]
+fn test_admin_rescue_orphan_trial_escrow_rejects_self_recipient() {
+    let h = setup();
+    let player_id: u64 = 35;
+    advance_player(&h, player_id, 2);
+    let scout = setup_elite_scout(&h, player_id);
+    let index = log_offer(&h, &scout, player_id, CID_1, CID_2);
+
+    // Make the escrow an orphan by dropping the TrialOffer record.
+    h.env.as_contract(&h.scout_access.address, || {
+        h.env
+            .storage()
+            .persistent()
+            .remove(&DataKey::TrialOffer(player_id, index));
+    });
+
+    let contract_addr = h.scout_access.address.clone();
+    let result = h.scout_access.try_admin_rescue_orphan_trial_escrow(
+        &player_id,
+        &index,
+        &contract_addr,
+    );
+    assert_eq!(result, Err(Ok(ScoutAccessError::InvalidInput)));
+
+    // The escrow record must still be present.
+    assert!(
+        h.scout_access.get_trial_escrow(&player_id, &index).is_some(),
+        "escrow record must not be removed when rescue is rejected"
+    );
+
+    // A subsequent valid rescue still works, proving nothing was consumed.
+    let to = Address::generate(&h.env);
+    let before = xlm_balance(&h, &to);
+    h.scout_access
+        .admin_rescue_orphan_trial_escrow(&player_id, &index, &to);
+    assert_eq!(xlm_balance(&h, &to), before + ESCROW_AMOUNT);
+}
+
+/// #1828: a normal orphan rescue transfers the escrow, emits
+/// `trial_escrow_orphan_rescued`, and clears both the escrow record and the
+/// outstanding-escrows index entry.
+#[test]
+fn test_admin_rescue_orphan_trial_escrow_clears_state() {
+    let h = setup();
+    let player_id: u64 = 36;
+    let to = Address::generate(&h.env);
+    advance_player(&h, player_id, 2);
+    let scout = setup_elite_scout(&h, player_id);
+    let index = log_offer(&h, &scout, player_id, CID_3, CID_4);
+
+    h.env.as_contract(&h.scout_access.address, || {
+        h.env
+            .storage()
+            .persistent()
+            .remove(&DataKey::TrialOffer(player_id, index));
+    });
+
+    let before = xlm_balance(&h, &to);
+    h.scout_access
+        .admin_rescue_orphan_trial_escrow(&player_id, &index, &to);
+    let events = h.env.events().all();
+
+    assert_eq!(
+        xlm_balance(&h, &to),
+        before + ESCROW_AMOUNT,
+        "recipient must receive exactly the escrowed amount"
+    );
+    assert!(
+        find_event(events.events(), "trial_escrow_orphan_rescued").is_some(),
+        "trial_escrow_orphan_rescued event must be emitted"
+    );
+    assert!(
+        h.scout_access.get_trial_escrow(&player_id, &index).is_none(),
+        "escrow record must be removed after a successful rescue"
+    );
+
+    // The entry must be gone from the outstanding index: a later sweep must
+    // not double-pay it.
+    let swept = h.scout_access.expire_trial_offers(&20u32);
+    assert_eq!(
+        swept, 0,
+        "rescued entry must not be double-swept by expire_trial_offers"
+    );
+}
+
 /// #1625: with escrow set to 0, `log_trial_offer` fails with
 /// `TrialOffersDisabled`; an already-pending offer can still be confirmed.
 #[test]
