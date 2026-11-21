@@ -140,6 +140,19 @@ for how to verify the event after running `scripts/upgrade.sh`.
 | Topics | `("dispute_resolved", admin: Address)` |
 | Data   | `(player_id: u64, milestone_index: u32, upheld: bool)` |
 
+### `player_data_purged`
+| Field  | Value |
+|--------|-------|
+| Topics | `("player_data_purged", admin: Address)` |
+| Data   | `(player_id: u64, entries_removed: u32, more: bool)` |
+
+Emitted by `purge_player_data` in the **verification** contract, once per page
+of keys removed. `entries_removed` counts the keys removed in that call;
+`more == true` means further pages remain for this contract, and
+`more == false` marks the final page for the verification contract.
+
+See [PLAYER_ERASURE.md](PLAYER_ERASURE.md) for the full erasure flow.
+
 ---
 
 ## Progress contract events
@@ -159,6 +172,19 @@ for how to verify the event after running `scripts/upgrade.sh`.
 |--------|-------|
 | Topics | `("player_level_reset", admin: Address)` |
 | Data   | `(player_id: u64, old_level: ProgressLevel, target_level: ProgressLevel)` |
+
+### `player_data_purged`
+| Field  | Value |
+|--------|-------|
+| Topics | `("player_data_purged", admin: Address)` |
+| Data   | `(player_id: u64, entries_removed: u32, more: bool)` |
+
+Emitted by `purge_player_data` in the **progress** contract, once per page of
+keys removed. `entries_removed` counts the keys removed in that call;
+`more == true` means further pages remain for this contract, and
+`more == false` marks the final page for the progress contract.
+
+See [PLAYER_ERASURE.md](PLAYER_ERASURE.md) for the full erasure flow.
 
 ---
 
@@ -210,6 +236,19 @@ when `renew_if_due` renews.
 | Topics | `("fees_withdrawn", admin: Address)` |
 | Data   | `(to: Address, amount: i128, timestamp: u64)` |
 
+### `player_data_purged`
+| Field  | Value |
+|--------|-------|
+| Topics | `("player_data_purged", admin: Address)` |
+| Data   | `(player_id: u64, entries_removed: u32, more: bool)` |
+
+Emitted by `purge_player_data` in the **scout_access** contract, once per page
+of keys removed. `entries_removed` counts the keys removed in that call;
+`more == true` means further pages remain for this contract, and
+`more == false` marks the final page for the scout_access contract.
+
+See [PLAYER_ERASURE.md](PLAYER_ERASURE.md) for the full erasure flow.
+
 ---
 
 ## Diagnostic-only events (not committed to ledger)
@@ -226,4 +265,6 @@ committed ledger state. Indexers can detect them in raw transaction metadata.
 
 ---
 
-*Last updated: 2026-09-27 — added `contract_upgraded` event (issue #1434).*
+*Last updated: 2026-09-27 — added `contract_upgraded` event (issue #1434);
+added `player_data_purged` events for progress, verification and scout_access
+(issue #1830).*
