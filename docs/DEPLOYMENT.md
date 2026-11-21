@@ -222,14 +222,13 @@ numeric order. **Run every file** — skipping any migration leaves tables, colu
 or indexes missing and will cause silent indexer errors at runtime.
 
 ```bash
-psql $DATABASE_URL -f migrations/001_initial_schema.sql
-psql $DATABASE_URL -f migrations/002_cursor_upsert_helper.sql
-psql $DATABASE_URL -f migrations/003_diagnostic_events.sql
-psql $DATABASE_URL -f migrations/004_scout_subscriptions_auto_renew.sql
-psql $DATABASE_URL -f migrations/005_evidence_access_grants.sql
-psql $DATABASE_URL -f migrations/006_dispute_jury.sql
-psql $DATABASE_URL -f migrations/007_milestone_flags.sql
+DATABASE_URL=postgres://... ./scripts/migrate-db.sh
 ```
+
+`scripts/migrate-db.sh` applies `migrations/NNN_*.sql` in order, each inside a
+transaction, and records it in `schema_migrations(version, checksum, applied_at)`.
+Re-running only applies pending files, and it refuses to run if an applied file's
+checksum changed.
 
 All migration files are idempotent (`CREATE TABLE IF NOT EXISTS`,
 `ALTER TABLE … ADD COLUMN IF NOT EXISTS`): re-running against an already-migrated
