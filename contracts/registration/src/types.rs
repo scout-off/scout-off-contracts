@@ -260,6 +260,11 @@ pub enum DataKey {
     /// hidden from scout discovery results. Set by `deactivate_scout`,
     /// cleared by `reactivate_scout`.
     ScoutDeactivated(u64),
+
+    // ── Scout verification history ──
+    /// Bounded append-only `Vec<ScoutVerificationRecord>` for a scout; one
+    /// snapshot is appended on every verify / unverify.
+    ScoutVerificationHistory(u64),
 }
 
 /// Snapshot of the single cross-contract peer address pointer held by the

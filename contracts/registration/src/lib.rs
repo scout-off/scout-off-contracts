@@ -87,6 +87,28 @@ const DEFAULT_REG_COOLDOWN_SECS: u64 = 86_400;
 
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Maximum number of entries kept in a scout's verification history.
+const MAX_SCOUT_VERIFICATION_HISTORY: u32 = 10;
+
+/// Append a verification snapshot to the scout's bounded history, dropping the
+/// oldest entry once the cap is reached.
+fn append_scout_verification_history(env: &Env, scout_id: u64, record: &ScoutVerificationRecord) {
+    let key = DataKey::ScoutVerificationHistory(scout_id);
+    let mut history: Vec<ScoutVerificationRecord> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
+    if history.len() >= MAX_SCOUT_VERIFICATION_HISTORY {
+        history.remove(0);
+    }
+    history.push_back(record.clone());
+    env.storage().persistent().set(&key, &history);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+}
+
 /// Copy `input` into `buf`, trim ASCII whitespace from both ends and uppercase
 /// ASCII letters in place. Returns the `(start, end)` bounds of the trimmed
 /// slice inside `buf`. Inputs longer than `buf` are rejected rather than
@@ -1674,7 +1696,8 @@ impl RegistrationContract {
             PERSISTENT_TTL_MIN,
             PERSISTENT_TTL_MAX,
         );
-        events::scout_verified(&env, scout_id, &profile.wallet);
+        append_scout_verification_history(&env, scout_id, &profile.verification);
+        events::scout_verified(&env, scout_id, &profile.wallet, &admin);
         Ok(())
     }
 
@@ -1706,8 +1729,26 @@ impl RegistrationContract {
             PERSISTENT_TTL_MIN,
             PERSISTENT_TTL_MAX,
         );
+        append_scout_verification_history(&env, scout_id, &profile.verification);
         events::scout_unverified(&env, scout_id, &profile.wallet, &admin);
         Ok(())
+    }
+
+    /// Bounded, append-only history (last `MAX_SCOUT_VERIFICATION_HISTORY`
+    /// entries, oldest first) of verification records: one snapshot is
+    /// appended on every `verify_scout` and `unverify_scout`.
+    pub fn get_scout_verification_history(
+        env: Env,
+        scout_id: u64,
+    ) -> Result<Vec<ScoutVerificationRecord>, ScoutChainError> {
+        if !env.storage().persistent().has(&DataKey::Scout(scout_id)) {
+            return Err(ScoutChainError::ScoutNotFound);
+        }
+        Ok(env
+            .storage()
+            .persistent()
+            .get(&DataKey::ScoutVerificationHistory(scout_id))
+            .unwrap_or_else(|| Vec::new(&env)))
     }
 
     /// Lightweight check used by `scout_access`: whether the scout owning
@@ -3879,6 +3920,7 @@ mod tests {
                 let e = crate::events::ScoutVerified {
                     wallet: wallet.clone(),
                     scout_id,
+                    admin: admin.clone(),
                 };
                 (
                     client.address.clone(),
