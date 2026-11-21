@@ -53,6 +53,20 @@ and carry over the SQL types with `@db.*` (`@db.VarChar(n)`, `@db.SmallInt`,
    `prisma migrate diff` against the schema, failing on any difference for a
    modeled table. CI runs it as the `prisma-drift` job.
 
+## Running migrations
+
+Use the runner instead of manual `psql -f` commands:
+
+```bash
+DATABASE_URL=postgres://... ./scripts/migrate-db.sh
+```
+
+It creates `schema_migrations(version, checksum, applied_at)`, applies each
+pending `NNN_*.sql` in order inside a transaction, and fails if an already
+applied file's checksum changed. The backend CI job uses it (via
+`scripts/test-migrate-db.sh`, which also checks idempotency) instead of
+`prisma db push`.
+
 ## Naming and numbering convention
 
 Files must be named `NNN_description.sql` where `NNN` is a zero-padded

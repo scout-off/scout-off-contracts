@@ -22,6 +22,9 @@
 //   --source <identity>  --source passed to `stellar contract invoke`, if your CLI config requires one
 //   --sample <n>         Cap the number of IDs walked per table (default: unlimited)
 //   --tables <list>      Comma-separated subset of tables to check (default: all)
+//   --use-cli            Spawn `stellar contract invoke` per read (debugging) instead of RPC simulation
+//   --concurrency <n>    Max in-flight RPC simulations (default: 8)
+//   --retries <n>        Retries with exponential back-off on 429/5xx (default: 4)
 //   --json                Emit the final report as JSON instead of text
 //
 // Falls back to sourcing .env.contracts (same file deploy.sh writes) for the
@@ -38,6 +41,7 @@ const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const { Client: PgClient } = require("pg");
+const { createSorobanInvoker } = require("./lib/soroban-read");
 
 const ALL_TABLES = [
   "players",
@@ -79,6 +83,9 @@ function parseArgs(argv) {
     sample: null,
     tables: null,
     json: false,
+    useCli: false,
+    concurrency: 8,
+    retries: 4,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -88,6 +95,9 @@ function parseArgs(argv) {
     else if (a === "--sample") args.sample = Number(argv[++i]);
     else if (a === "--tables") args.tables = argv[++i].split(",").map((t) => t.trim());
     else if (a === "--json") args.json = true;
+    else if (a === "--use-cli") args.useCli = true;
+    else if (a === "--concurrency") args.concurrency = Number(argv[++i]);
+    else if (a === "--retries") args.retries = Number(argv[++i]);
     else {
       process.stderr.write(`Unknown argument: ${a}\n`);
       process.exit(2);
@@ -731,6 +741,13 @@ async function main(deps = {}) {
   const injected = Boolean(deps.pg);
   const args = injected ? { network: "testnet" } : parseArgs(process.argv.slice(2));
   if (deps.invoke) invoke = deps.invoke;
+  else if (!args.useCli) {
+    invoke = createSorobanInvoker({
+      concurrency: args.concurrency,
+      retries: args.retries,
+      rpcUrl: args.rpcUrl || undefined,
+    });
+  }
   if (!injected) loadDotEnvContracts();
 
   if (!injected) requireEnv([

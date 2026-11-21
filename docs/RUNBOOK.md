@@ -597,3 +597,18 @@ Migration state replay must run in order: `open_migration_window` → `admin_see
 ```bash
 UPGRADE_SOURCE=admin ./scripts/upgrade.sh --contract <id> --wasm <path> [--network testnet]
 ```
+
+## Roll Back a Faulty Contract Upgrade
+
+If an in-place `upgrade()` shipped a faulty WASM, restoring `.env.contracts`
+does nothing (contract IDs did not change). Revert on-chain instead:
+
+```bash
+./scripts/rollback.sh --upgrade all --network mainnet --source <identity> --tag <release>
+```
+
+This re-upgrades each contract to its recorded `*_PREVIOUS_WASM_HASH` and
+verifies the on-chain hash. It does not revert storage migrations done by
+`migrate()`; see "Two rollback modes" in `docs/DEPLOYMENT.md` before using it
+after a `schema_version` bump. For a bad fresh deployment use
+`./scripts/rollback.sh --deployment <network>`.

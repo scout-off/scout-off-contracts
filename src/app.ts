@@ -8,6 +8,7 @@ import {
   issueSession,
   refreshSession,
 } from "./services/sep10";
+import { AuthError } from "./services/errors";
 import { requireAuth, requireRole } from "./middleware/auth";
 import { prisma } from "./db";
 
@@ -24,16 +25,7 @@ function isValidAccount(account: unknown): account is string {
  * are not verification failures (e.g. database outages).
  */
 function classifyAuthError(error: unknown): string | null {
-  const message = error instanceof Error ? error.message : "";
-  const name = error instanceof Error ? error.name : "";
-  if (/expired|time ?bounds/i.test(message)) return "challenge_expired";
-  if (/already been used/i.test(message)) return "challenge_replayed";
-  if (/account mismatch/i.test(message)) return "account_mismatch";
-  if (/signature|signer/i.test(message)) return "bad_signature";
-  if (name === "InvalidChallengeError" || /challenge/i.test(message)) {
-    return "invalid_challenge";
-  }
-  return null;
+  return error instanceof AuthError ? error.code : null;
 }
 
 // SEP-10 challenge endpoint — returns a server-signed challenge
