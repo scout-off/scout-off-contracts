@@ -250,3 +250,14 @@ The following correctness fixes shipped on `fix/1015-indexer-correctness`:
   every function this script calls.
 - [README.md — Database Schema](../README.md#database-schema) — the
   Postgres schema this script reconciles against.
+
+## Reconciliation performance (issue #1811)
+
+`scripts/reconcile-indexer.js` reads contract state by simulating read-only
+transactions over Soroban RPC through `@stellar/stellar-sdk`
+(`scripts/lib/soroban-read.js`), so no process is spawned per read and the
+`stellar` CLI is not required. In-flight simulations are capped with
+`--concurrency <n>` (default 8) and 429/5xx/network errors are retried with
+exponential back-off via `--retries <n>` (default 4). The RPC endpoint is taken
+from `--rpc-url`, `SOROBAN_RPC_URL`, or a per-network default. Pass `--use-cli`
+to fall back to `stellar contract invoke` for debugging.
