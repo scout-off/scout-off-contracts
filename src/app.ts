@@ -10,9 +10,10 @@ import {
 } from "./services/sep10";
 import { requireAuth, requireRole } from "./middleware/auth";
 import { prisma } from "./db";
+import { applyHttpHardening } from "./httpHardening";
 
 const app = express();
-app.use(express.json());
+applyHttpHardening(app);
 
 function isValidAccount(account: unknown): account is string {
   return typeof account === "string" && StrKey.isValidEd25519PublicKey(account);

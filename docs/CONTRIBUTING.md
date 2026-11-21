@@ -51,6 +51,22 @@ git config core.hooksPath scripts/git-hooks
 
 Reminder: `core.hooksPath` is a per-clone git config setting, so re-apply it after every fresh clone or when working from a new machine.
 
+### Local quick start (no testnet)
+
+```bash
+./scripts/setup-local.sh      # start/reuse stellar/quickstart, fund identity, deploy, seed
+./scripts/teardown-local.sh   # remove the sandbox container
+```
+
+The script is idempotent and is also used by CI (`--sandbox-only`).
+
+### README / ai.md entrypoint check
+
+`scripts/check-readme-ai-docs.sh` verifies README.md and ai.md mention every
+public contract entrypoint. Intentional omissions go in
+`docs/.undocumented-allowlist` with a reason. It is warn-only for now; pass
+`--strict` to make it blocking once the tracked documentation gaps are closed.
+
 ## Before opening a PR
 
 ```bash

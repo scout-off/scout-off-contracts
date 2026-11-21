@@ -1,0 +1,4 @@
+# Public entrypoints intentionally not listed in README.md / ai.md.
+# Format: <contract>::<fn>  # reason   (or bare <fn> to match any contract)
+# Currently empty: gaps are tracked as separate issues and reported as warnings.
+__constructor  # deploy-time initializer, not a callable entrypoint
