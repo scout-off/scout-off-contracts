@@ -1,0 +1,111 @@
+# Coverage reporting (#1805): cargo-llvm-cov for the Rust workspace and
+# jest --coverage for the Node backend. Reports are uploaded as artifacts and
+# summarised in the job summary. Thresholds are a non-decreasing floor: raise
+# them (never lower) when coverage improves. See docs/COVERAGE.md.
+name: Coverage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  # Minimum line coverage (percent) for the Rust workspace. Ratchet upward only.
+  RUST_MIN_LINE_COVERAGE: "10"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  rust-coverage:
+    name: Rust coverage (cargo-llvm-cov)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
+        with:
+          toolchain: 1.97.1
+          components: llvm-tools-preview
+
+      - name: Cache cargo registry and instrumented build
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/llvm-cov-target
+          key: ${{ runner.os }}-llvm-cov-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+
+      - name: Generate lcov report
+        run: >
+          cargo llvm-cov --workspace
+          --exclude scoutchain-chaos-tests --exclude scoutchain-migration-e2e
+          --lcov --output-path lcov.info
+
+      - name: Enforce line-coverage floor and write summary
+        run: |
+          cargo llvm-cov report --summary-only \
+            --fail-under-lines "$RUST_MIN_LINE_COVERAGE" | tee coverage-summary.txt
+          {
+            echo "### Rust coverage (cargo-llvm-cov)"
+            echo '```'
+            cat coverage-summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Rust coverage artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rust-coverage
+          path: |
+            lcov.info
+            coverage-summary.txt
+          if-no-files-found: ignore
+
+  backend-coverage:
+    name: Backend coverage (jest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run jest with coverage and thresholds
+        run: npx jest --config jest.coverage.config.js --coverage --coverageReporters=text-summary --coverageReporters=lcov --coverageReporters=json-summary | tee coverage-summary.txt
+
+      - name: Write job summary
+        if: always()
+        run: |
+          {
+            echo "### Backend coverage (jest)"
+            echo '```'
+            cat coverage-summary.txt 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload backend coverage artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: backend-coverage
+          path: coverage/
+          if-no-files-found: ignore
