@@ -223,6 +223,9 @@ pub enum ScoutAccessError {
     /// exactly `TrialCounter + 1` for the target player. Mirrors progress's
     /// `InvalidHistoryIndex` for the same contiguity violation.
     InvalidTrialIndex = 58,
+    /// `purge_player_data` was called for a player whose erasure has not been
+    /// started via `registration.begin_erasure` (or registration is unwired).
+    ErasureNotAuthorized = 59,
 }
 
 impl AdminError for ScoutAccessError {

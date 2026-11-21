@@ -678,6 +678,43 @@ impl RegistrationContract {
     }
 
     /// Deregister a player profile (admin only, GDPR right-to-erasure).
+    /// Start erasure for a player (admin only): deactivates the player and
+    /// records `ErasurePending(player_id)`, which authorises the
+    /// `purge_player_data` entrypoints on progress / verification /
+    /// scout_access. `deregister_player` completes the erasure. Idempotent.
+    pub fn begin_erasure(env: Env, player_id: u64) -> Result<(), ScoutChainError> {
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        Self::load_stored_player(&env, player_id)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::PlayerDeactivated(player_id), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ErasurePending(player_id), &true);
+        env.storage().persistent().extend_ttl(
+            &DataKey::ErasurePending(player_id),
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
+        Ok(())
+    }
+
+    /// Whether `begin_erasure` has been called for the player and erasure has
+    /// not yet been completed by `deregister_player`.
+    pub fn is_erasure_pending(env: Env, player_id: u64) -> bool {
+        env.storage()
+            .persistent()
+            .get::<DataKey, bool>(&DataKey::ErasurePending(player_id))
+            .unwrap_or(false)
+    }
+
+    /// Check used by the purging contracts: `true` when erasure is pending or
+    /// the player no longer exists (so purges can be re-run after deregister).
+    pub fn is_erasure_authorized(env: Env, player_id: u64) -> bool {
+        Self::is_erasure_pending(env.clone(), player_id)
+            || !env.storage().persistent().has(&DataKey::Player(player_id))
+    }
+
     pub fn deregister_player(env: Env, player_id: u64) -> Result<(), ScoutChainError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         let profile = Self::load_stored_player(&env, player_id)?;
@@ -704,6 +741,10 @@ impl RegistrationContract {
         env.storage()
             .persistent()
             .remove(&DataKey::PlayerDeactivated(player_id));
+        // Erasure is complete: clear the interlock marker.
+        env.storage()
+            .persistent()
+            .remove(&DataKey::ErasurePending(player_id));
 
         // Remove from player index
         let mut player_ids: Vec<u64> = env

@@ -97,6 +97,7 @@ mod registration_contract {
         fn get_player_id_by_wallet(env: Env, wallet: Address) -> Result<u64, RegClientError>;
         fn is_scout_deactivated(env: Env, scout_id: u64) -> bool;
         fn is_scout_verified(env: Env, wallet: Address) -> bool;
+        fn is_erasure_authorized(env: Env, player_id: u64) -> bool;
     }
 }
 
@@ -3193,6 +3194,17 @@ impl ScoutAccessContract {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
+
+        // #1807: refuse unless registration says erasure is pending (fails closed).
+        let reg: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::RegistrationContract)
+            .ok_or(ScoutAccessError::ErasureNotAuthorized)?;
+        match registration_contract::Client::new(&env, &reg).try_is_erasure_authorized(&player_id) {
+            Ok(Ok(true)) => {}
+            _ => return Err(ScoutAccessError::ErasureNotAuthorized),
+        }
 
         const PAGE_SIZE: u32 = 50;
         let mut removed: u32 = 0;

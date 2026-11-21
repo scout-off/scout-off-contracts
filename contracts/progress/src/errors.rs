@@ -100,6 +100,9 @@ pub enum ProgressError {
     /// player during an idempotent seeding replay. The player exists but the
     /// expected root is absent, so this is not a `PlayerNotFound` condition.
     HistoryRootMissing = 28,
+    /// `purge_player_data` was called for a player whose erasure has not been
+    /// started via `registration.begin_erasure` (or registration is unwired).
+    ErasureNotAuthorized = 29,
 }
 
 impl AdminError for ProgressError {

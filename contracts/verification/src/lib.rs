@@ -3350,6 +3350,22 @@ impl VerificationContract {
     ) -> Result<(u32, bool), VerificationError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
 
+        // #1807: refuse unless registration says erasure is pending (fails closed).
+        let reg_addr: Address = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::RegistrationContract)
+            .ok_or(VerificationError::ErasureNotAuthorized)?;
+        let args: Vec<Val> = (player_id,).into_val(&env);
+        match env.try_invoke_contract::<bool, soroban_sdk::Error>(
+            &reg_addr,
+            &Symbol::new(&env, "is_erasure_authorized"),
+            args,
+        ) {
+            Ok(Ok(true)) => {}
+            _ => return Err(VerificationError::ErasureNotAuthorized),
+        }
+
         const PAGE_SIZE: u32 = 50;
         let mut removed: u32 = 0;
 

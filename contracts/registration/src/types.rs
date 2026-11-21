@@ -265,6 +265,12 @@ pub enum DataKey {
     /// Bounded append-only `Vec<ScoutVerificationRecord>` for a scout; one
     /// snapshot is appended on every verify / unverify.
     ScoutVerificationHistory(u64),
+
+    // ── Erasure interlock (issue #1807) ──
+    /// Set by `begin_erasure`; cleared by `deregister_player`. Purging
+    /// contracts only delete a player's data while this is set (or the player
+    /// no longer exists).
+    ErasurePending(u64),
 }
 
 /// Snapshot of the single cross-contract peer address pointer held by the

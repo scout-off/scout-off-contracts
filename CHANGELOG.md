@@ -18,6 +18,10 @@ The initial v0.1.0 entry below retains the year-only date because no exact histo
 
 ## Unreleased
 
+- Contracts affected: `registration`, `progress`, `verification`, `scout_access`
+- Summary: Added `registration.begin_erasure` / `is_erasure_pending` / `is_erasure_authorized` and an `ErasurePending` storage key; `purge_player_data` on progress, verification and scout_access now returns the new appended `ErasureNotAuthorized` error unless erasure is pending (fails closed when registration is unwired) (#1807).
+- Classification: Breaking (MAJOR)
+
 - Contracts affected: `verification`
 - Summary: `ValidatorActivityReport.distinct_players` removed so `get_validator_activity_report` cost no longer scales with a validator's player count; `distinct_player_count` is served from the new `ValidatorPlayerCount` counter (appended storage key, with legacy fallback). Use `get_validator_players_page` for the list (#1806).
 - Classification: Breaking (MAJOR)
