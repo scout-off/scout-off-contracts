@@ -362,6 +362,30 @@ Eight peer-address links must be established after every fresh deployment. `init
 
 This list matches what `scripts/verify-cross-contract-wiring.sh` checks and the "Full Picture" table in [`docs/WIRING_REGISTRY_DESIGN.md`](docs/WIRING_REGISTRY_DESIGN.md).
 
+### The `contract_kind()` handshake
+
+Every contract exposes a read-only `contract_kind() -> Symbol` query that identifies what kind of contract it is:
+
+| Contract | `contract_kind()` returns |
+|----------|---------------------------|
+| `registration` | `"registration"` |
+| `verification` | `"verification"` |
+| `progress` | `"progress"` |
+| `scout_access` | `"scout_access"` |
+
+Each of the eight wiring setters above performs a **handshake** before storing the peer address: it calls `contract_kind()` on the address it was given and compares the returned symbol against the kind it expects. Only if the kinds match is the address written to storage. This catches the most common deployment mistake — pasting the wrong contract ID into a setter — at wiring time instead of at the first cross-contract call.
+
+### Troubleshooting the handshake
+
+- **Wrong contract ID passed to a setter.** If you pass, for example, the progress contract ID to `registration.set_progress_contract` (or any other setter), the handshake fails and the setter returns `InvalidPeerContract` instead of storing the address. Re-run the setter with the correct contract ID; nothing was written, so no cleanup is needed.
+- **`verification.set_progress_contract` is first-call-only.** It returns `AlreadyConfigured` (code 11) on any subsequent call, even with the same address. Use `verification.update_progress_contract` to re-wire after a redeployment. All other wiring setters can be called repeatedly.
+- **Check the kind directly** if a setter is rejected and you are unsure which contract an ID refers to:
+  ```bash
+  stellar contract invoke --id $SOME_CONTRACT_ID \
+    --source $ADMIN_ADDRESS --network testnet \
+    -- contract_kind
+  ```
+
 ### Manual wiring commands
 
 ```bash
@@ -717,6 +741,7 @@ When the progress contract is not wired, a `progress_contract_not_set` event is 
 - **Subscription tier check is enforced on-chain.** Basic scouts cannot call `pay_to_contact`. Elite is required for `log_trial_offer`.
 - **`filter_players` requires `offset` and `limit`.** The limit is capped at 50 server-side.
 - **`set_progress_contract` on verification is first-call-only.** Returns `AlreadyConfigured` (code 11) if called again. Use `update_progress_contract` to re-wire.
+- **Wiring setters reject the wrong contract kind.** Each of the eight wiring setters calls `contract_kind()` on the supplied address and returns `InvalidPeerContract` if it does not match the expected kind (e.g. passing the progress contract ID to `set_registration_contract`). The address is not stored, so simply retry with the correct ID. Call `contract_kind()` on an ID to confirm what it is before wiring.
 - **`approve_milestone` stops working once k-of-n threshold mode is enabled.** Once an admin calls `set_milestone_threshold(n)` with `n >= 2`, both `approve_milestone` and `submit_attested_milestone` return `ThresholdModeRequiresAttestation` (code 28) for every subsequent call — all milestone submissions must go through `attest_milestone` instead. Call `get_milestone_threshold()` to check the current mode before integrating; a return value of `1` (the default) means single-signature mode is still active and `approve_milestone` works as normal. A return value of `2` or higher means every validator must call `attest_milestone` independently, and the milestone commits automatically once the threshold number of distinct active validators have voted for the same `(player_id, evidence_hash)` claim within the configured voting window.
 
 > **⚠️ Verify `log_trial_offer` behavior against the live contract before integrating.**

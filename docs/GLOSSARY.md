@@ -443,6 +443,40 @@ pending escrow record.
 
 ---
 
+## Wiring Handshake
+
+The on-chain check that guards every `set_*_contract` wiring setter. Each of
+the four contracts exposes `contract_kind() -> Symbol`, returning its own
+identity:
+
+| Contract | `contract_kind()` |
+|---|---|
+| `registration` | `"registration"` |
+| `verification` | `"verification"` |
+| `progress` | `"progress"` |
+| `scout_access` | `"scout_access"` |
+
+When an admin calls a wiring setter (e.g. `set_verification_contract`,
+`set_progress_contract`, `set_scout_access_contract`) with a candidate peer
+address, the setter first invokes `contract_kind()` on that address and
+compares the returned symbol against the kind it expects. If the address
+points at the wrong kind of contract (or at something that does not implement
+`contract_kind()` at all), the call is rejected with the contract's
+`InvalidPeerContract` error and the stored wiring is left unchanged. This
+prevents an operator from silently wiring, say, the `progress` contract into
+the `verification` slot — a misconfiguration that would otherwise only surface
+later as confusing cross-contract call failures.
+
+- See [WIRING_REGISTRY_DESIGN.md](WIRING_REGISTRY_DESIGN.md) for the full
+  design of the wiring registry and the handshake introduced in #1610.
+- Relevant functions: `contract_kind`, `set_verification_contract`,
+  `set_progress_contract`, `set_scout_access_contract` — see
+  [CONTRACT_REFERENCE.md](CONTRACT_REFERENCE.md).
+- Related: [Migration Window](#migration-window) (re-wiring during a
+  migration must pass the same handshake).
+
+---
+
 ## Validator
 
 A trusted third party (local coach, academy director, or certified trainer)
