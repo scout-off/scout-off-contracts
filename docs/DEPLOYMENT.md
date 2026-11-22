@@ -758,3 +758,15 @@ See [`docs/TTL_POLICY.md`](TTL_POLICY.md) for:
 - Rationale for 30-day choice
 - Cost analysis (CPU and storage)
 - Adding new persistent keys with proper TTL handling
+
+### Verifying release WASM provenance (#1804)
+
+Each release's `*.optimized.wasm` and `wasm-hashes.json` carry a signed build
+provenance attestation. Verify a downloaded artifact with:
+
+```bash
+gh attestation verify <file>.optimized.wasm --repo scout-off/scout-off-contracts
+```
+
+Release assets are immutable: the release workflow refuses to replace existing
+assets unless run via `workflow_dispatch` with `overwrite: true`.
