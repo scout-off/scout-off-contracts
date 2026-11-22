@@ -51,9 +51,10 @@ tests/**/*.test.js.map
 src/**/*.js
 src/**/*.js.map
 
-# Node modules and lock files (only package.json is tracked)
+# Node modules. package-lock.json is tracked (issue #1801) for reproducible
+# installs; generate it with the CI Node version (20) via `npm install` and
+# commit it, then switch CI from `npm install` to `npm ci`.
 node_modules/
-package-lock.json
 yarn.lock
 pnpm-lock.yaml
 
