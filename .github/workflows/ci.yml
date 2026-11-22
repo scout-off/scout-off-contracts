@@ -146,6 +146,9 @@ jobs:
       - name: Push Prisma schema to test DB
         run: npx prisma db push --skip-generate
 
+      - name: Lint
+        run: npm run lint
+
       - name: Type-check
         run: npx tsc --noEmit
 
