@@ -10,6 +10,14 @@ export interface Config {
   webAuthDomain: string;
   stellarNetwork: StellarNetwork;
   adminAddress?: string;
+  trustProxy: boolean;
+  getAuthIpLimit: number;
+  getAuthAccountLimit: number;
+  postAuthIpLimit: number;
+  postAuthRefreshIpLimit: number;
+  adminIpLimit: number;
+  maxUnconsumedChallengesPerAccount: number;
+  cleanupIntervalSeconds: number;
 }
 
 const MIN_JWT_SECRET_BYTES = 32;
@@ -45,6 +53,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const homeDomain = required("HOME_DOMAIN");
   const webAuthDomain = required("WEB_AUTH_DOMAIN");
 
+  const trustProxy = env.TRUST_PROXY?.trim()?.toLowerCase() === "true";
+  
+  const getAuthIpLimit = parseInt(env.GET_AUTH_IP_LIMIT || "10", 10);
+  const getAuthAccountLimit = parseInt(env.GET_AUTH_ACCOUNT_LIMIT || "5", 10);
+  const postAuthIpLimit = parseInt(env.POST_AUTH_IP_LIMIT || "20", 10);
+  const postAuthRefreshIpLimit = parseInt(env.POST_AUTH_REFRESH_IP_LIMIT || "10", 10);
+  const adminIpLimit = parseInt(env.ADMIN_IP_LIMIT || "10", 10);
+  const maxUnconsumedChallengesPerAccount = parseInt(env.MAX_UNCONSUMED_CHALLENGES_PER_ACCOUNT || "5", 10);
+  const cleanupIntervalSeconds = parseInt(env.CLEANUP_INTERVAL_SECONDS || "300", 10); // 5 minutes default
+
   const network = env.STELLAR_NETWORK?.trim() || "testnet";
   if (!(SUPPORTED_NETWORKS as readonly string[]).includes(network)) {
     errors.push(`STELLAR_NETWORK must be one of: ${SUPPORTED_NETWORKS.join(", ")}`);
@@ -61,6 +79,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webAuthDomain,
     stellarNetwork: network as StellarNetwork,
     adminAddress: env.ADMIN_ADDRESS?.trim() || undefined,
+    trustProxy,
+    getAuthIpLimit,
+    getAuthAccountLimit,
+    postAuthIpLimit,
+    postAuthRefreshIpLimit,
+    adminIpLimit,
+    maxUnconsumedChallengesPerAccount,
+    cleanupIntervalSeconds,
   };
 }
 

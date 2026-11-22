@@ -7,12 +7,21 @@ import {
   verifyChallengeTx,
   issueSession,
   refreshSession,
+  checkChallengeLimit,
+  decodeTokenExpiry,
 } from "./services/sep10";
 import { requireAuth, requireRole } from "./middleware/auth";
+import { initRateLimiting } from "./middleware/rateLimit";
 import { prisma } from "./db";
 
 const app = express();
 app.use(express.json());
+
+// Initialize rate limiting middleware
+const rateLimitMiddleware = initRateLimiting(app);
+
+// Apply rate limits to auth endpoints
+app.get("/auth", rateLimitMiddleware.getAuth, rateLimitMiddleware.getAuthAccount, async (req: Request, res: Response) => {
 
 function isValidAccount(account: unknown): account is string {
   return typeof account === "string" && StrKey.isValidEd25519PublicKey(account);
@@ -59,7 +68,10 @@ app.get("/auth", async (req: Request, res: Response) => {
 // SEP-10 verification endpoint — client submits the signed challenge
 // transaction; server verifies it and issues an access token plus a rotating
 // refresh token, with the role derived from on-chain / indexer state.
-app.post("/auth", async (req: Request, res: Response) => {
+app.post(
+  "/auth",
+  rateLimitMiddleware.postAuth,
+  async (req: Request, res: Response) => {
   const { transaction, account } = req.body as {
     transaction?: string;
     account?: string;
@@ -76,6 +88,10 @@ app.post("/auth", async (req: Request, res: Response) => {
 
   try {
     const verifiedAccount = await verifyChallengeTx(transaction, account);
+    
+    // Cap outstanding unconsumed challenges per account
+    await checkChallengeLimit(account, config.maxUnconsumedChallengesPerAccount);
+    
     const session = await issueSession(verifiedAccount);
 
     res.json(session);
@@ -91,7 +107,7 @@ app.post("/auth", async (req: Request, res: Response) => {
 });
 
 // Refresh endpoint — rotates the refresh token and re-derives the role.
-app.post("/auth/refresh", async (req: Request, res: Response) => {
+app.post("/auth/refresh", rateLimitMiddleware.postAuthRefresh, async (req: Request, res: Response) => {
   const { refreshToken } = req.body as { refreshToken?: string };
 
   if (!refreshToken || typeof refreshToken !== "string") {
@@ -111,8 +127,10 @@ app.post("/auth/refresh", async (req: Request, res: Response) => {
 
 // Revoke token endpoint (admin only) — requireAuth must precede requireRole
 // so req.user is populated before the role check runs.
+// Rate limiting is applied to all admin endpoints.
 app.post(
   "/api/admin/tokens/revoke",
+  rateLimitMiddleware.admin,
   requireAuth,
   requireRole(["admin"]),
   async (req: Request, res: Response) => {
@@ -123,10 +141,12 @@ app.post(
     }
 
     let jti: string;
+    let exp: number | null = null;
 
     try {
       const payload = jwt.verify(token, config.jwtSecret, { algorithms: ["HS256"] }) as {
         jti?: string;
+        exp?: number;
       };
       if (!payload.jti) {
         return res
@@ -134,12 +154,18 @@ app.post(
           .json({ error: "Token does not contain a jti claim" });
       }
       jti = payload.jti;
+      exp = payload.exp ?? null;
     } catch {
-      return res.status(400).json({ error: "Invalid token" });
+      // If verification fails, try to decode the expiry from the raw token
+      exp = decodeTokenExpiry(token);
     }
 
+    // Store the token expiry so cleanup can properly track when to delete the revocation
     await prisma.revokedToken.create({
-      data: { jti },
+      data: {
+        jti,
+        expiresAt: exp ? new Date(exp * 1000) : undefined,
+      },
     });
 
     return res.json({ revoked: true });

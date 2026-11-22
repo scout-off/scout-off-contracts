@@ -47,12 +47,32 @@ function refreshTokenTtlSeconds(): number {
     : DEFAULT_REFRESH_TOKEN_TTL_SECONDS;
 }
 
+export /**
+ * Issue a SEP-10 access token and return the raw token string.
+ * The token includes the exp claim which is used for revocation tracking.
+ */
 export function issueSep10Token(payload: Sep10TokenPayload, secret: string) {
   return jwt.sign(payload, secret, {
     algorithm: "HS256",
     expiresIn: accessTokenTtlSeconds(),
     jwtid: uuidv4(),
   });
+}
+
+/**
+ * Decode the exp claim from a SEP-10 token without verifying it.
+ * Used to store the expiry time in revoked_tokens.
+ */
+export function decodeTokenExpiry(token: string): number | null {
+  try {
+    const payload = jwt.decode(token);
+    if (payload && typeof payload.exp === "number") {
+      return payload.exp;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function sep10Config() {
