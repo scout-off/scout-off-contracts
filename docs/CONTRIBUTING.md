@@ -188,3 +188,18 @@ reviewer group changes.
 
 Unfamiliar with terms like *validator*, *milestone*, *subscription tier*, or *CID*?
 See [docs/GLOSSARY.md](GLOSSARY.md) for authoritative definitions of all domain-specific terms.
+
+## Backend tests: unit vs integration (#1803)
+
+- `npm test` runs unit tests only (Prisma mocked); no database needed.
+- `npm run test:int` runs `*.int.test.ts` suites, which need Postgres. Without
+  `DATABASE_URL` they skip with a single message.
+- `npm run test:all` runs both (used by the CI `backend` job).
+
+Local Postgres for integration runs:
+
+```bash
+docker run -d --name scoutchain-pg -p 5432:5432 -e POSTGRES_USER=scoutchain -e POSTGRES_PASSWORD=scoutchain -e POSTGRES_DB=scoutchain postgres:15
+export DATABASE_URL=postgresql://scoutchain:scoutchain@localhost:5432/scoutchain
+npx prisma db push --skip-generate && npm run test:int
+```

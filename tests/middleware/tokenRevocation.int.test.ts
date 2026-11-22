@@ -9,15 +9,25 @@ import { config } from "../../src/config";
 // The app verifies tokens with the secret src/config loaded at import time.
 const TEST_SECRET = config.jwtSecret;
 
+// Integration suite (#1803): needs a live Postgres. Without DATABASE_URL the
+// whole suite is skipped with a single message instead of failing.
+const HAS_DB = Boolean(process.env.DATABASE_URL);
+if (!HAS_DB) {
+  console.warn(
+    "Skipping integration tests: DATABASE_URL is not set. See docs/CONTRIBUTING.md (Integration tests)."
+  );
+}
+const describeDb = HAS_DB ? describe : describe.skip;
+
 beforeEach(async () => {
-  await prisma.revokedToken.deleteMany();
+  if (HAS_DB) await prisma.revokedToken.deleteMany();
 });
 
 afterAll(async () => {
-  await prisma.$disconnect();
+  if (HAS_DB) await prisma.$disconnect();
 });
 
-describe("Token revocation through real SEP-10 flow", () => {
+describeDb("Token revocation through real SEP-10 flow", () => {
   it("should include jti claim in JWT issued through sep10 signing path", () => {
     const token = issueSep10Token(
       { sub: "user123", role: "validator" },

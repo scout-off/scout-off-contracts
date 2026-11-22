@@ -150,7 +150,7 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Run tests
-        run: npm test
+        run: npm run test:all
 
   check-node-scripts:
     runs-on: ubuntu-latest
