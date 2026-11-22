@@ -1,32 +1,71 @@
 # Issue #1614: attach reproducibly built WASMs and a checksummed hash manifest
 # to every version tag's GitHub Release. Verify a deployment against it with
 # scripts/verify-deployed-wasm.sh <network> <tag>.
+# Issue #1804: actions SHA-pinned, job-scoped permissions, double-build
+# reproducibility check, build provenance attestation, no silent overwrite.
 name: Release WASM
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      overwrite:
+        description: 'Replace assets on an existing release (published hashes are otherwise immutable)'
+        type: boolean
+        default: false
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   release-wasm:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Build pinned build image
         run: docker build -t scoutchain-wasm-build -f ci/build/Dockerfile ci/build
 
-      - name: Build WASM
+      - name: Build WASM (build 1)
         run: |
-          mkdir -p out
+          mkdir -p out out2
           docker run --rm -v "$PWD:/src" -v "$PWD/out:/out" scoutchain-wasm-build /out
+
+      - name: Build WASM (build 2, clean container)
+        run: |
+          docker run --rm -v "$PWD:/src" -v "$PWD/out2:/out" scoutchain-wasm-build /out
+
+      - name: Verify the two builds are identical
+        run: |
+          if ! diff -u out/SHA256SUMS out2/SHA256SUMS; then
+            echo "::error::Two clean builds produced different SHA256SUMS; refusing to publish."
+            exit 1
+          fi
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: |
+            out/*.optimized.wasm
+            out/wasm-hashes.json
 
       - name: Publish release assets
         env:
           GH_TOKEN: ${{ github.token }}
+          OVERWRITE: ${{ inputs.overwrite }}
         run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --generate-notes
-          gh release upload "$GITHUB_REF_NAME" out/*.optimized.wasm out/wasm-hashes.json out/SHA256SUMS --clobber
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            existing=$(gh release view "$tag" --json assets --jq '.assets | length')
+            if [ "$existing" -gt 0 ] && [ "$OVERWRITE" != "true" ]; then
+              echo "::error::Release $tag already has $existing asset(s); re-run via workflow_dispatch with overwrite=true to replace them."
+              exit 1
+            fi
+          else
+            gh release create "$tag" --generate-notes
+          fi
+          gh release upload "$tag" out/*.optimized.wasm out/wasm-hashes.json out/SHA256SUMS --clobber
