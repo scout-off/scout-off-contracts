@@ -83,3 +83,6 @@ budget-drift.json
 
 # Log files
 *.log
+
+# Local change-summary notes (not part of the repo history)
+changes-*.md

@@ -45,6 +45,63 @@ they request it.
 
 ---
 
+## Full DataKey inventory
+
+This section documents every player-keyed `DataKey` variant in the verification contract
+and whether it is purged or retained during erasure, along with justification.
+
+| Key | Contract | Status | Reason |
+|-----|----------|--------|--------|
+| `PlayerAffiliations(player)` | verification | **Purged** | Reverse index of affiliations by player; removed during purge |
+| `PlayerDisputes(player)` | verification | **Purged** | List of disputed milestone indices; removed during purge |
+| `PlayerOpenDisputeCount(player)` | verification | **Purged** | Anti-spam cap counter; decremented and removed when disputes close |
+| `Milestone(player, idx)` | verification | **Purged** | Milestone record; removed paged during purge |
+| `MilestoneCounter(player)` | verification | **Purged** | Milestone counter; removed when player is fully purged |
+| `DisputeRound(player, idx)` | verification | **Purged** | Latest dispute round for milestone; removed paged during purge |
+| `MilestoneDispute(player, idx, round)` | verification | **Purged** | Dispute record; removed paged during purge |
+| `OpenDisputeIndex` | verification | **Purged** | Global open dispute index; entries removed when disputes close |
+| `DisputeVote(player, idx, round, validator)` | verification | **Purged** | Individual jury vote; removed when dispute purged |
+| `DisputeVoteCount(player, idx, round)` | verification | **Purged** | Vote count index; removed when dispute purged |
+| `ValidatorMilestones(validator)` | verification | **Retained** | Validator-scoped index; player-specific entries kept for audit |
+| `EvidenceUsed(evidence_hash)` | verification | **Retained** | Global uniqueness check; evidence hash is not player-specific |
+| `ActiveDisputesCount` | verification | **Retained** | Global counter; not player-keyed |
+| `ActiveValidatorCount` | verification | **Retained** | Global counter; not player-keyed |
+| `TotalValidatorCount` | verification | **Retained** | Global counter; not player-keyed |
+| `ValidatorRevokedForCause(validator)` | verification | **Retained** | Validator-scoped revocation record |
+| `ValidatorPlayers(validator)` | verification | **Purged** | Validator's list of players; player removed from vector |
+| `MilestoneAttestors(player, idx)` | verification | **Purged** | Co-attestors for milestone; removed with milestone |
+| `MilestonePendingReReview(player, idx)` | verification | **Purged** | Legacy re-review flag; removed with milestone |
+| `PendingMilestoneClaim(player, desc)` | verification | **Retained** | Bounded TTL claim; can't enumerate, removed by TTL |
+| `PendingMilestoneVote(player, desc, round, validator)` | verification | **Retained** | Vote on claim; tied to claim TTL |
+| `ValidatorPendingVotes(validator)` | verification | **Retained** | Validator-scoped pending votes |
+| `PlayerDeactivated(player)` | verification | **Purged** | Deactivation flag; removed with player data |
+| `PlayerLevel(player)` | registration | **Purged** | Level override; removed during deregistration |
+| `Player(player)` | registration | **Purged** | Full player profile; removed during deregistration |
+| `PlayerByWallet(player_wallet)` | registration | **Purged** | Wallet→player index; removed during deregistration |
+| `PlayerDeactivated(player)` | registration | **Purged** | Deactivation flag; removed during deregistration |
+| `PlayersByLevel(player)` | registration | **Purged** | Level index membership; removed during deregistration |
+| `PlayersByLevelRegion(player)` | registration | **Purged** | Level+region index membership; removed during deregistration |
+
+### Notes on retained keys
+
+- **`PendingMilestoneClaim`** and **`PendingMilestoneVote`** use bounded TTL
+  (see `AttestationVotingWindowSecs` + grace period) so orphaned entries
+  automatically expire. They cannot be enumerated without scanning all evidence
+  hashes, so TTL cleanup is the chosen approach.
+
+- **`ValidatorMilestones(validator)`** stores `MilestoneRef` entries that point
+  to `(player_id, milestone_index)`. After erasure, these references become
+  orphaned (the underlying `Milestone` record is deleted). They remain until
+  TTL archival because enumerating and pruning them would be unbounded. The
+  validator's per-player count is preserved for audit purposes.
+
+- **`ValidatorPlayers(validator)`** is purged because the validator's list of
+  players is updated when a player is erased. This is a bounded operation
+  (finding all milestones the validator approved for the player via
+  `MilestoneAttestors`).
+
+---
+
 ## Recommended erasure procedure
 
 Run the following steps **in order**. Each cross-contract purge must complete
