@@ -30,12 +30,73 @@ Run the emergency pause script:
 ./scripts/emergency-pause.sh
 ```
 
-> **Note**: This requires `ADMIN_SECRET` and the contract IDs in `.env.contracts`
-> to be available first (see the prerequisites above).
-> Each `pause_contract` call is a separate Stellar transaction.
-> If the script exits mid-way (e.g. network error), run it again — the already-
-> paused contracts will return `ContractPaused` but will not change state.
-> Continue from the failed contract manually if needed.
+#### Best-effort behavior
+
+The script implements best-effort across all contracts:
+
+- **scout_access is paused first** — since it holds funds, its safety takes priority
+- **Retries transient failures** — up to 5 attempts with exponential backoff (500ms → 1s → 2s → 4s → 8s max with jitter)
+- **Continues regardless of failures** — a failure on one contract does not prevent attempts on the others
+- **Verifies final state** — calls `health()` on each contract after pausing to confirm `paused: true`
+- **Reports clear summary** — prints a table showing pause result and health check per contract; exits non-zero if any contract is not in the desired state
+
+#### Optional filtering
+
+To pause only specific contracts, use the `--contracts` flag:
+
+```bash
+# Pause only registration and progress
+./scripts/emergency-pause.sh --contracts registration,progress
+
+# Pause only scout_access (funds at risk)
+./scripts/emergency-pause.sh --contracts scout_access
+```
+
+Valid contract names: `registration`, `verification`, `progress`, `scout_access`
+
+#### Example output
+
+```bash
+========================================
+  Emergency Pause - Starting
+========================================
+
+Target network: testnet
+Contracts to pause: registration verification progress scout_access
+
+--- Priority: scout_access (funds at risk) ---
+  [attempt 1/5] Pausing scout_access...
+  ✓ scout_access paused successfully
+
+--- Priority: registration, verification, progress ---
+  [attempt 1/5] Pausing registration...
+  ✓ registration paused successfully
+  [attempt 1/5] Pausing verification...
+  ✓ verification paused successfully
+  [attempt 1/5] Pausing progress...
+  ✓ progress paused successfully
+
+--- Verifying final state via health() ---
+{"initialized":true,"paused":true}
+{"initialized":true,"paused":true}
+{"initialized":true,"paused":true}
+{"initialized":true,"paused":true}
+
+========================================
+  Emergency Pause - Summary
+========================================
+
+Contract              Pause Result    Health Check
+--------              ------------    ------------
+scout_access          success         paused:true
+registration          success         paused:true
+verification          success         paused:true
+progress              success         paused:true
+
+✓ All targeted contracts are in PAUSED state
+```
+
+If any contract fails to pause or health check fails, the summary shows the failure and the script exits with code 1.
 
 ## Function-Scoped Circuit Breakers
 
@@ -409,23 +470,73 @@ Run the emergency unpause script:
 ./scripts/emergency-unpause.sh
 ```
 
-### Verify each contract is unpaused
+#### Best-effort behavior
+
+The script implements best-effort across all contracts:
+
+- **scout_access is unpaused first** — since it holds funds, its safety takes priority
+- **Retries transient failures** — up to 5 attempts with exponential backoff (500ms → 1s → 2s → 4s → 8s max with jitter)
+- **Continues regardless of failures** — a failure on one contract does not prevent attempts on the others
+- **Verifies final state** — calls `health()` on each contract after unpause to confirm `paused: false`
+- **Reports clear summary** — prints a table showing unpause result and health check per contract; exits non-zero if any contract is not in the desired state
+
+#### Optional filtering
+
+To unpause only specific contracts, use the `--contracts` flag:
 
 ```bash
-source .env && source .env.contracts
-NETWORK_ARGS="--network $STELLAR_NETWORK --source $ADMIN_SECRET"
+# Unpause only registration and progress
+./scripts/emergency-unpause.sh --contracts registration,progress
 
-echo "registration:" && stellar contract invoke --id "$REGISTRATION_CONTRACT_ID" $NETWORK_ARGS -- health
-echo "verification:" && stellar contract invoke --id "$VERIFICATION_CONTRACT_ID" $NETWORK_ARGS -- health
-echo "progress:"     && stellar contract invoke --id "$PROGRESS_CONTRACT_ID"     $NETWORK_ARGS -- health
-echo "scout_access:" && stellar contract invoke --id "$SCOUT_ACCESS_CONTRACT_ID" $NETWORK_ARGS -- health
+# Unpause only scout_access (funds at risk)
+./scripts/emergency-unpause.sh --contracts scout_access
 ```
 
-Expected output for each contract after a successful unpause:
+Valid contract names: `registration`, `verification`, `progress`, `scout_access`
 
-```json
+#### Example output
+
+```bash
+========================================
+  Emergency Unpause - Starting
+========================================
+
+Target network: testnet
+Contracts to unpause: registration verification progress scout_access
+
+--- Priority: scout_access (funds at risk) ---
+  [attempt 1/5] Unpausing scout_access...
+  ✓ scout_access unpaused successfully
+
+--- Priority: registration, verification, progress ---
+  [attempt 1/5] Unpausing registration...
+  ✓ registration unpaused successfully
+  [attempt 1/5] Unpausing verification...
+  ✓ verification unpaused successfully
+  [attempt 1/5] Unpausing progress...
+  ✓ progress unpaused successfully
+
+--- Verifying final state via health() ---
 {"initialized":true,"paused":false}
+{"initialized":true,"paused":false}
+{"initialized":true,"paused":false}
+{"initialized":true,"paused":false}
+
+========================================
+  Emergency Unpause - Summary
+========================================
+
+Contract              Unpause Result  Health Check
+--------              --------------  ------------
+scout_access          success         paused:false
+registration          success         paused:false
+verification          success         paused:false
+progress              success         paused:false
+
+✓ All targeted contracts are in UNPAUSED state
 ```
+
+If any contract fails to unpause or health check fails, the summary shows the failure and the script exits with code 1.
 
 ---
 

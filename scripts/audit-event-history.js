@@ -17,6 +17,8 @@
 //   --player-id <id>     Player ID to audit (default: from arg 1)
 //   --sample <n>         For 'all' mode, audit only first N players
 //   --json               Emit as JSON instead of text
+//   --start-ledger <n>   Start fetching events from this ledger (default:
+//                        oldest retained ledger based on RPC health info)
 //
 // Exit codes: 0 = clean, 1 = inconsistencies found, 2 = configuration error.
 
@@ -27,6 +29,12 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { Client: PgClient } = require("pg");
 
+// Maximum page size accepted by the Soroban RPC getEvents endpoint.
+const EVENTS_PAGE_SIZE = 200;
+
+// Default timeout for RPC requests (milliseconds)
+const RPC_TIMEOUT_MS = 30000;
+
 // --- Configuration & Setup ---------------------------------------------------
 
 function parseArgs(argv) {
@@ -34,12 +42,14 @@ function parseArgs(argv) {
     playerIdArg: null,
     sample: null,
     json: false,
+    startLedger: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--sample") args.sample = Number(argv[++i]);
     else if (a === "--json") args.json = true;
     else if (a === "--player-id") args.playerIdArg = argv[++i];
+    else if (a === "--start-ledger") args.startLedger = Number(argv[++i]);
     else if (!a.startsWith("--")) {
       args.playerIdArg = a;
     }
@@ -70,8 +80,70 @@ function requireEnv(names) {
 
 // --- Soroban Event Retrieval -------------------------------------------------
 
-// Maximum page size accepted by the Soroban RPC getEvents endpoint.
-const EVENTS_PAGE_SIZE = 200;
+/**
+ * Fetch the latest ledger sequence and health info from the RPC.
+ * Returns { latestLedger, oldestLedger } or null if health endpoint fails.
+ */
+async function getRpcInfo(rpcUrl) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), RPC_TIMEOUT_MS);
+
+  try {
+    // Try getHealth first (lighter weight)
+    const healthRes = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getHealth",
+      }),
+      signal: controller.signal,
+    });
+
+    if (!healthRes.ok) {
+      return null;
+    }
+
+    const healthResult = await healthRes.json();
+    if (healthResult.error) {
+      return null;
+    }
+
+    // Try getLatestLedger to get the current ledger sequence
+    const latestRes = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getLatestLedger",
+      }),
+      signal: controller.signal,
+    });
+
+    if (!latestRes.ok) {
+      return { latestLedger: null, oldestLedger: null };
+    }
+
+    const latestResult = await latestRes.json();
+    if (latestResult.error) {
+      return { latestLedger: null, oldestLedger: null };
+    }
+
+    const baseLedger = Number(latestResult.result.ledger);
+    const retention = latestResult.result.retention; // usually in ledgers
+
+    return {
+      latestLedger: baseLedger,
+      oldestLedger: retention ? baseLedger - retention + 1 : null,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 
 /**
  * Fetch ALL events for a contract from the Soroban RPC event stream using
@@ -79,30 +151,71 @@ const EVENTS_PAGE_SIZE = 200;
  *
  * The RPC getEvents endpoint returns at most EVENTS_PAGE_SIZE events per call
  * and includes a `cursor` in the result pointing to the last returned event.
- * Passing that cursor back as `cursor` in the next request yields the next
- * page.  We loop until the page is smaller than the requested size, which
+ * Passing that cursor back in the next request's pagination object yields the
+ * next page. We loop until the page is smaller than the requested size, which
  * signals we have reached the end of the stream.
+ *
+ * The first request uses startLedger to define the starting point. Subsequent
+ * requests use pagination.cursor from the previous response.
  *
  * Without this loop the caller silently receives only the first page of
  * results — dropping every event beyond the 200th — which causes missed
  * milestone/subscription events and incorrect event-chain consistency checks.
+ *
+ * @param {string} rpcUrl - Soroban RPC base URL
+ * @param {string} contractId - Contract ID to fetch events for
+ * @param {string[] | null} topic - Optional topic filter. When provided, only
+ *                                  events matching this topic prefix are returned.
+ * @param {object} [options] - Optional parameters
+ * @param {number} [options.startLedger] - Ledger sequence to start from.
+ *         If not provided, the oldest retained ledger is used.
+ * @param {number} [options.timeoutMs] - Request timeout in milliseconds
+ * @returns {Promise<Array>} Array of event objects
  */
-async function fetchEvents(rpcUrl, contractId, topic = null) {
+async function fetchEvents(rpcUrl, contractId, topic = null, options = {}) {
+  const {
+    startLedger: optionsStartLedger,
+    timeoutMs = RPC_TIMEOUT_MS,
+  } = options;
+
   const allEvents = [];
   let cursor = undefined;
+  let startLedger = optionsStartLedger;
+
+  // Determine startLedger if not provided
+  if (startLedger === undefined || startLedger === null) {
+    const rpcInfo = await getRpcInfo(rpcUrl);
+    if (rpcInfo && rpcInfo.oldestLedger !== null) {
+      startLedger = rpcInfo.oldestLedger;
+    } else {
+      // Fallback to a safe default (1000 ledgers back from latest, or ledger 1)
+      startLedger = rpcInfo?.latestLedger ? Math.max(1, rpcInfo.latestLedger - 1000) : 1;
+      console.warn(
+        `Warning: Could not determine RPC event retention. Starting from ledger ${startLedger}. ` +
+        "Events before this ledger may be unavailable."
+      );
+    }
+  }
 
   while (true) {
     const params = {
-      contractIds: [contractId],
-      limit: EVENTS_PAGE_SIZE,
+      filters: [
+        {
+          type: "contract",
+          contractIds: [contractId],
+          topics: topic || undefined,
+        },
+      ],
+      pagination: {
+        limit: EVENTS_PAGE_SIZE,
+      },
     };
 
-    if (cursor !== undefined) {
-      params.cursor = cursor;
-    }
-
-    if (topic) {
-      params.filters = [{ topics: topic }];
+    // First request uses startLedger, subsequent requests use cursor
+    if (cursor === undefined) {
+      params.startLedger = startLedger;
+    } else {
+      params.pagination.cursor = cursor;
     }
 
     const body = {
@@ -112,29 +225,57 @@ async function fetchEvents(rpcUrl, contractId, topic = null) {
       params,
     };
 
-    const res = await fetch(rpcUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-    const result = await res.json();
+    let res;
+    try {
+      res = await fetch(rpcUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (fetchErr) {
+      if (fetchErr.name === "AbortError") {
+        throw new Error(`RPC request timed out after ${timeoutMs}ms`);
+      }
+      throw new Error(`Network error: ${fetchErr.message}`);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!res.ok) {
+      throw new Error(`Network error: ${res.status} ${res.statusText}`);
+    }
+
+    let result;
+    try {
+      result = await res.json();
+    } catch (jsonErr) {
+      throw new Error(`Failed to parse RPC response: ${jsonErr.message}`);
+    }
+
     if (result.error) {
-      throw new Error(`RPC error: ${result.error.message}`);
+      const errCode = result.error.code ?? "unknown";
+      const errMsg = result.error.message ?? "Unknown RPC error";
+      throw new Error(`RPC error (${errCode}): ${errMsg}`);
     }
 
     const page = (result.result && result.result.events) || [];
     allEvents.push(...page);
 
+    const paginationResult = result.result?.pagination || result.result;
+
     // A page smaller than EVENTS_PAGE_SIZE means we are at the end of the
-    // stream.  Also stop if the RPC omitted the cursor (some implementations
+    // stream. Also stop if the RPC omitted the cursor (some implementations
     // omit it on the final page).
-    if (page.length < EVENTS_PAGE_SIZE || !result.result.cursor) {
+    if (page.length < EVENTS_PAGE_SIZE || !paginationResult?.cursor) {
       break;
     }
 
     // Advance cursor to the last event on this page.
-    cursor = result.result.cursor;
+    cursor = paginationResult.cursor;
   }
 
   return allEvents;
@@ -366,14 +507,14 @@ function getContractLevel(rpcUrl, progressId, playerId) {
 
 // --- Main Audit Logic --------------------------------------------------------
 
-async function auditPlayerHistory(rpcUrl, contractIds, playerId, pg) {
+async function auditPlayerHistory(rpcUrl, contractIds, playerId, pg, startLedger = null) {
   const reconstructor = new PlayerHistoryReconstructor(playerId);
 
   // Fetch all events from all contracts
   const events = [];
   for (const [name, id] of Object.entries(contractIds)) {
     try {
-      const contractEvents = await fetchEvents(rpcUrl, id);
+      const contractEvents = await fetchEvents(rpcUrl, id, null, { startLedger });
       for (const ev of contractEvents) {
         events.push({ ...ev, contractName: name });
       }
@@ -561,7 +702,13 @@ async function main() {
   const results = [];
   for (const playerId of playerIds) {
     try {
-      const audit = await auditPlayerHistory(process.env.RPC_URL, contractIds, playerId, pg);
+      const audit = await auditPlayerHistory(
+        process.env.RPC_URL,
+        contractIds,
+        playerId,
+        pg,
+        args.startLedger
+      );
       results.push({ playerId, ...audit });
     } catch (err) {
       console.error(`Failed to audit player ${playerId}: ${err.message}`);
@@ -587,3 +734,14 @@ main().catch((err) => {
   process.stderr.write(`Audit failed: ${err.stack || err.message}\n`);
   process.exit(2);
 });
+
+// Export for testing
+module.exports = {
+  fetchEvents,
+  parseArgs,
+  requireEnv,
+  PlayerHistoryReconstructor,
+  EVENTS_PAGE_SIZE,
+  getRpcInfo,
+  main,
+};

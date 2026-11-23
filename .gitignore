@@ -83,3 +83,6 @@ budget-drift.json
 
 # Log files
 *.log
+
+# Session change summaries
+changes.md
