@@ -184,6 +184,41 @@ branch-protection rule for this mapping to block merges. Before enabling that ru
 that the listed owner has the required write access and update the mapping if the authorized
 reviewer group changes.
 
+## Mutation Testing
+
+Mutation testing uses `cargo-mutants` to verify that the test suite would catch bugs in the highest-risk code (payment/escrow functions and safe-math helpers). See `docs/MUTATION_TESTING.md` for the full documentation.
+
+### Running mutation testing locally
+
+Install `cargo-mutants`:
+
+```bash
+cargo install cargo-mutants
+```
+
+Run mutation testing on the configured scope (scout_access payment/escrow functions and shared-types safe-math helpers):
+
+```bash
+# Basic run
+cargo mutants --config mutants.toml
+
+# Sharded run (faster on multi-core machines)
+cargo mutants --config mutants.toml --shard 1/4
+cargo mutants --config mutants.toml --shard 2/4
+cargo mutants --config mutants.toml --shard 3/4
+cargo mutants --config mutants.toml --shard 4/4
+```
+
+The workspace tests must pass before mutation testing runs:
+
+```bash
+cargo test --workspace --locked
+```
+
+### CI integration
+
+A scheduled GitHub Actions workflow (`.github/workflows/mutation-testing.yml`) runs mutation testing weekly and uploads the report. The workflow fails if the missed mutant count exceeds the documented baseline in `docs/MUTATION_TESTING.md`.
+
 ## Glossary
 
 Unfamiliar with terms like *validator*, *milestone*, *subscription tier*, or *CID*?
