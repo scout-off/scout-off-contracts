@@ -2,6 +2,25 @@
 
 use soroban_sdk::{contracttype, Address, Env, IntoVal, String};
 
+/// One page of a paginated, cursor-driven player-erasure sweep.
+///
+/// Returned by each contract's `purge_player_data(env, player_id, cursor)`
+/// admin function. The erasure driver (see `docs/PLAYER_ERASURE.md`) loops,
+/// feeding `next_cursor` back into the next call, until `more` is `false`.
+///
+/// `next_cursor` is an opaque progress token (its meaning is contract
+/// specific) and is only meaningful when `more` is `true`; on the final page
+/// `more` is `false` and the contract has removed every player-keyed ledger
+/// entry it owns except the entries in the documented "Retained" allow-list.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PurgePage {
+    /// Pass this value as `cursor` on the next `purge_player_data` call.
+    pub next_cursor: u32,
+    /// `true` while more ledger entries for this player remain to be purged.
+    pub more: bool,
+}
+
 /// Four-tier progress level for a player profile
 #[contracttype]
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]

@@ -6,6 +6,7 @@ mod types;
 use types::{FeeConfigProposal, ProContactPeriod, ScoutAccessWiringState};
 
 pub use errors::ScoutAccessError;
+pub use scoutchain_shared_types::PurgePage;
 pub use types::{
     ContactRecord, DataKey, EvidenceAccessGrant, FeeConfig, FeeConfigHistoryEntry,
     ScoutContactsPage, Subscription, SubscriptionTier, TrialEscrow, TrialOffer,
@@ -2231,6 +2232,128 @@ impl ScoutAccessContract {
             }
         }
         offers
+    }
+
+    // -------------------------------------------------------------------------
+    // Erasure (GDPR right-to-erasure)
+    // -------------------------------------------------------------------------
+
+    /// Number of trial offers processed per `purge_player_data` page.
+    pub const PURGE_BATCH: u32 = 8;
+
+    /// Remove every player-keyed ledger entry this contract owns, except the
+    /// "Retained" allow-list entries documented in `docs/PLAYER_ERASURE.md`.
+    ///
+    /// Retained for this contract (audit trail, never deleted on erasure):
+    ///   * `ContactRecord(player_id, scout)`
+    ///   * `PlayerContacts(player_id)`           — inbound scout index
+    ///   * `EvidenceAccessGrant(player_id, scout)`
+    ///   * `EvidenceAccessGrantCount(player_id)`
+    ///   * `EvidenceAccessGrantPage(player_id, page)`
+    /// Everything else keyed by the player — trial offers, trial escrows, the
+    /// per-player trial counter, the per-(scout,player) cooldown markers, and
+    /// this player's tuples in the scout-centric and global trial indexes — is
+    /// removed.
+    ///
+    /// Token conservation: any **outstanding** (unconfirmed, unexpired) trial
+    /// escrow for the player is refunded to the originating scout before its
+    /// record is dropped, so no XLM is orphaned in the contract. Already-
+    /// collected contact/subscription fees stay in `AccumulatedFees` untouched.
+    ///
+    /// Admin-only, cursor-paginated by trial-offer index. The final call
+    /// (`more == false`) drops the scalar `TrialCounter` and the per-(scout,
+    /// player) cooldown keys. Idempotent.
+    pub fn purge_player_data(
+        env: Env,
+        player_id: u64,
+        cursor: u32,
+    ) -> Result<PurgePage, ScoutAccessError> {
+        let _admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        Self::require_initialized(&env)?;
+        Self::bump_instance_ttl(&env);
+
+        let n: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TrialCounter(player_id))
+            .unwrap_or(0u32);
+
+        // `cursor` counts trial offers already purged (0-based); offers are
+        // keyed 1..=n.
+        let start = cursor.saturating_add(1);
+        let end = if cursor >= n {
+            n
+        } else {
+            core::cmp::min(cursor.saturating_add(Self::PURGE_BATCH), n)
+        };
+
+        let token_addr = Self::get_token(&env)?;
+        let contract_addr = env.current_contract_address();
+        let token_client = token::Client::new(&env, &token_addr);
+
+        for idx in start..=end {
+            // Refund + drop an outstanding escrow first (conservation).
+            if let Some(escrow) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, TrialEscrow>(&DataKey::TrialEscrow(player_id, idx))
+            {
+                if let Some(offer) = env
+                    .storage()
+                    .persistent()
+                    .get::<DataKey, TrialOffer>(&DataKey::TrialOffer(player_id, idx))
+                {
+                    token_client.transfer(&contract_addr, &offer.scout, &escrow.amount);
+                }
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::TrialEscrow(player_id, idx));
+                Self::remove_from_outstanding_trial_escrows(&env, player_id, idx);
+            }
+
+            // Drop the offer record and the per-(scout,player) cooldown marker.
+            if let Some(offer) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, TrialOffer>(&DataKey::TrialOffer(player_id, idx))
+            {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::TrialOfferLastSent(offer.scout.clone(), player_id));
+                // Remove (player_id, idx) from the scout's offer index.
+                let key = DataKey::ScoutTrialOffers(offer.scout.clone());
+                let scout_offers: soroban_sdk::Vec<(u64, u32)> = env
+                    .storage()
+                    .persistent()
+                    .get(&key)
+                    .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
+                let mut kept = soroban_sdk::Vec::new(&env);
+                for i in 0..scout_offers.len() {
+                    let e = scout_offers.get(i).unwrap();
+                    if e != (player_id, idx) {
+                        kept.push_back(e);
+                    }
+                }
+                env.storage().persistent().set(&key, &kept);
+            }
+
+            env.storage()
+                .persistent()
+                .remove(&DataKey::TrialOffer(player_id, idx));
+        }
+
+        let next_cursor = end;
+        let more = next_cursor < n;
+
+        if !more {
+            // Final page: drop the per-player scalar counter. The retained
+            // contact / evidence-grant family is intentionally left intact.
+            env.storage()
+                .persistent()
+                .remove(&DataKey::TrialCounter(player_id));
+        }
+
+        Ok(PurgePage { next_cursor, more })
     }
 
     // -------------------------------------------------------------------------

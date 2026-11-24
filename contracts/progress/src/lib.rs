@@ -5,6 +5,7 @@ mod events;
 mod types;
 
 pub use errors::ProgressError;
+pub use scoutchain_shared_types::PurgePage;
 use scoutchain_shared_types::{
     require_admin, safe_math::safe_add_u32, write_wiring_link, ContractHealth, ProgressLevel,
 };
@@ -283,6 +284,95 @@ impl ProgressContract {
 
         events::player_level_reset(&env, &admin, player_id, &old_level, &target_level);
         Ok(())
+    }
+
+    // -------------------------------------------------------------------------
+    // Erasure (GDPR right-to-erasure)
+    // -------------------------------------------------------------------------
+
+    /// Number of `HistoryEntry` records removed per `purge_player_data` page.
+    /// Bounded so a single call cannot exceed a reasonable ledger-write budget
+    /// even for a player with a very long (reset-rich) history. The driver
+    /// loops until `more` is `false`.
+    pub const PURGE_BATCH: u32 = 16;
+
+    /// Remove every player-keyed ledger entry this contract owns, except the
+    /// entries in the "Retained" allow-list documented in
+    /// `docs/PLAYER_ERASURE.md` (the progress contract retains **nothing**
+    /// for a purged player).
+    ///
+    /// Admin-only, paginated by `cursor` (a count of history entries already
+    /// removed, 0-based). Each call removes up to [`PURGE_BATCH`] history
+    /// entries; on the final page it also drops the scalar `PlayerLevel`,
+    /// `HistoryCounter`, `HistoryRoot` and the legacy `HistoryVec` keys plus
+    /// every `HistoryPage` shard that ever held the player's entries.
+    ///
+    /// Returns [`PurgePage`] so the driver can loop on `(next_cursor, more)`.
+    /// Idempotent: calling it again after `more` is `false` is a no-op.
+    pub fn purge_player_data(
+        env: Env,
+        player_id: u64,
+        cursor: u32,
+    ) -> Result<PurgePage, ProgressError> {
+        let _admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        Self::require_initialized(&env)?;
+
+        let n: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::HistoryCounter(player_id))
+            .unwrap_or(0u32);
+
+        // `cursor` counts entries already removed (0-based). Entries are
+        // keyed 1..=n. The next entry to remove is `cursor + 1`.
+        let start = cursor.saturating_add(1);
+        let end = if cursor >= n {
+            n
+        } else {
+            core::cmp::min(cursor.saturating_add(Self::PURGE_BATCH), n)
+        };
+
+        // Remove this page's individual history entries.
+        if start <= end && n > 0 {
+            for idx in start..=end {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::HistoryEntry(player_id, idx));
+            }
+        }
+
+        let next_cursor = end;
+        let more = next_cursor < n;
+
+        if !more {
+            // Final page: drop the scalar per-player keys and every page shard.
+            env.storage()
+                .persistent()
+                .remove(&DataKey::HistoryCounter(player_id));
+            env.storage()
+                .persistent()
+                .remove(&DataKey::HistoryRoot(player_id));
+            env.storage()
+                .persistent()
+                .remove(&DataKey::HistoryVec(player_id));
+            env.storage()
+                .persistent()
+                .remove(&DataKey::PlayerLevel(player_id));
+
+            if n > 0 {
+                let last_page = (n.saturating_sub(1)) / HISTORY_PAGE_SIZE;
+                for page in 0..=last_page {
+                    env.storage()
+                        .persistent()
+                        .remove(&DataKey::HistoryPage(player_id, page));
+                }
+            }
+        }
+
+        Ok(PurgePage {
+            next_cursor,
+            more,
+        })
     }
 
     // -------------------------------------------------------------------------
