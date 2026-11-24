@@ -19,10 +19,12 @@ use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
 fn setup() -> (Env, VerificationContractClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
-    let id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &id);
+    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(
+        &env,
+    ));
     (env, client)
 }
 
@@ -202,9 +204,10 @@ fn test_milestones_no_approvals_returns_empty() {
     assert_eq!(page.entries.len(), 0);
 }
 
-/// limit=0 returns empty entries but the correct total.
+/// limit=0 is clamped to 1 (the shared 1..=50 pagination convention, #1378)
+/// and the total is unaffected.
 #[test]
-fn test_milestones_zero_limit_returns_empty_with_total() {
+fn test_milestones_zero_limit_is_clamped_to_one() {
     let (env, client) = setup();
     let validator = register_validator(&env, &client);
 
@@ -213,7 +216,7 @@ fn test_milestones_zero_limit_returns_empty_with_total() {
 
     let page = client.get_validator_milestones_page_v2(&validator, &0u32, &0u32);
     assert_eq!(page.total, 2, "total still reflects 2 milestones");
-    assert_eq!(page.entries.len(), 0, "limit=0 returns zero entries");
+    assert_eq!(page.entries.len(), 1, "limit=0 is treated as limit=1");
 }
 
 // ── get_validator_players_page tests ─────────────────────────────────────────

@@ -3,13 +3,25 @@
 # Run after deploy.sh. Requires .env.contracts to exist.
 set -euo pipefail
 
+# shellcheck disable=SC1091
+source "$(dirname "$0")/network.sh" "${1:-}"
 NETWORK="${1:-testnet}"
 # shellcheck source=/dev/null
 source .env.contracts
 
 ADMIN="${ADMIN_ADDRESS:?Set ADMIN_ADDRESS}"
 DEPLOYER="${DEPLOYER_SECRET:?Set DEPLOYER_SECRET}"
-XLM_TOKEN="${XLM_TOKEN_ADDRESS:?Set XLM_TOKEN_ADDRESS}"
+
+# Per-network parameters come from config/<network>.json; networks without a
+# config file (e.g. local) fall back to the testnet values.
+CONFIG_FILE="config/${NETWORK}.json"
+[[ -f "$CONFIG_FILE" ]] || CONFIG_FILE="config/testnet.json"
+
+# Reads the config, rejects missing/placeholder fields, enforces the bounds in
+# docs/CONFIG_REFERENCE.md, and prints: <xlm_token> <reg_cooldown_secs> <fee_config_json>.
+# XLM_TOKEN_ADDRESS in the environment overrides xlm_token_address (sandbox/local).
+CONFIG_OUT=$(python3 "$(dirname "$0")/lib/read_network_config.py" "$CONFIG_FILE" "${XLM_TOKEN_ADDRESS:-}") || exit 1
+read -r XLM_TOKEN REG_COOLDOWN_SECS FEE_CONFIG_JSON <<<"$CONFIG_OUT"
 
 # ---------------------------------------------------------------------------
 # Guard: verify that DEPLOYER_SECRET is the keypair for ADMIN_ADDRESS.
@@ -109,16 +121,7 @@ invoke_idempotent 1 "scout_access initialize" \
   -- initialize \
   --admin "$ADMIN" \
   --xlm_token "$XLM_TOKEN" \
-  --fee_config '{
-    "contact_fee_stroops": "1000000",
-    "basic_sub_stroops": "10000000",
-    "pro_sub_stroops": "30000000",
-    "elite_sub_stroops": "70000000",
-    "sub_duration_secs": 2592000,
-    "trial_offer_escrow_stroops": "5000000",
-    "trial_offer_expiry_secs": 604800,
-    "pro_contact_limit": 10
-  }'
+  --fee_config "$FEE_CONFIG_JSON"
 
 echo "==> Wiring verification → progress cross-contract link..."
 # verification.set_progress_contract is first-time-only: it returns
@@ -234,6 +237,16 @@ stellar contract invoke \
   --network "$NETWORK" \
   -- set_registration_contract \
   --addr "$REGISTRATION_CONTRACT_ID"
+
+echo ""
+echo "==> Setting registration cooldown..."
+# Value comes from config/<network>.json (validated above).
+stellar contract invoke \
+  --id "$REGISTRATION_CONTRACT_ID" \
+  --source "$DEPLOYER" \
+  --network "$NETWORK" \
+  -- set_reg_cooldown \
+  --cooldown_secs "$REG_COOLDOWN_SECS"
 
 echo ""
 echo "==> Verifying wiring consistency (post-wiring gate)..."

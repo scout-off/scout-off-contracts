@@ -515,6 +515,71 @@ a shared testnet or mainnet contract other people rely on.
 
 ---
 
+## Emergency: Bulk Validator Revocation
+
+Use when several validators (for example a colluding ring) must be deactivated at once.
+
+1. Split the wallet list into batches of at most **10** (`MAX_BATCH_REVOKE`). Larger batches fail with `BatchTooLarge` before any state change.
+2. Call `batch_revoke_validators(wallets, ForCause, reason)` for each batch. Every wallet is deactivated, removed from open dispute votes and excluded from attestations immediately. A `batch_revoked` summary event is emitted.
+3. The cascade sweep is **not** run inline. For each revoked wallet call `continue_revocation_cascade(wallet)` repeatedly (admin only) until it emits `revocation_cascade_complete` (each call flags at most 50 milestones).
+4. Verify with `is_milestone_flagged` / `get_active_validator_count`.
+
+## Contract Upgrades
+
+Every `upgrade(new_wasm_hash)` call in all four contracts emits a
+`contract_upgraded` event **before** `update_current_contract_wasm` executes,
+so the event is attributed to the old code version and is always present in the
+committed ledger state.
+
+### Event schema
+
+| Field   | Value |
+|---------|-------|
+| Topics  | `("contract_upgraded", admin_address)` |
+| Data    | `new_wasm_hash` (BytesN\<32\>) |
+
+### Verifying an upgrade on-chain
+
+After running `scripts/upgrade.sh`, confirm the event was emitted:
+
+```bash
+source .env && source .env.contracts
+# Fetch the latest transaction for the contract and check for the event
+stellar contract events \
+  --id "$REGISTRATION_CONTRACT_ID" \
+  --network "$STELLAR_NETWORK" \
+  --start-ledger <ledger_before_upgrade>
+```
+
+Look for a record with topic `["contract_upgraded", "<admin_address>"]` and
+data equal to the new WASM hash. Repeat for all four contract IDs. If no such
+event appears, the upgrade transaction may not have been confirmed — do not
+proceed until it is verified.
+
+### What to check after every upgrade
+
+1. Confirm the `contract_upgraded` event appears in the ledger for each contract.
+2. Re-wire instance-storage links per the [DEPLOYMENT.md post-upgrade checklist](DEPLOYMENT.md).
+3. Run `scripts/verify-cross-contract-wiring.sh` and `scripts/health-check.sh`.
+4. Run the upgrade rehearsal tests locally: `cargo test --workspace --test upgrade_rehearsal`.
+
+---
+
+## Verify Deployed WASM Against a Release (issue #1614)
+
+After any deploy or upgrade, or when an auditor asks what code is running, run:
+
+```bash
+./scripts/verify-deployed-wasm.sh <network> <release-tag>
+```
+
+It fetches the installed code for each contract ID in `.env.contracts`, hashes
+it and compares it with the release's `wasm-hashes.json`, printing `MATCH` or
+`MISMATCH` per contract and exiting non-zero on any mismatch. A `MISMATCH` means
+the on-chain code is not the tagged build: treat it as an incident (consider the
+pause procedure above) until explained. Set `WASM_HASHES_FILE` to verify against
+a local manifest. See [DEPLOYMENT.md](DEPLOYMENT.md#reproducible-builds-and-deployed-wasm-verification-issue-1614).
+
 ## Related Documentation
 
 - [DEPLOYMENT.md](DEPLOYMENT.md) — contract deployment order and initialization
@@ -522,3 +587,13 @@ a shared testnet or mainnet contract other people rely on.
 - [GLOSSARY.md](GLOSSARY.md) — domain term definitions
 - [Issue #609](https://github.com/scout-off/scout-off-contracts/issues/609) — multisig/timelock admin authorization (the preventive fix for this section)
 - [Issue #617](https://github.com/scout-off/scout-off-contracts/issues/617) — tooling for the address-migration procedure this section relies on
+
+## Migration window sequence and `scripts/upgrade.sh`
+
+Migration state replay must run in order: `open_migration_window` → `admin_seed_*` → `close_migration_window`. Closing is **irreversible** (it seals the window), so it is rejected with `MigrationNotActive` unless the window is currently open.
+
+`scripts/upgrade.sh` uploads the WASM once and signs every call with `--source <identity>` (or `UPGRADE_SOURCE`). Contracts without `schema_version`/`migrate` (registration, verification, scout_access) are upgraded and the migration phase is skipped with exit code 0:
+
+```bash
+UPGRADE_SOURCE=admin ./scripts/upgrade.sh --contract <id> --wasm <path> [--network testnet]
+```

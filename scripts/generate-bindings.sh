@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 # ScoutChain — generate TypeScript bindings for all contracts
-# Usage: ./scripts/generate-bindings.sh [testnet|mainnet]
+# Usage: ./scripts/generate-bindings.sh [testnet|mainnet|local]
 # Requires .env.contracts to exist (written by deploy.sh)
 set -euo pipefail
 
+# shellcheck disable=SC1091
+source "$(dirname "$0")/network.sh" "${1:-}"
 # Reference stellar-cli version the generated bindings were last validated
-# against. Keep in sync with: docs/CONTRIBUTING.md and
-# .github/workflows/contract-ci.yml.
+# against. Single source of truth: ci/stellar-cli-version (also read by
+# scripts/install-stellar-cli.sh, which CI uses to install a checksum-verified
+# release binary).
 #
-# This is advisory, not enforced: the upstream `install.sh` always installs
-# the latest release regardless of the tag it is fetched from, and the
-# "Verify ABI function coverage in generated bindings" CI step structurally
-# checks the output against the WASM ABI. A different CLI version only
-# warns — set STRICT_STELLAR_CLI_VERSION=1 to make it fatal.
-REFERENCE_STELLAR_CLI_VERSION="28.0.0"
+# A different locally installed CLI version only warns — set
+# STRICT_STELLAR_CLI_VERSION=1 to make it fatal. The "Verify ABI function
+# coverage in generated bindings" CI step structurally checks the output.
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/lib/check-stellar-cli.sh"
+REFERENCE_STELLAR_CLI_VERSION="$PINNED_STELLAR_CLI_VERSION"
 
 actual_version=$(stellar --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
 if [[ "$actual_version" != "$REFERENCE_STELLAR_CLI_VERSION" ]]; then
@@ -149,8 +152,9 @@ extract_function_list() {
       next;
     }
     in_section && in_functions && /^#### `/ {
-      # Extract function signature
-      match($0, /`([^`]+)`/, sig);
+      # Extract function signature (2-arg match: portable to mawk/POSIX awk)
+      match($0, /`[^`]+`/);
+      sig = substr($0, RSTART + 1, RLENGTH - 2);
       getline; # skip blank line
       getline; # get description line or table start
 
@@ -168,7 +172,7 @@ extract_function_list() {
       }
 
       # Print formatted entry
-      print "- `" sig[1] "` — " desc;
+      print "- `" sig "` — " desc;
     }
   ' "$doc_file"
 }

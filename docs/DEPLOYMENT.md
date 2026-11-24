@@ -12,6 +12,28 @@
 - Stellar CLI: https://developers.stellar.org/docs/tools/developer-tools/cli/install-stellar-cli
 - A funded Stellar keypair for deployment
 
+### Reproducible WASM builds
+
+`Cargo.lock` is committed to this repository. Because the workspace produces
+deployable WASM binaries (not libraries), every developer and every CI run
+resolves identical dependency versions and therefore produces a bit-for-bit
+reproducible WASM binary.
+
+**Always use `--locked` when building for deployment or release:**
+
+```bash
+cargo build --workspace --target wasm32v1-none --release --locked
+```
+
+This ensures the build uses exactly the dependency versions recorded in
+`Cargo.lock` and fails fast if the lockfile is out of date, rather than
+silently resolving different versions. CI enforces `--locked` on every build
+step for the same reason.
+
+To update dependencies in a controlled way (e.g. via Dependabot or Renovate),
+run `cargo update`, review the diff in `Cargo.lock`, and open a dedicated PR
+so the supply-chain change is auditable.
+
 ## Contract Deployment Order
 
 The four contracts must be deployed in the following order. Deploying out of
@@ -320,12 +342,45 @@ discrepancies for `players.deactivated` and `scouts.verified`.
 If you only want to re-process events from a specific ledger (partial replay),
 replace `0` with the desired starting ledger sequence number.
 
+## Reproducible builds and deployed-WASM verification (issue #1614)
+
+Release WASMs are built in a pinned container (`ci/build/Dockerfile`: Rust
+1.97.1, `wasm32v1-none`, stellar-cli 28.0.0 whose bundled `wasm-opt` does the
+optimization) with `--locked` and `--remap-path-prefix`, so the same commit
+yields byte-identical WASM. The `reproducible-build` CI job builds twice in
+clean containers and fails if the hashes differ. On a `v*` tag the
+`Release WASM` workflow attaches `scoutchain_*.optimized.wasm`, `wasm-hashes.json`
+(contract → sha256) and a `SHA256SUMS` checksum manifest to the GitHub Release.
+
+Build locally:
+
+```bash
+docker build -t scoutchain-wasm-build -f ci/build/Dockerfile ci/build
+docker run --rm -v "$PWD:/src" -v "$PWD/out:/out" scoutchain-wasm-build /out
+```
+
+Deploy the prebuilt release WASMs instead of building on the deploy machine:
+
+```bash
+gh release download v1.2.3 --pattern '*.optimized.wasm' --dir release-wasm
+PREBUILT_WASM_DIR=release-wasm ./scripts/deploy.sh testnet
+```
+
+Verify what is installed on-chain against a release (non-zero exit on any mismatch):
+
+```bash
+./scripts/verify-deployed-wasm.sh mainnet v1.2.3
+# or as part of the readiness pass:
+RELEASE_TAG=v1.2.3 ./scripts/full-readiness-check.sh mainnet
+```
+
 ## Mainnet checklist
 
 - [ ] Audit all four contracts
 - [ ] Review storage TTL cost model (`docs/STORAGE_COST_MODEL.md`) and budget for ongoing TTL renewal
 - [ ] Replace testnet XLM token address with mainnet address in `.env`
 - [ ] Set `STELLAR_NETWORK=mainnet` and update RPC/Horizon URLs
+- [ ] Build with `--locked` to confirm the committed `Cargo.lock` is current: `cargo build --workspace --target wasm32v1-none --release --locked`
 - [ ] Run `./scripts/deploy.sh mainnet`
 - [ ] Run `./scripts/initialize.sh mainnet`
 - [ ] Verify all contract IDs in `.env.contracts`

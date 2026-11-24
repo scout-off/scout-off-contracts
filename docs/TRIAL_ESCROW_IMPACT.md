@@ -174,7 +174,7 @@ but "what is the observed volume and failure rate in production?"
 
 ### 2. Keep `admin_refund_trial_escrow` as an operational safeguard
 
-`admin_refund_trial_escrow(player_id: u64, offer_index: u32, to: Address)` is
+`admin_refund_trial_escrow(player_id: u64, offer_index: u32)` is
 shipped and remains a useful admin-only safety valve analogous to
 `refund_subscription`. It lets operations directly resolve one specific,
 identified stuck `TrialEscrow` entry without waiting for a generic
@@ -182,6 +182,11 @@ identified stuck `TrialEscrow` entry without waiting for a generic
 currently outstanding (already confirmed, already expired/refunded, or never
 logged) and removes the entry from `OutstandingTrialEscrows` on success, so
 neither a later sweep nor a late `confirm_trial_offer` can act on it again.
+
+The refund always goes to the originating scout (`TrialOffer.scout`); the admin
+cannot choose the destination. Orphan escrows whose `TrialOffer` record is
+missing are handled by the separate `admin_rescue_orphan_trial_escrow`, which
+takes an admin-chosen `to` and emits `trial_escrow_orphan_rescued`.
 
 This is best framed as a targeted operational recovery tool, not a substitute
 for monitoring the backlog of expired offers and the configured expiry window.

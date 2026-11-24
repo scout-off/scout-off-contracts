@@ -15,12 +15,29 @@
 //! `state_machine_invariants.rs`).
 
 use scoutchain_progress::{ProgressContract, ProgressContractClient};
+use scoutchain_registration::{PlayerVitals, RegistrationContract, RegistrationContractClient};
 use scoutchain_shared_types::ProgressLevel;
-use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, Vec};
+use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String, Vec};
+
+fn valid_vitals(env: &Env) -> PlayerVitals {
+    PlayerVitals {
+        age: 20,
+        position: String::from_str(env, "ST"),
+        region: String::from_str(env, "EU"),
+        nationality: String::from_str(env, "FR"),
+    }
+}
+
+fn one_hash(env: &Env) -> Vec<String> {
+    let mut v = Vec::new(env);
+    v.push_back(String::from_str(env, "bafytestcid"));
+    v
+}
 
 struct Harness {
     env: Env,
     client: ProgressContractClient<'static>,
+    registration: RegistrationContractClient<'static>,
     /// Whitelisted caller registered on the *primary* (VerificationContract)
     /// path, so `advance_level` works without deploying a real verification
     /// contract. The secondary path cross-calls `get_milestone_count` (#457)
@@ -33,16 +50,31 @@ fn setup() -> Harness {
     let env = Env::default();
     env.mock_all_auths();
     let admin = Address::generate(&env);
-    let id = env.register(ProgressContract, ());
+
+    let reg_id = env.register(RegistrationContract, (admin.clone(),));
+    let registration = RegistrationContractClient::new(&env, &reg_id);
+
+    let id = env.register(ProgressContract, (admin.clone(),));
     let client = ProgressContractClient::new(&env, &id);
-    client.initialize(&admin);
-    let caller = Address::generate(&env);
+
+    let caller = scoutchain_shared_types::testutils::peer_stub(&env, "verification");
     client.set_verification_contract(&caller);
+    client.set_registration_contract(&reg_id);
+    registration.set_progress_contract(&id);
+
     Harness {
         env,
         client,
+        registration,
         caller,
     }
+}
+
+/// Register a player and return the assigned player ID.
+fn register_player(h: &Harness) -> u64 {
+    let wallet = Address::generate(&h.env);
+    h.registration
+        .register_player(&wallet, &valid_vitals(&h.env), &one_hash(&h.env))
 }
 
 // ── genuine proofs verify ───────────────────────────────────────────────────
@@ -50,7 +82,7 @@ fn setup() -> Harness {
 #[test]
 fn test_genuine_proof_verifies_true_for_every_entry() {
     let h = setup();
-    let player_id = 1u64;
+    let player_id = register_player(&h);
     h.client.advance_level(&h.caller, &player_id, &1u32);
     h.client.advance_level(&h.caller, &player_id, &2u32);
     h.client.advance_level(&h.caller, &player_id, &3u32);
@@ -70,7 +102,7 @@ fn test_genuine_proof_verifies_true_for_every_entry() {
 #[test]
 fn test_single_field_flip_fails_verification() {
     let h = setup();
-    let player_id = 2u64;
+    let player_id = register_player(&h);
     h.client.advance_level(&h.caller, &player_id, &1u32);
     h.client.advance_level(&h.caller, &player_id, &2u32);
 
@@ -92,7 +124,7 @@ fn test_single_field_flip_fails_verification() {
 #[test]
 fn test_flipped_milestone_ref_fails_verification() {
     let h = setup();
-    let player_id = 21u64;
+    let player_id = register_player(&h);
     h.client.advance_level(&h.caller, &player_id, &7u32);
 
     let mut entry = h.client.get_history_entry(&player_id, &1u32);
@@ -108,7 +140,7 @@ fn test_flipped_milestone_ref_fails_verification() {
 #[test]
 fn test_proof_against_stale_root_rejected_after_new_append() {
     let h = setup();
-    let player_id = 3u64;
+    let player_id = register_player(&h);
     h.client.advance_level(&h.caller, &player_id, &1u32);
 
     let entry = h.client.get_history_entry(&player_id, &1u32);
@@ -140,7 +172,7 @@ fn test_proof_against_stale_root_rejected_after_new_append() {
 #[test]
 fn test_empty_proof_rejected_without_panicking() {
     let h = setup();
-    let player_id = 4u64;
+    let player_id = register_player(&h);
     h.client.advance_level(&h.caller, &player_id, &1u32);
     h.client.advance_level(&h.caller, &player_id, &2u32);
 
@@ -155,7 +187,7 @@ fn test_empty_proof_rejected_without_panicking() {
 #[test]
 fn test_wrong_length_proof_rejected_without_panicking() {
     let h = setup();
-    let player_id = 5u64;
+    let player_id = register_player(&h);
     h.client.advance_level(&h.caller, &player_id, &1u32);
     h.client.advance_level(&h.caller, &player_id, &2u32);
     h.client.advance_level(&h.caller, &player_id, &3u32);
@@ -163,7 +195,7 @@ fn test_wrong_length_proof_rejected_without_panicking() {
 
     // A proof generated for a different (shallower) player's single-entry
     // history has depth 0 — structurally valid but the wrong length here.
-    let shallow_player = 6u64;
+    let shallow_player = register_player(&h);
     h.client.advance_level(&h.caller, &shallow_player, &1u32);
     let too_short = h.client.get_history_proof(&shallow_player, &1u32);
     assert!(!h
@@ -198,7 +230,7 @@ fn test_verify_history_proof_errors_for_player_with_no_history() {
     // Borrow a structurally valid (entry, proof) pair from a different
     // player — verify_history_proof must reject before even inspecting
     // them, because the target player has no root to check against at all.
-    let other_player = 1u64;
+    let other_player = register_player(&h);
     h.client.advance_level(&h.caller, &other_player, &1u32);
     let entry = h.client.get_history_entry(&other_player, &1u32);
     let proof = h.client.get_history_proof(&other_player, &1u32);
@@ -217,7 +249,7 @@ fn test_verify_history_proof_errors_for_player_with_no_history() {
 #[test]
 fn test_get_history_proof_errors_for_out_of_range_index() {
     let h = setup();
-    let player_id = 7u64;
+    let player_id = register_player(&h);
     h.client.advance_level(&h.caller, &player_id, &1u32);
 
     assert!(h.client.try_get_history_proof(&player_id, &0u32).is_err());
@@ -230,7 +262,7 @@ fn test_get_history_proof_errors_for_out_of_range_index() {
 #[test]
 fn test_history_proof_correct_beyond_three_entries_via_resets() {
     let h = setup();
-    let player_id = 42u64;
+    let player_id = register_player(&h);
     h.client.advance_level(&h.caller, &player_id, &1u32);
     h.client.advance_level(&h.caller, &player_id, &2u32);
     h.client.advance_level(&h.caller, &player_id, &3u32);
@@ -270,8 +302,8 @@ fn test_property_every_appended_entry_verifies_against_final_root() {
     let h = setup();
     let mut rng = Lcg(0x9E3779B97F4A7C15);
 
-    for offset in 0u64..50 {
-        let player_id = 10_000 + offset;
+    for _offset in 0u64..50 {
+        let player_id = register_player(&h);
         // 1..=3 entries, respecting the real four-tier model's cap on
         // ordinary advance_level sequences (Unverified -> ... -> EliteTier).
         let n = 1 + (rng.next_u32() % 3);

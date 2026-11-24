@@ -1,15 +1,20 @@
-use soroban_sdk::{contracttype, Address, BytesN};
+use soroban_sdk::{contracttype, Address, BytesN, Vec};
 
-pub use scoutchain_shared_types::ProgressLevel;
+pub use scoutchain_shared_types::{ProgressLevel, WiringLink};
+
+/// Storage layout version this build of the contract writes and expects.
+/// `migrate` walks stored state forward to this version; see
+/// [`DataKey::SchemaVersion`].
+pub const CODE_SCHEMA_VERSION: u32 = 1;
 
 /// One step of a Merkle inclusion proof for [`ProgressEntry`] history
 /// commitments (see [`DataKey::HistoryRoot`]).
 ///
-/// `sibling` is the hash this step combines with the accumulated hash so
-/// far; `sibling_is_right` records which side of the combination it sits
-/// on (`H(current, sibling)` vs `H(sibling, current)`), since the RFC
-/// 6962-style tree used here is not always evenly balanced and the
-/// combination order is therefore not inferable from position alone.
+/// `sibling` is the hash this step combines with the accumulated hash so far;
+/// `sibling_is_right` records which side of the combination it sits on
+/// (`H(current, sibling)` vs `H(sibling, current)`), since the RFC 6962-style
+/// tree used here is not always evenly balanced and the combination order is
+/// therefore not inferable from position alone.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct HistoryProofStep {
@@ -19,7 +24,7 @@ pub struct HistoryProofStep {
 
 /// A single entry in the immutable progress history
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ProgressEntry {
     /// Unique player identifier whose level changed.
     pub player_id: u64,
@@ -37,36 +42,85 @@ pub struct ProgressEntry {
     pub ledger_sequence: u32,
 }
 
+/// Named result of a cursor-based history page read (issue #1670).
+///
+/// Replaces the anonymous `(Vec<ProgressEntry>, u32, u32)` tuple previously
+/// returned by `get_history_page_with_cursor`, which generated an untyped
+/// positional array in the TypeScript bindings and made it easy to swap
+/// `next_index` and `snapshot_count` by mistake.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct HistoryCursorPage {
+    /// The history entries in this page, in chronological order.
+    pub entries: soroban_sdk::Vec<ProgressEntry>,
+    /// Index to pass as `cursor` on the next call. Equal to the number of
+    /// entries returned when the page is exhausted.
+    pub next_index: u32,
+    /// Total number of history entries recorded for the player at the time
+    /// of the read (the snapshot the page was taken against).
+    pub snapshot_count: u32,
+}
+
+/// Result of `get_history_since_v2`: entries newest-first plus a flag telling
+/// the caller whether more matching entries may exist beyond `limit` or the
+/// page-scan cap.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct HistorySince {
+    pub entries: Vec<ProgressEntry>,
+    pub truncated: bool,
+}
+
+/// One peak of a player's incremental Merkle frontier (issue #1368).
+///
+/// RFC 6962's Merkle Tree Hash decomposes a range of `n` leaves into a
+/// canonical sequence of *perfect* subtrees whose sizes are the powers of two
+/// present in the binary expansion of `n`. `FrontierPeak` records the root of
+/// one such perfect subtree, together with the subtree's height `level` (a
+/// subtree at level `k` spans `2^k` leaves).
+///
+/// The frontier for a player is the `Vec<FrontierPeak>` stored under
+/// [`DataKey::HistoryFrontier`]. Because the number of peaks is exactly the
+/// popcount of the leaf count, the frontier is bounded by 32 entries for any
+/// history a 32-bit index can address, and appending a leaf costs O(log n)
+/// hashes instead of O(n).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FrontierPeak {
+    /// Height of this perfect subtree: it spans `2^level` leaves. Level 0 is a
+    /// bare leaf hash.
+    pub level: u32,
+    /// Root hash of the perfect subtree (RFC 6962 `MTH` of those `2^level`
+    /// consecutive leaves).
+    pub hash: BytesN<32>,
+}
+
 /// Snapshot of all cross-contract peer addresses held by the progress
 /// contract. Returned by [`ProgressContract::get_wiring_state`].
 ///
-/// Use this to verify — without inspecting storage keys directly — that all
-/// three peer links are configured. See `docs/WIRING_REGISTRY_DESIGN.md` for
-/// the full design rationale and the recommended migration path.
+/// Each field is a [`WiringLink`] (from `scoutchain_shared_types`), matching
+/// the pattern used by `registration`, `verification`, and `scout_access`.
+/// This replaces the previous flat representation (issue #1412) where each
+/// peer was split into separate `*_contract: Option<Address>` and `*_epoch:
+/// u32` fields. The shared type makes generic tooling (scripts, off-chain
+/// indexers) work uniformly across all four contracts without special-casing
+/// progress.
+///
+/// See `docs/WIRING_REGISTRY_DESIGN.md` for the full design rationale and
+/// the recommended migration path.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProgressWiringState {
-    /// Address of the registration contract, if set via
-    /// `set_registration_contract`. Required for `advance_level` to validate
-    /// player existence via the registration contract.
-    pub registration_contract: Option<Address>,
-    /// Address of the verification contract, if set via
-    /// `set_verification_contract`. Only this address may call `advance_level`
-    /// (primary authorised caller).
-    pub verification_contract: Option<Address>,
-    /// Address of the scout_access contract, if set via
-    /// `set_scout_access_contract`. Whitelisted as the secondary authorised
-    /// caller of `advance_level` for trial-offer Level-3 advances.
-    pub scout_access_contract: Option<Address>,
-    /// Re-wiring epoch for `registration_contract` — bumped on every
-    /// `set_registration_contract` call. `0` iff `registration_contract` is
-    /// `None`. Added additively (issue #1041); see
-    /// `scoutchain_shared_types::WiringLink` for what epoch is for.
-    pub registration_epoch: u32,
-    /// Re-wiring epoch for `verification_contract`.
-    pub verification_epoch: u32,
-    /// Re-wiring epoch for `scout_access_contract`.
-    pub scout_access_epoch: u32,
+    /// Link to the registration contract, set via `set_registration_contract`.
+    /// Required for `advance_level` to validate player existence.
+    pub registration_contract: WiringLink,
+    /// Link to the verification contract, set via `set_verification_contract`.
+    /// Only this address may call `advance_level` (primary authorised caller).
+    pub verification_contract: WiringLink,
+    /// Link to the scout_access contract, set via `set_scout_access_contract`.
+    /// Whitelisted as the secondary authorised caller of `advance_level` for
+    /// trial-offer Level-3 advances.
+    pub scout_access_contract: WiringLink,
 }
 
 impl ProgressWiringState {
@@ -74,9 +128,9 @@ impl ProgressWiringState {
     /// A return value of `false` means `advance_level` may fail because at
     /// least one expected caller or dependency address is missing.
     pub fn is_fully_wired(&self) -> bool {
-        self.registration_contract.is_some()
-            && self.verification_contract.is_some()
-            && self.scout_access_contract.is_some()
+        self.registration_contract.is_configured()
+            && self.verification_contract.is_configured()
+            && self.scout_access_contract.is_configured()
     }
 }
 
@@ -115,15 +169,30 @@ pub enum DataKey {
     /// `HISTORY_PAGE_SIZE` chronological entries, keeping each persistent-read key
     /// bounded even if a player accumulates many resets or re-entries.
     HistoryPage(u64, u32),
-    /// The `Address` of the companion verification contract. Reserved for
-    /// future cross-contract authorisation checks; not yet written at runtime.
+    /// The `Address` of the companion verification contract. Written by
+    /// `set_verification_contract` and read by `advance_level`, which uses it
+    /// to gate level advances to the authorised verification caller.
     VerificationContract,
-    /// The `Address` of the registration contract. Only this address is
-    /// permitted to call `initialize_player`. Set by `set_registration_contract`.
+    /// The `Address` of the registration contract. Written by
+    /// `set_registration_contract`; used to sync levels via `set_player_level`
+    /// and to fail closed in `advance_level` / `reset_player_level` when the
+    /// registration peer is not configured.
     RegistrationContract,
     /// The `Address` of the scout_access contract. Whitelisted as a secondary
     /// authorised caller of `advance_level` (for trial-offer Level-3 advances).
     ScoutAccessContract,
+    /// The storage layout version this contract is currently running. Absent
+    /// means version 0 — the pre-versioning layout — so a contract that has
+    /// never been migrated reads as "behind the code" rather than "current".
+    SchemaVersion,
+    /// How far a resumable migration has progressed. Stores the highest
+    /// `player_id` the cursor has already visited, so a second `migrate` call
+    /// resumes instead of re-scanning from zero. Absent means "not started".
+    MigrationCursor(u64),
+    /// Total items rewritten by a migration across all calls. Diagnostic only:
+    /// it lets an operator confirm progress across several `migrate` calls
+    /// without reading the cursor's implied position.
+    MigrationProcessed,
     /// The current Merkle commitment root over a player's full
     /// [`ProgressEntry`] history (an RFC 6962-style Merkle Tree Hash — see
     /// `record_progress_entry`'s doc comment for the construction). Updated
@@ -131,6 +200,19 @@ pub enum DataKey {
     /// verifiable via `verify_history_proof` without trusting the RPC node
     /// that served the query — see `get_progress_root`.
     HistoryRoot(u64),
+    /// Incremental Merkle commitment state for a player's history (issue
+    /// #1368): the ordered list of [`FrontierPeak`]s whose levels are the set
+    /// bits of the current entry count.
+    ///
+    /// This is the accumulator `record_progress_entry` now maintains instead
+    /// of re-reading every `HistoryPage` shard and re-hashing the whole
+    /// history on each append. The RFC 6962 root in [`DataKey::HistoryRoot`]
+    /// remains byte-identical — it is now derived by folding these peaks
+    /// instead of by recursing over the full leaf list.
+    ///
+    /// Absent for players whose history predates this key; the first append
+    /// after an upgrade rebuilds it lazily from the existing history.
+    HistoryFrontier(u64),
 
     /// Boolean flag (`true`) written by `open_migration_window`; absent or
     /// `false` means the migration window is closed. All `admin_seed_*`
@@ -138,6 +220,11 @@ pub enum DataKey {
     /// Cleared by `close_migration_window`. Stored in instance storage so it
     /// is immediately visible and requires no TTL management.
     MigrationActive,
+    /// Irreversible flag set by `close_migration_window` after the window
+    /// has been closed once. If present (true), `open_migration_window`
+    /// will return `MigrationWindowSealed` error. This ensures the
+    /// migration window can only be opened once per contract deployment.
+    MigrationWindowSealed,
     /// Re-wiring epoch for [`DataKey::RegistrationContract`], bumped by
     /// every `set_registration_contract` call. See
     /// `scoutchain_shared_types::WiringLink` and

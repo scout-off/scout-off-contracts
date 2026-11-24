@@ -1,3 +1,78 @@
+# ScoutChain — Configuration Reference
+
+All environment variables consumed anywhere in this repository are listed below,
+grouped by component. Copy `.env.example` to `.env` and fill in every **Required**
+value before running scripts or starting the backend.
+
+---
+
+## Stellar / Soroban — Deployment & Contract Invocation
+
+These variables are read by the deployment and initialization shell scripts:
+`scripts/deploy.sh`, `scripts/initialize.sh`, `scripts/generate-bindings.sh`,
+`scripts/setup-testnet.sh`, and `testnet/seed.sh`.
+
+| Variable | Consumer | Required / Optional | Notes |
+|---|---|---|---|
+| `DEPLOYER_SECRET` | `scripts/deploy.sh`, `scripts/initialize.sh`, `testnet/seed.sh` | **Required** | Stellar secret key (`S...`) used to sign deployment and invocation transactions |
+| `ADMIN_ADDRESS` | `scripts/initialize.sh`, `testnet/seed.sh` | **Required** | Stellar G-address set as admin on all four contracts. Cannot be changed after `initialize`. |
+| `XLM_TOKEN_ADDRESS` | `scripts/initialize.sh` | **Required** | Native XLM token contract address. Testnet: `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC`. Mainnet: `CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA` |
+| `STELLAR_NETWORK` | `scripts/deploy.sh`, `scripts/initialize.sh`, `scripts/generate-bindings.sh` | Optional | `testnet` or `mainnet`. Defaults to `testnet`. |
+| `HORIZON_URL` | `testnet/seed.sh` | Optional | Horizon REST API endpoint. Default: `https://horizon-testnet.stellar.org` |
+| `SOROBAN_RPC_URL` | `scripts/deploy.sh`, `scripts/initialize.sh` | Optional | Soroban JSON-RPC endpoint. Default: `https://soroban-testnet.stellar.org` |
+
+---
+
+## Contract IDs
+
+Written to `.env.contracts` by `scripts/deploy.sh`. Must be copied into the backend
+and frontend repos after deployment. Also consumed directly by
+`scripts/initialize.sh`, `scripts/generate-bindings.sh`, `testnet/seed.sh`, and
+`scripts/reconcile-indexer.js`.
+
+| Variable | Consumer | Required / Optional | Notes |
+|---|---|---|---|
+| `REGISTRATION_CONTRACT_ID` | `scripts/initialize.sh`, `scripts/generate-bindings.sh`, `testnet/seed.sh`, `scripts/reconcile-indexer.js` | **Required** (post-deploy) | Contract ID of the deployed `registration` contract |
+| `VERIFICATION_CONTRACT_ID` | `scripts/initialize.sh`, `scripts/generate-bindings.sh`, `testnet/seed.sh` | **Required** (post-deploy) | Contract ID of the deployed `verification` contract |
+| `PROGRESS_CONTRACT_ID` | `scripts/initialize.sh`, `scripts/generate-bindings.sh`, `testnet/seed.sh` | **Required** (post-deploy) | Contract ID of the deployed `progress` contract |
+| `SCOUT_ACCESS_CONTRACT_ID` | `scripts/initialize.sh`, `scripts/generate-bindings.sh`, `testnet/seed.sh`, `scripts/reconcile-indexer.js` | **Required** (post-deploy) | Contract ID of the deployed `scout_access` contract |
+
+---
+
+## WASM Hashes
+
+Written to `.env.contracts` by `scripts/deploy.sh`. Used to verify the on-chain WASM
+binary identity matches the locally built artifact.
+
+| Variable | Consumer | Required / Optional | Notes |
+|---|---|---|---|
+| `REGISTRATION_CONTRACT_WASM_HASH` | `scripts/deploy.sh` (output) | Optional | SHA-256 hash of the deployed registration WASM |
+| `VERIFICATION_CONTRACT_WASM_HASH` | `scripts/deploy.sh` (output) | Optional | SHA-256 hash of the deployed verification WASM |
+| `PROGRESS_CONTRACT_WASM_HASH` | `scripts/deploy.sh` (output) | Optional | SHA-256 hash of the deployed progress WASM |
+| `SCOUT_ACCESS_CONTRACT_WASM_HASH` | `scripts/deploy.sh` (output) | Optional | SHA-256 hash of the deployed scout_access WASM |
+
+---
+
+## Backend / Node.js
+
+Read by the TypeScript application server and the Node.js reconciler script.
+
+| Variable | Consumer | Required / Optional | Notes |
+|---|---|---|---|
+| `DATABASE_URL` | `prisma/schema.prisma`, `scripts/reconcile-indexer.js` | **Required** | PostgreSQL connection string used by Prisma ORM and the indexer reconciler. Format: `postgresql://USER:PASSWORD@HOST:PORT/DATABASE` |
+| `JWT_SECRET` | `src/middleware/auth.ts` | **Required** | Secret used to sign and verify JWT bearer tokens. Use a cryptographically random value (`openssl rand -hex 32`). Never commit the real value. |
+| `ACCESS_TOKEN_TTL_SECONDS` | `src/services/sep10.ts` | Optional (default `900`) | Lifetime of SEP-10 access tokens in seconds. Values above 900 (15 minutes) are capped. |
+| `REFRESH_TOKEN_TTL_SECONDS` | `src/services/sep10.ts` | Optional (default `604800`) | Lifetime of rotating SEP-10 refresh tokens. Refreshing via `POST /auth/refresh` re-derives the role. |
+
+---
+
+## Notes
+
+- Never commit a populated `.env` file. It is listed in `.gitignore`.
+- After running `scripts/deploy.sh`, copy `.env.contracts` values into your backend
+  and frontend `.env` files — they are not automatically forwarded.
+- For mainnet deployments, verify `config/mainnet.json` has no placeholder values
+  (`FILL_IN_BEFORE_USE`) before running `scripts/deploy.sh mainnet`.
 # Configuration Reference
 
 This document describes every field in `config/testnet.json` and `config/mainnet.json`. These files are the **single source of truth** for network-specific values used by deployment scripts, initialization, CI pipelines, and the backend indexer.
@@ -83,6 +158,49 @@ Before running `./scripts/deploy.sh mainnet`:
 
 ---
 
+## Contract-Level Settings
+
+### Trial offer bounds (`FeeConfig`)
+
+Enforced by `validate_fee_config` on `initialize`, `update_fee_config`,
+`propose_fee_config` and `admin_seed_fee_config`:
+
+| Field | Bounds |
+|-------|--------|
+| `trial_offer_escrow_stroops` | `0` (trial offers disabled) or `1 ..= 1_000_000_000_000` (`MAX_TRIAL_ESCROW_STROOPS`, = `MAX_SUB_FEE_STROOPS`) |
+| `trial_offer_expiry_secs` | when escrow > 0: `3_600 ..= 2_592_000` (1 hour – 30 days; `MIN_/MAX_TRIAL_EXPIRY_SECS`). The max matches the 518,400-ledger escrow TTL horizon. |
+
+### Registration Cooldown (`set_reg_cooldown` / `get_reg_cooldown`)
+
+| Setting | Default | Bounds | Description |
+|---------|---------|--------|-------------|
+| `reg_cooldown_secs` | `86400` (24h) | `0..=604800` (0 = disabled, max 7 days) | Per-wallet cooldown between `register_player` and `register_scout` calls. Set via `set_reg_cooldown` (admin only). Emits `reg_cooldown_updated` event. |
+
+### Verification Cooldown (`set_reg_cooldown` / `get_reg_cooldown`)
+
+| Setting | Default | Bounds | Description |
+|---------|---------|--------|-------------|
+| `reg_cooldown_secs` | `0` (disabled) | `0..=604800` (0 = disabled, max 7 days) | Per-wallet cooldown between `register_validator` calls. Set via `set_reg_cooldown` (admin only). |
+
+---
+
+## Per-network config (`config/<network>.json`)
+
+`scripts/initialize.sh` reads these fields (networks without a config file, e.g. `local`, use `config/testnet.json`) and aborts before sending anything if one is missing, contains `FILL_IN_BEFORE_USE`, or is outside the bounds below. `XLM_TOKEN_ADDRESS` in the environment overrides `xlm_token_address` (used by the sandbox CI job).
+
+| Field | Bounds | Description |
+|-------|--------|-------------|
+| `xlm_token_address` | non-empty | Native XLM token contract passed to `scout_access.initialize`. |
+| `reg_cooldown_secs` | `0..=604800` | Applied to the registration contract via `set_reg_cooldown` after initialization. |
+| `fee_config.contact_fee_stroops` | `100000..=100000000000` | Per-contact fee. |
+| `fee_config.basic_sub_stroops` / `pro_sub_stroops` / `elite_sub_stroops` | `1000000..=1000000000000`, `basic <= pro <= elite` | Subscription prices. |
+| `fee_config.sub_duration_secs` | `1..=31536000` | Subscription length. |
+| `fee_config.trial_offer_escrow_stroops` | `>= 0` (0 disables trial offers) | Trial-offer escrow. |
+| `fee_config.trial_offer_expiry_secs` | non-zero when escrow `> 0` | Trial-offer expiry. |
+| `fee_config.pro_contact_limit` | `1..=10000` | Pro-tier contact limit. |
+
+---
+
 ## Updating Config Values
 
 1. Edit `config/testnet.json` or `config/mainnet.json`
@@ -90,3 +208,26 @@ Before running `./scripts/deploy.sh mainnet`:
 3. Commit changes — CI will pick up new values on next deploy
 
 > **Never** hardcode these values in scripts. Always read from the config files or `.env.contracts` (which `deploy.sh` generates from these configs).
+
+---
+
+## On-chain gate configuration — verification contract (issue #1632)
+
+| Setter | Parameter | Valid range | Error on violation | Unreachable value |
+|--------|-----------|-------------|--------------------|-------------------|
+| `set_min_region_quorum` | `min_regions` | `0..=MAX_VALIDATORS` (100); `0` disables the check | `InvalidRegionQuorum` (59) | stored; emits `diversity_gate_unreachable` |
+| `set_diversity_config` | `required_distinct_affiliations` | `1..=MAX_VALIDATORS` (100) | `InvalidDiversityConfig` (60) | stored; emits `diversity_gate_unreachable` |
+| `set_diversity_config` | `starting_milestone_index` | `>= 1` (milestone indices start at 1) | `InvalidDiversityConfig` (60) | — |
+
+**Unreachable gates warn, they do not reject.** When the required count
+exceeds the current `ActiveValidatorCount`, no combination of active
+validators can satisfy the gate, so the setter emits
+`diversity_gate_unreachable` (topics: `admin`; data: `(gate, required,
+active_validator_count)`, `gate` ∈ `min_region_quorum` / `diversity_config`).
+The value is still stored so an admin can configure the gate ahead of
+onboarding validators; monitoring should alert on the event.
+
+**TTL.** `DiversityConfig` stays in persistent storage and its TTL is extended
+to `PERSISTENT_TTL_MAX` on every write and every read (`get_diversity_config`,
+including reads during milestone approval), so the gate cannot silently
+archive during idle periods. No migration is required.

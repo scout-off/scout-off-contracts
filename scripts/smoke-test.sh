@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # ScoutChain — cross-contract smoke test for approve_milestone → advance_level
 #
-# Deploys verification and progress contracts to testnet, wires them, and
-# exercises the real cross-contract call: approve_milestone on verification
-# must atomically advance the player's level in the progress contract.
+# Deploys verification, progress and registration contracts to testnet, wires
+# them, and exercises the real cross-contract call: approve_milestone on
+# verification must atomically advance the player's level in the progress
+# contract. Registration is required because progress syncs every level
+# change to it and refuses to advance unregistered players (#1409).
 #
 # Usage: ./scripts/smoke-test.sh
 # Requires: DEPLOYER_SECRET, ADMIN_ADDRESS env vars; stellar CLI installed.
@@ -16,6 +18,7 @@ ADMIN="${ADMIN_ADDRESS:?Set ADMIN_ADDRESS}"
 WASM_DIR="target/wasm32v1-none/release"
 VER_WASM="${WASM_DIR}/scoutchain_verification.optimized.wasm"
 PROG_WASM="${WASM_DIR}/scoutchain_progress.optimized.wasm"
+REG_WASM="${WASM_DIR}/scoutchain_registration.optimized.wasm"
 
 echo "============================================"
 echo "  ScoutChain Cross-Contract Smoke Test"
@@ -31,28 +34,27 @@ stellar contract optimize --wasm "${WASM_DIR}/scoutchain_verification.wasm" \
   --wasm-out "$VER_WASM"
 stellar contract optimize --wasm "${WASM_DIR}/scoutchain_progress.wasm" \
   --wasm-out "$PROG_WASM"
+stellar contract optimize --wasm "${WASM_DIR}/scoutchain_registration.wasm" \
+  --wasm-out "$REG_WASM"
 
 # 2. Deploy contracts
 echo ""
 echo "==> Deploying verification contract..."
-VER_ID=$(stellar contract deploy --wasm "$VER_WASM" --source "$DEPLOYER" --network "$NETWORK")
+VER_ID=$(stellar contract deploy --wasm "$VER_WASM" --source "$DEPLOYER" --network "$NETWORK" \
+  -- --admin "$ADMIN")
 echo "    verification => $VER_ID"
 
 echo "==> Deploying progress contract..."
-PROG_ID=$(stellar contract deploy --wasm "$PROG_WASM" --source "$DEPLOYER" --network "$NETWORK")
+PROG_ID=$(stellar contract deploy --wasm "$PROG_WASM" --source "$DEPLOYER" --network "$NETWORK" \
+  -- --admin "$ADMIN")
 echo "    progress => $PROG_ID"
 
-# 3. Initialize contracts
-echo ""
-echo "==> Initializing verification contract..."
-stellar contract invoke \
-  --id "$VER_ID" --source "$DEPLOYER" --network "$NETWORK" \
-  -- initialize --admin "$ADMIN"
+echo "==> Deploying registration contract..."
+REG_ID=$(stellar contract deploy --wasm "$REG_WASM" --source "$DEPLOYER" --network "$NETWORK" \
+  -- --admin "$ADMIN")
+echo "    registration => $REG_ID"
 
-echo "==> Initializing progress contract..."
-stellar contract invoke \
-  --id "$PROG_ID" --source "$DEPLOYER" --network "$NETWORK" \
-  -- initialize --admin "$ADMIN"
+# 3. Contracts initialize in their constructors at deploy time (#1369).
 
 # 4. Wire verification → progress
 echo ""
@@ -62,12 +64,40 @@ stellar contract invoke \
   -- set_progress_contract \
   --progress_contract "$PROG_ID"
 
+# 4b. Wire verification -> registration (approve_milestone fails closed
+# without it, #1622).
+echo "==> Wiring verification -> registration..."
+stellar contract invoke \
+  --id "$VER_ID" --source "$DEPLOYER" --network "$NETWORK" \
+  -- set_registration_contract \
+  --reg_contract "$REG_ID"
+
 # 5. Wire progress → verification (so advance_level validates the caller)
 echo "==> Wiring progress -> verification..."
 stellar contract invoke \
   --id "$PROG_ID" --source "$DEPLOYER" --network "$NETWORK" \
   -- set_verification_contract \
   --addr "$VER_ID"
+
+# 5b. Wire progress <-> registration so level changes can sync.
+echo "==> Wiring progress <-> registration..."
+stellar contract invoke \
+  --id "$PROG_ID" --source "$DEPLOYER" --network "$NETWORK" \
+  -- set_registration_contract \
+  --addr "$REG_ID"
+stellar contract invoke \
+  --id "$REG_ID" --source "$DEPLOYER" --network "$NETWORK" \
+  -- set_progress_contract \
+  --addr "$PROG_ID"
+
+# 5c. Register the player whose level the milestone will advance (id 1).
+echo "==> Registering player 1..."
+stellar contract invoke \
+  --id "$REG_ID" --source "$DEPLOYER" --network "$NETWORK" \
+  -- register_player \
+  --wallet "$ADMIN" \
+  --vitals '{"age":20,"position":"ST","region":"NG","nationality":"GH"}' \
+  --ipfs_hashes '["QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB"]'
 
 # 6. Register a validator
 echo ""

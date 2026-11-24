@@ -107,6 +107,7 @@ pub fn filter_players(
 // Queries
 pub fn get_player(env: Env, player_id: u64) -> Result<PlayerProfile, ScoutChainError>
 pub fn get_player_by_wallet(env: Env, wallet: Address) -> Result<PlayerProfile, ScoutChainError>
+pub fn get_player_id_by_wallet(env: Env, wallet: Address) -> Result<u64, ScoutChainError>
 pub fn get_scout(env: Env, scout_id: u64) -> Result<ScoutProfile, ScoutChainError>
 pub fn get_player_count(env: Env) -> u64
 pub fn get_scout_count(env: Env) -> u64
@@ -302,12 +303,15 @@ pub fn confirm_trial_offer(
     idempotency_nonce: Option<String>,
 ) -> Result<(), ScoutAccessError>
 
-// Queries
+ // Queries
 pub fn get_subscription(env: Env, scout: Address) -> Result<Subscription, ScoutAccessError>
 pub fn get_fee_config(env: Env) -> FeeConfig
 pub fn has_contacted(env: Env, scout: Address, player_id: u64) -> bool
 pub fn get_trial_offer(env: Env, player_id: u64, index: u32) -> Result<TrialOffer, ScoutAccessError>
 pub fn get_trial_count(env: Env, player_id: u64) -> u32
+pub fn has_evidence_access(env: Env, player_id: u64, scout: Address) -> bool
+pub fn get_evidence_access_grant(env: Env, player_id: u64, scout: Address) -> Option<EvidenceAccessGrant>
+pub fn get_player_access_grants(env: Env, player_id: u64, offset: u32, limit: u32) -> Vec<EvidenceAccessGrant>
 pub fn health(env: Env) -> ContractHealth
 pub fn version(env: Env) -> String
 
@@ -316,11 +320,21 @@ pub fn update_fee_config(env: Env, fee_config: FeeConfig) -> Result<(), ScoutAcc
 pub fn withdraw_fees(env: Env, to: Address) -> Result<i128, ScoutAccessError>
 pub fn set_progress_contract(env: Env, addr: Address) -> Result<(), ScoutAccessError>
 pub fn update_progress_contract(env: Env, addr: Address) -> Result<(), ScoutAccessError>
+pub fn set_registration_contract(env: Env, addr: Address) -> Result<(), ScoutAccessError>
+pub fn admin_revoke_evidence_access(env: Env, player_id: u64, scout: Address) -> Result<(), ScoutAccessError>
 pub fn propose_admin(env: Env, new_admin: Address) -> Result<(), ScoutAccessError>
 pub fn accept_admin(env: Env) -> Result<(), ScoutAccessError>
 pub fn pause_contract(env: Env) -> Result<(), ScoutAccessError>
 pub fn unpause_contract(env: Env) -> Result<(), ScoutAccessError>
 pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), ScoutAccessError>
+
+// Player-initiated (issue #1380)
+pub fn revoke_evidence_access(
+    env: Env,
+    player: Address,
+    player_id: u64,
+    scout: Address,
+) -> Result<(), ScoutAccessError>
 ```
 
 ---
@@ -482,25 +496,28 @@ Error codes are **per-contract**. The same numeric code can mean different thing
 | 21 | `SpecializationMismatch` | Validator not tagged for requested milestone category |
 | 22 | `InvalidAttestation` | ed25519 signature verification failed |
 | 23 | `AttestationKeyNotFound` | No attestation public key registered |
-| 24 | `InvalidNonce` | Nonce not strictly greater than last accepted |
+| 24 | `InvalidNonce` | Attestation nonce already consumed or outside the bounded 256-nonce window |
+| 45 | `AttestationExpired` | Attestation `expires_at` is in the past |
+| 46 | `AttestationWindowTooLarge` | Attestation `expires_at` exceeds the max-future tolerance |
 | 25 | `RegistrationCooldown` | Validator registration before cooldown window elapsed |
 | 26 | `DuplicateAttestation` | Same validator already attested to this claim in current round |
 | 27 | `TooManyPendingVotes` | Validator has MAX_PENDING_VOTES_PER_VALIDATOR outstanding votes |
 | 28 | `ThresholdModeRequiresAttestation` | threshold >= 2, must use attest_milestone bypass |
-| 29 | `MigrationNotActive` | Migration window not currently active |
-| 30 | `MilestoneAlreadyExists` | Milestone already exists at (player_id, milestone_index) with different content |
-| 31 | `DisputeAlreadyExists` | Dispute already exists at (player_id, milestone_index) with different content |
-| 32 | `ValidatorRecordEvicted` | Validator record fully evicted, unrecoverable |
-| 33 | `MilestoneRecordEvicted` | Milestone record fully evicted, unrecoverable |
-| 34 | `NotEligibleToReReview` | Caller is not a currently-active validator |
-| 35 | `MilestoneNotFlagged` | Milestone not currently flagged as pending re-review |
-| 36 | `DisputeRequiresJury` | resolve_dispute called on a dispute requiring jury resolution |
-| 37 | `NotJuryDispute` | cast_dispute_vote/tally_dispute called on non-jury dispute |
-| 38 | `VotingWindowClosed` | cast_dispute_vote called after voting window closed |
-| 39 | `ConflictOfInterest` | cast_dispute_vote called by the validator who approved the disputed milestone |
-| 40 | `AlreadyVoted` | cast_dispute_vote called by a validator who already voted on this dispute |
-| 41 | `VotingWindowOpen` | tally_dispute called before voting window closes, vote count is tied |
-| 42 | `QuorumNotReached` | tally_dispute called before quorum of votes has been reached |
+| 29 | `RegistrationCallFailed` | Cross-contract call to the registration contract failed |
+| 30 | `MigrationNotActive` | Migration window not currently active |
+| 31 | `MilestoneAlreadyExists` | Milestone already exists at (player_id, milestone_index) with different content |
+| 32 | `DisputeAlreadyExists` | Dispute already exists at (player_id, milestone_index) with different content |
+| 33 | `ValidatorRecordEvicted` | Validator record fully evicted, unrecoverable |
+| 34 | `MilestoneRecordEvicted` | Milestone record fully evicted, unrecoverable |
+| 35 | `NotEligibleToReReview` | Caller is not a currently-active validator |
+| 36 | `MilestoneNotFlagged` | Milestone not currently flagged as pending re-review |
+| 37 | `DisputeRequiresJury` | resolve_dispute called on a dispute requiring jury resolution — use tally_dispute instead |
+| 38 | `NotJuryDispute` | cast_dispute_vote/tally_dispute called on non-jury dispute |
+| 39 | `VotingWindowClosed` | cast_dispute_vote called after voting window closed |
+| 40 | `ConflictOfInterest` | cast_dispute_vote called by the validator who approved the disputed milestone |
+| 41 | `AlreadyVoted` | cast_dispute_vote called by a validator who already voted on this dispute |
+| 42 | `VotingWindowOpen` | tally_dispute called before voting window closes, vote count is tied |
+| 43 | `QuorumNotReached` | tally_dispute called before quorum of votes has been reached |
 
 ### `ProgressError` (progress)
 
@@ -563,7 +580,9 @@ Error codes are **per-contract**. The same numeric code can mean different thing
 | 35 | `SubscriptionRecordEvicted` | Subscription record fully evicted, unrecoverable |
 | 36 | `PayToContactPaused` | `pay_to_contact` function is paused independently of whole-contract pause |
 | 37 | `TrialEscrowNotOutstanding` | `admin_refund_trial_escrow` targeted pair with no outstanding `TrialEscrow` entry |
-| 38 | `GrantNotFound` | `admin_revoke_evidence_access` targeted (player_id, scout) pair with no `EvidenceAccessGrant` record |
+| 38 | `GrantNotFound` | `admin_revoke_evidence_access` or `revoke_evidence_access` targeted (player_id, scout) pair with no `EvidenceAccessGrant` record |
+| 42 | `GrantAlreadyRevoked` | `revoke_evidence_access` (player-initiated) targeted a grant that was already revoked |
+| 43 | `PlayerNotVerified` | `revoke_evidence_access` caller's wallet does not own the `player_id` passed, or the registration contract is not wired |
 
 ---
 

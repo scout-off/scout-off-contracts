@@ -19,6 +19,7 @@ use soroban_sdk::{
 };
 
 struct Harness {
+    #[allow(dead_code)]
     registration: RegistrationContractClient<'static>,
     progress: ProgressContractClient<'static>,
     ver_id: Address,
@@ -31,17 +32,14 @@ fn setup() -> Harness {
 
     let admin = Address::generate(&env);
 
-    let reg_id = env.register(RegistrationContract, ());
+    let reg_id = env.register(RegistrationContract, (admin.clone(),));
     let registration = RegistrationContractClient::new(&env, &reg_id);
-    registration.initialize(&admin);
 
-    let prog_id = env.register(ProgressContract, ());
+    let prog_id = env.register(ProgressContract, (admin.clone(),));
     let progress = ProgressContractClient::new(&env, &prog_id);
-    progress.initialize(&admin);
 
-    let ver_id = env.register(VerificationContract, ());
-    let verification = VerificationContractClient::new(&env, &ver_id);
-    verification.initialize(&admin);
+    let ver_id = env.register(VerificationContract, (admin.clone(),));
+    let _verification = VerificationContractClient::new(&env, &ver_id);
 
     // Whitelist the verification contract as the primary advance_level caller.
     progress.set_verification_contract(&ver_id);
@@ -69,8 +67,11 @@ fn test_advance_level_rolls_back_when_registration_sync_fails() {
     let result = h.progress.try_advance_level(&h.ver_id, &player_id, &0u32);
 
     assert!(
-        matches!(result, Err(Ok(ProgressError::RegistrationCallFailed))),
-        "advance_level must fail with RegistrationCallFailed when sync fails: {result:?}"
+        // The sync fails because registration has no such player; since #1409
+        // that surfaces as PlayerNotRegistered rather than the generic
+        // RegistrationCallFailed.
+        matches!(result, Err(Ok(ProgressError::PlayerNotRegistered))),
+        "advance_level must fail with PlayerNotRegistered when sync fails: {result:?}"
     );
 
     // Atomicity: nothing from the rolled-back advance may have persisted.
@@ -94,9 +95,8 @@ fn test_advance_level_rejects_when_unconfigured_and_commits_nothing() {
     env.mock_all_auths();
     let admin = Address::generate(&env);
 
-    let prog_id = env.register(ProgressContract, ());
+    let prog_id = env.register(ProgressContract, (admin.clone(),));
     let progress = ProgressContractClient::new(&env, &prog_id);
-    progress.initialize(&admin);
 
     let caller = Address::generate(&env);
     let player_id: u64 = 1;

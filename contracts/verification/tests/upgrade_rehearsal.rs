@@ -57,9 +57,11 @@ fn setup() -> Harness {
     env.ledger().with_mut(|l| l.timestamp = 1_000_000);
 
     let admin = Address::generate(&env);
-    let id = env.register(VerificationContract, ());
+    let id = env.register(VerificationContract, (admin.clone(),));
     let verification = VerificationContractClient::new(&env, &id);
-    verification.initialize(&admin);
+    verification.set_registration_contract(
+        &scoutchain_shared_types::testutils::active_registry_stub(&env),
+    );
 
     Harness { env, verification }
 }
@@ -95,7 +97,7 @@ fn seed(h: &Harness) -> Seeded {
 
     // Initial progress-contract wiring (sets the one-time ProgressContractSet
     // guard flag in instance storage).
-    let progress_link = Address::generate(&h.env);
+    let progress_link = scoutchain_shared_types::testutils::peer_stub(&h.env, "progress");
     h.verification.set_progress_contract(&progress_link);
 
     Seeded { validator }
@@ -131,7 +133,7 @@ fn test_verification_upgrade_preserves_state() {
     // Correct post-upgrade re-wiring: the ProgressContractSet guard survived the
     // upgrade, so we MUST use update_progress_contract (see module docs). This
     // must succeed without panicking.
-    let new_progress_link = Address::generate(&h.env);
+    let new_progress_link = scoutchain_shared_types::testutils::peer_stub(&h.env, "progress");
     h.verification.update_progress_contract(&new_progress_link);
 
     // --- Assert: persistent storage survived ---
@@ -177,6 +179,26 @@ fn test_verification_broken_upgrade_wrong_rewire_fn_is_caught() {
     rehearse_upgrade(&h);
 
     // Wrong re-wiring function post-upgrade — must not silently succeed.
-    let new_progress_link = Address::generate(&h.env);
+    let new_progress_link = scoutchain_shared_types::testutils::peer_stub(&h.env, "progress");
     h.verification.set_progress_contract(&new_progress_link);
+}
+
+/// Assert that `upgrade()` emits a `contract_upgraded` event before swapping
+/// the WASM, so the event is attributed to the old code version.
+#[test]
+fn test_verification_upgrade_emits_contract_upgraded_event() {
+    use scoutchain_shared_types::testutils::has_event;
+
+    let h = setup();
+    let _ = seed(&h);
+
+    let new_wasm_hash = h.env.deployer().upload_contract_wasm(Bytes::new(&h.env));
+    h.verification.upgrade(&new_wasm_hash);
+
+    let found = has_event(&h.env, "contract_upgraded");
+
+    assert!(
+        found,
+        "expected a 'contract_upgraded' event to be emitted by upgrade()"
+    );
 }

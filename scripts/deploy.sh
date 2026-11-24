@@ -1,15 +1,37 @@
 #!/usr/bin/env bash
 # ScoutChain — deploy all contracts to Stellar testnet or mainnet
-# Usage: ./scripts/deploy.sh [testnet|mainnet]
+# Usage: ./scripts/deploy.sh [testnet|mainnet|local] [--allow-cli-mismatch]
 set -euo pipefail
 
-NETWORK="${1:-testnet}"
+NETWORK_ARG=""
+ALLOW_CLI_MISMATCH=0
+for arg in "$@"; do
+  case "$arg" in
+    --allow-cli-mismatch) ALLOW_CLI_MISMATCH=1 ;;
+    *) NETWORK_ARG="$arg" ;;
+  esac
+done
+
+# shellcheck disable=SC1091
+source "$(dirname "$0")/network.sh" "$NETWORK_ARG"
+
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/lib/check-stellar-cli.sh"
+check_stellar_cli_version "$ALLOW_CLI_MISMATCH"
 DEPLOYER="${DEPLOYER_SECRET:-}"
 
 if [[ -z "$DEPLOYER" ]]; then
   echo "ERROR: Set DEPLOYER_SECRET env var to your Stellar secret key."
   exit 1
 fi
+
+# Contracts initialize in their constructors, atomically with deployment
+# (#1369), so the admin and scout_access's token/fee config are needed here.
+ADMIN="${ADMIN_ADDRESS:?Set ADMIN_ADDRESS (the admin passed to every constructor)}"
+CONFIG_FILE="config/${NETWORK}.json"
+[[ -f "$CONFIG_FILE" ]] || CONFIG_FILE="config/testnet.json"
+CONFIG_OUT=$(python3 "$(dirname "$0")/lib/read_network_config.py" "$CONFIG_FILE" "${XLM_TOKEN_ADDRESS:-}") || exit 1
+read -r XLM_TOKEN _REG_COOLDOWN_SECS FEE_CONFIG_JSON <<<"$CONFIG_OUT"
 
 # Mainnet safety check: verify config file has no placeholders
 if [[ "$NETWORK" == "mainnet" ]]; then
@@ -36,8 +58,17 @@ else
   hash_wasm() { shasum -a 256 "$1" | awk '{print $1}'; }
 fi
 
-echo "==> Building contracts..."
-cargo build --workspace --target wasm32v1-none --release
+# Optional: deploy prebuilt release WASMs (e.g. downloaded from a GitHub
+# Release, see docs/DEPLOYMENT.md) instead of building locally. The directory
+# must hold scoutchain_<contract>.optimized.wasm for every contract.
+PREBUILT_WASM_DIR="${PREBUILT_WASM_DIR:-}"
+if [[ -n "$PREBUILT_WASM_DIR" ]]; then
+  WASM_DIR="$PREBUILT_WASM_DIR"
+  echo "==> Using prebuilt WASMs from $WASM_DIR (skipping build and optimize)"
+else
+  echo "==> Building contracts..."
+  cargo build --workspace --target wasm32v1-none --release --locked
+fi
 
 CONTRACTS=(registration verification progress scout_access)
 
@@ -48,14 +79,25 @@ for name in "${CONTRACTS[@]}"; do
   wasm_name="scoutchain_${name}.wasm"
   optimized="${WASM_DIR}/scoutchain_${name}.optimized.wasm"
 
-  echo "==> Optimizing $name..."
-  stellar contract optimize --wasm "${WASM_DIR}/${wasm_name}" --wasm-out "$optimized"
+  if [[ -z "$PREBUILT_WASM_DIR" ]]; then
+    echo "==> Optimizing $name..."
+    stellar contract optimize --wasm "${WASM_DIR}/${wasm_name}" --wasm-out "$optimized"
+  elif [[ ! -f "$optimized" ]]; then
+    echo "ERROR: $optimized not found in PREBUILT_WASM_DIR"; exit 1
+  fi
+
+  if [[ "$name" == "scout_access" ]]; then
+    ctor_args=(--admin "$ADMIN" --xlm_token "$XLM_TOKEN" --fee_config "$FEE_CONFIG_JSON")
+  else
+    ctor_args=(--admin "$ADMIN")
+  fi
 
   echo "==> Deploying $name to $NETWORK..."
   id=$(stellar contract deploy \
     --wasm "$optimized" \
     --source "$DEPLOYER" \
-    --network "$NETWORK")
+    --network "$NETWORK" \
+    -- "${ctor_args[@]}")
 
   CONTRACT_IDS[$name]="$id"
   CONTRACT_WASM_HASHES[$name]=$(hash_wasm "$optimized")

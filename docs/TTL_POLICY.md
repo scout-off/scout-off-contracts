@@ -89,14 +89,18 @@ This document defines the persistent storage TTL policy for the scout-off-contra
 | `Validator(wallet)` | 518,400 | Core identity: validator registration and active/revoked status. Extended on `register_validator` write and `get_validator` read. |
 | `ValidatorVector` | 518,400 | Registry index. Extended on registration and implicitly refreshed on `get_validators`. |
 | `ValidatorMilestoneCount(wallet)` | 518,400 | Validator's milestone tally. Extended on `approve_milestone` write. |
-| `ValidatorMilestones(wallet)` | 518,400 | Validator's milestone history index. Extended on `get_validator_milestones` read. |
+| `ValidatorMilestones(wallet)` | 518,400 | Validator's milestone history index. Extended on `approve_milestone` write and `get_validator_milestones` read. |
+| `ValidatorPlayerMilestoneCount(wallet, player_id)` | 518,400 | Per-pair milestone cap enforcement. Extended on `approve_milestone` write. |
+| `ValidatorPlayers(wallet)` | 518,400 | Distinct-player index for each validator. Extended on `approve_milestone` write and `get_validator_players` / `get_validator_players_page` read. |
+| `PlayerAffiliations(player_id)` | 518,400 | Diversity gating: distinct validator affiliations a player has. Extended on `approve_milestone` write when a new affiliation is added. |
 | `Admin` | 518,400 | Cross-contract consistency. |
 
 **Keep-Alive Mechanism:**
 - `get_milestone()` extends Milestone TTL on read.
 - `get_validator()` extends Validator TTL on read.
-- `get_validator_milestones()` extends the index TTL on read.
-- `approve_milestone` ensures all related keys (Milestone, MilestoneCounter, EvidenceUsed) are extended on write.
+- `get_validator_milestones()` and `get_validator_milestones_page_v2()` extend the ValidatorMilestones index TTL on read.
+- `get_validator_players()` and `get_validator_players_page()` extend the ValidatorPlayers index TTL on read.
+- `approve_milestone` ensures all related keys (Milestone, MilestoneCounter, EvidenceUsed, ValidatorPlayerMilestoneCount, ValidatorPlayers, ValidatorMilestones, PlayerAffiliations) are extended on write.
 
 ### Scout Access Contract (`contracts/scout_access/src/lib.rs`)
 
