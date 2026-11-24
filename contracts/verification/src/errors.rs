@@ -225,6 +225,9 @@ pub enum VerificationError {
     // ── Bulk revocation (issue #1605) ──
     /// `batch_revoke_validators` was called with more than `MAX_BATCH_REVOKE` wallets.
     BatchTooLarge = 64,
+    /// `purge_player_data` was called with a cursor other than the next
+    /// expected cursor for this player.
+    InvalidPurgeCursor = 65,
 }
 
 impl AdminError for VerificationError {

@@ -6087,9 +6087,11 @@ with `InvalidPeerContract` (#1610).
 #### `purge_player_data(player_id, cursor) -> Result<(u32, bool), Error>` — verification, progress, scout_access
 
 Admin-only, paged GDPR erasure of a player's current-state ledger entries.
-Call with `cursor = 0`, then pass the returned cursor back while the returned
-flag is `true`. scout_access refuses (`TrialOfferNotFound`) while any of the
-player's trial escrows is still outstanding.
+Call with `cursor = 0`, then pass that contract's returned cursor back while
+the returned flag is `true`. Wrong, stale, and out-of-range cursors are
+rejected with `InvalidPurgeCursor`; scalar keys are removed on the final page.
+scout_access refuses (`TrialOfferNotFound`) while any of the player's trial
+escrows is still outstanding.
 
 #### `unverify_scout(scout_id, reason) -> Result<(), ScoutChainError>` — registration
 

@@ -3328,9 +3328,10 @@ impl VerificationContract {
     /// Paged erasure of a player's verification state (admin only).
     ///
     /// Removes `Milestone`, `MilestoneCounter`, `PlayerAffiliations`,
-    /// `PlayerDisputes`, and `MilestoneDispute` records for the player up to
-    /// `limit` entries per call. Pass the returned `next_cursor` back until
-    /// `more == false`. Safe to call repeatedly; already-absent keys are skipped.
+    /// `PlayerDisputes`, and `MilestoneDispute` records for the player in
+    /// pages of 50. Start with `cursor=0` and pass the returned cursor to the
+    /// next call; any other cursor is rejected. Scalar keys are removed on
+    /// the final page.
     ///
     /// **Note:** Ledger history is immutable — this only removes current-state
     /// entries. See `docs/PLAYER_ERASURE.md` for the legal/product sign-off.
@@ -3344,38 +3345,22 @@ impl VerificationContract {
         const PAGE_SIZE: u32 = 50;
         let mut removed: u32 = 0;
 
-        // On the first page remove the non-milestone keys.
-        if cursor == 0 {
-            if env
-                .storage()
-                .persistent()
-                .has(&DataKey::PlayerAffiliations(player_id))
-            {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::PlayerAffiliations(player_id));
-                removed += 1;
-            }
-            if env
-                .storage()
-                .persistent()
-                .has(&DataKey::PlayerDisputes(player_id))
-            {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::PlayerDisputes(player_id));
-                removed += 1;
-            }
-        }
-
         let total: u32 = env
             .storage()
             .persistent()
             .get(&DataKey::MilestoneCounter(player_id))
             .unwrap_or(0u32);
+        let expected_cursor: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PurgeCursor(player_id))
+            .unwrap_or(0u32);
+        if cursor != expected_cursor || cursor > total {
+            return Err(VerificationError::InvalidPurgeCursor);
+        }
 
         let start = cursor;
-        let end = (start + PAGE_SIZE).min(total);
+        let end = start.saturating_add(PAGE_SIZE).min(total);
 
         for idx in start..end {
             // Remove milestone record.
@@ -3400,17 +3385,26 @@ impl VerificationContract {
         let next_cursor = end;
         let more = next_cursor < total;
 
-        // On final page remove the counter itself.
-        if !more
-            && env
-                .storage()
-                .persistent()
-                .has(&DataKey::MilestoneCounter(player_id))
-        {
+        if more {
+            let key = DataKey::PurgeCursor(player_id);
+            env.storage().persistent().set(&key, &next_cursor);
             env.storage()
                 .persistent()
-                .remove(&DataKey::MilestoneCounter(player_id));
-            removed += 1;
+                .extend_ttl(&key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+        } else {
+            for key in [
+                DataKey::PlayerAffiliations(player_id),
+                DataKey::PlayerDisputes(player_id),
+                DataKey::MilestoneCounter(player_id),
+            ] {
+                if env.storage().persistent().has(&key) {
+                    env.storage().persistent().remove(&key);
+                    removed += 1;
+                }
+            }
+            env.storage()
+                .persistent()
+                .remove(&DataKey::PurgeCursor(player_id));
         }
 
         events::player_data_purged(&env, &admin, player_id, removed, more);

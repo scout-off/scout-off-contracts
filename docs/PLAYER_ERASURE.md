@@ -25,7 +25,7 @@ they request it.
 |------|----------|--------|-----------|
 | Player profile (wallet, vitals, IPFS hashes) | `registration` | `Player(id)`, `PlayerByWallet(wallet)`, `PlayerLevel(id)`, `PlayerDeactivated(id)` | **Deleted** by `deregister_player` |
 | Player index membership | `registration` | `PlayerIndex`, `PlayersByLevel(level)`, `PlayersByLevelRegion(level, region)` | **Removed** by `deregister_player` |
-| Progress level | `progress` | `PlayerLevel(id)` | **Deleted** by `purge_player_data` (cursor=0) |
+| Progress level | `progress` | `PlayerLevel(id)` | **Deleted** by `purge_player_data` (final page) |
 | Progress history entries | `progress` | `HistoryEntry(id, idx)`, `HistoryPage(id, page)` | **Deleted** paged by `purge_player_data` |
 | History counter & Merkle root | `progress` | `HistoryCounter(id)`, `HistoryRoot(id)`, `HistoryVec(id)` | **Deleted** by `purge_player_data` |
 | Milestones (description, evidence CID) | `verification` | `Milestone(id, idx)` | **Deleted** paged by `purge_player_data` |
@@ -71,9 +71,14 @@ Run the following steps **in order**. Each cross-contract purge must complete
    Call:  registration.deregister_player(player_id)
 ```
 
-Each `purge_player_data` call removes at most 50 entries to stay within
-per-transaction CPU/memory budgets. For a player with a long history, multiple
-calls with the returned cursor value are needed.
+Each `purge_player_data` call processes at most 50 paged entries, plus any
+scalar keys on the final page, to stay within per-transaction CPU/memory
+budgets. Cursors are independent per contract:
+start each purge at `cursor=0` and pass that contract's returned cursor to the
+next call. The contract stores the expected cursor and rejects a wrong, stale,
+or out-of-range value with `InvalidPurgeCursor`; do not restart a partially
+completed purge at zero. Scalar keys are removed on the final page, so an
+incorrect cursor cannot skip them while reporting completion.
 
 ---
 

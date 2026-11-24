@@ -342,6 +342,9 @@ pub enum DataKey {
     /// (player_id, scout) → `true` when the grant was revoked by the admin
     /// (compliance takedown). A player cannot reinstate such a grant.
     EvidenceAccessAdminRevoked(u64, Address),
+    /// The next accepted cursor for a player's paged erasure. Absent before
+    /// erasure starts and after it completes.
+    PurgeCursor(u64),
 }
 
 /// Snapshot of both cross-contract peer address pointers held by the
