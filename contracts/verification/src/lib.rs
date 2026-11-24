@@ -1454,6 +1454,7 @@ impl VerificationContract {
         player_id: u64,
         index: u32,
     ) -> Result<(), VerificationError> {
+        Self::require_player_not_erased(&env, player_id)?;
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         let _milestone: Milestone = env
             .storage()
@@ -1721,6 +1722,7 @@ impl VerificationContract {
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
         Self::require_approve_milestone_not_paused(&env)?;
+        Self::require_player_not_erased(&env, player_id)?;
         validator_wallet.require_auth();
 
         // Once an operator has opted into k-of-n threshold mode there is no
@@ -1809,6 +1811,7 @@ impl VerificationContract {
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
         Self::require_approve_milestone_not_paused(&env)?;
+        Self::require_player_not_erased(&env, player_id)?;
         validator_wallet.require_auth();
 
         if description.len() < MIN_DESCRIPTION_LEN || description.len() > MAX_DESCRIPTION_LEN {
@@ -2211,6 +2214,7 @@ impl VerificationContract {
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
         Self::require_approve_milestone_not_paused(&env)?;
+        Self::require_player_not_erased(&env, attestation.player_id)?;
         // Relayer authorizes fee payment only — holds no special privilege.
         relayer.require_auth();
 
@@ -3075,6 +3079,7 @@ impl VerificationContract {
         require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         Self::require_initialized(&env)?;
         Self::require_migration_active(&env)?;
+        Self::require_player_not_erased(&env, player_id)?;
 
         let ms_key = DataKey::Milestone(player_id, milestone_index);
 
@@ -3232,6 +3237,7 @@ impl VerificationContract {
         require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         Self::require_initialized(&env)?;
         Self::require_migration_active(&env)?;
+        Self::require_player_not_erased(&env, player_id)?;
 
         let round = dispute.round;
         let dispute_key = DataKey::MilestoneDispute(player_id, milestone_index, round);
@@ -3498,6 +3504,7 @@ impl VerificationContract {
         Self::bump_instance_ttl(&env);
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
+        Self::require_player_not_erased(&env, player_id)?;
 
         player_wallet.require_auth();
 
@@ -4545,6 +4552,47 @@ impl VerificationContract {
         {
             return Err(VerificationError::ContractPaused);
         }
+        Ok(())
+    }
+
+    /// Require that the player has not been erased via `registration.deregister_player`.
+    /// This is the push-model erasure guard — registration pushes a tombstone to each
+    /// contract rather than each contract pulling from registration on every write.
+    fn require_player_not_erased(env: &Env, player_id: u64) -> Result<(), VerificationError> {
+        if env
+            .storage()
+            .persistent()
+            .get::<DataKey, bool>(&DataKey::Erased(player_id))
+            .unwrap_or(false)
+        {
+            return Err(VerificationError::PlayerErased);
+        }
+        Ok(())
+    }
+
+    /// Mark a player as erased. Called by `registration.deregister_player` after
+    /// purging the player's data from all contracts. Once set, all player-scoped
+    /// writes are permanently blocked for this player_id.
+    ///
+    /// Only the registration contract may call this function (enforced via auth).
+    pub fn mark_player_erased(env: Env, player_id: u64) -> Result<(), VerificationError> {
+        // Verify the caller is the registration contract
+        let registration_addr = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::RegistrationContract);
+        let registration_addr = registration_addr.ok_or(VerificationError::RegistrationNotConfigured)?;
+
+        registration_addr.require_auth();
+
+        // Write the tombstone flag with long TTL (same as core identity data)
+        env.storage()
+            .persistent()
+            .set(&DataKey::Erased(player_id), &true);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Erased(player_id), PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+
         Ok(())
     }
 

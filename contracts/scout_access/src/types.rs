@@ -342,6 +342,13 @@ pub enum DataKey {
     /// (player_id, scout) → `true` when the grant was revoked by the admin
     /// (compliance takedown). A player cannot reinstate such a grant.
     EvidenceAccessAdminRevoked(u64, Address),
+
+    /// Tombstone flag set by `registration.deregister_player` via
+    /// `mark_player_erased`. Once set, all player-scoped writes are permanently
+    /// blocked for this player_id. This is the push-model erasure guard —
+    /// registration pushes the tombstone to each contract rather than each
+    /// contract pulling from registration on every write (issue #1622).
+    Erased(u64),
 }
 
 /// Snapshot of both cross-contract peer address pointers held by the

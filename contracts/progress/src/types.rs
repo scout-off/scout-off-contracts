@@ -236,4 +236,11 @@ pub enum DataKey {
     /// Re-wiring epoch for [`DataKey::ScoutAccessContract`], bumped by
     /// every `set_scout_access_contract` call.
     ScoutAccessContractEpoch,
+
+    /// Tombstone flag set by `registration.deregister_player` via
+    /// `mark_player_erased`. Once set, all player-scoped writes are permanently
+    /// blocked for this player_id. This is the push-model erasure guard —
+    /// registration pushes the tombstone to each contract rather than each
+    /// contract pulling from registration on every write (issue #1622).
+    Erased(u64),
 }

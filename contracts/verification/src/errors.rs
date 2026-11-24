@@ -225,6 +225,11 @@ pub enum VerificationError {
     // ── Bulk revocation (issue #1605) ──
     /// `batch_revoke_validators` was called with more than `MAX_BATCH_REVOKE` wallets.
     BatchTooLarge = 64,
+
+    // ── Player erasure tombstone ──
+    /// The player has been erased via `registration.deregister_player`; all
+    /// player-scoped writes are permanently blocked for this player_id.
+    PlayerErased = 65,
 }
 
 impl AdminError for VerificationError {

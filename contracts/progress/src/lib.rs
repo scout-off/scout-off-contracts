@@ -313,6 +313,7 @@ impl ProgressContract {
         Self::bump_instance_ttl(&env);
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
+        Self::require_player_not_erased(&env, player_id)?;
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
 
         // Require a wired registration contract to validate player existence.
@@ -378,6 +379,7 @@ impl ProgressContract {
         Self::bump_instance_ttl(&env);
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
+        Self::require_player_not_erased(&env, player_id)?;
 
         // Only the configured VerificationContract (or the optional secondary
         // ScoutAccessContract for trial-offer Level-3 advances) may call this
@@ -431,6 +433,7 @@ impl ProgressContract {
         Self::bump_instance_ttl(&env);
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
+        Self::require_player_not_erased(&env, player_id)?;
 
         let secondary: Address = env
             .storage()
@@ -586,6 +589,7 @@ impl ProgressContract {
     /// Admin-only. Returns `PlayerLevelRecordEvicted` if the entry has already
     /// been fully evicted (key absent) and is unrecoverable.
     pub fn restore_player_level_record(env: Env, player_id: u64) -> Result<(), ProgressError> {
+        Self::require_player_not_erased(&env, player_id)?;
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         let _level: ProgressLevel = env
             .storage()
@@ -1128,6 +1132,7 @@ impl ProgressContract {
         require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         Self::require_initialized(&env)?;
         Self::require_migration_active(&env)?;
+        Self::require_player_not_erased(&env, player_id)?;
 
         // history_index is 1-based; 0 is never a valid index.
         if history_index == 0 {
@@ -2138,6 +2143,47 @@ impl ProgressContract {
         {
             return Err(ProgressError::ContractPaused);
         }
+        Ok(())
+    }
+
+    /// Require that the player has not been erased via `registration.deregister_player`.
+    /// This is the push-model erasure guard — registration pushes a tombstone to each
+    /// contract rather than each contract pulling from registration on every write.
+    fn require_player_not_erased(env: &Env, player_id: u64) -> Result<(), ProgressError> {
+        if env
+            .storage()
+            .persistent()
+            .get::<DataKey, bool>(&DataKey::Erased(player_id))
+            .unwrap_or(false)
+        {
+            return Err(ProgressError::PlayerErased);
+        }
+        Ok(())
+    }
+
+    /// Mark a player as erased. Called by `registration.deregister_player` after
+    /// purging the player's data from all contracts. Once set, all player-scoped
+    /// writes are permanently blocked for this player_id.
+    ///
+    /// Only the registration contract may call this function (enforced via auth).
+    pub fn mark_player_erased(env: Env, player_id: u64) -> Result<(), ProgressError> {
+        // Verify the caller is the registration contract
+        let registration_addr = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::RegistrationContract);
+        let registration_addr = registration_addr.ok_or(ProgressError::RegistrationNotConfigured)?;
+
+        registration_addr.require_auth();
+
+        // Write the tombstone flag with long TTL (same as core identity data)
+        env.storage()
+            .persistent()
+            .set(&DataKey::Erased(player_id), &true);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Erased(player_id), PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+
         Ok(())
     }
 }
