@@ -1929,12 +1929,22 @@ impl ScoutAccessContract {
             return Err(ScoutAccessError::TrialEscrowNotOutstanding);
         }
 
-        let token_addr = Self::get_token(&env)?;
         let contract_addr = env.current_contract_address();
-        token::Client::new(&env, &token_addr).transfer(&contract_addr, &to, &escrow.amount);
+        // Reject the contract itself as recipient: the "rescued" funds would
+        // stay in the contract while the escrow record is deleted, silently
+        // converting owed funds into untracked balance.
+        if to == contract_addr {
+            return Err(ScoutAccessError::InvalidInput);
+        }
 
+        let token_addr = Self::get_token(&env)?;
+
+        // Checks-effects-interactions: drop the primary record and scrub the
+        // enumeration index before the external token transfer.
         env.storage().persistent().remove(&escrow_key);
         Self::remove_from_outstanding_trial_escrows(&env, player_id, offer_index);
+
+        token::Client::new(&env, &token_addr).transfer(&contract_addr, &to, &escrow.amount);
 
         events::trial_escrow_orphan_rescued(&env, player_id, offer_index, &to, escrow.amount);
         Ok(())
