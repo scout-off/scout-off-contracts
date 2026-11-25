@@ -45,7 +45,7 @@ const BEARER_JWT_PATTERN =
  * - `alg: none` and cross-algorithm confusion are prevented by pinning
  *   the allowed algorithms list.
  */
-async function verifyToken(token: string): Promise<{
+export async function verifyToken(token: string): Promise<{
   sub: string;
   role: string;
   jti?: string;
@@ -61,7 +61,11 @@ async function verifyToken(token: string): Promise<{
     if (!kid) throw new Error("missing kid");
     const pubKey = signingKeys.publicKeys.get(kid);
     if (!pubKey) throw new Error(`unknown kid: ${kid}`);
-    const { payload } = await jwtVerify(token, pubKey, { algorithms: ["EdDSA"] });
+    const { payload } = await jwtVerify(token, pubKey, {
+      algorithms: ["EdDSA"],
+      issuer: config.jwtIssuer || undefined,
+      audience: config.jwtAudience || undefined,
+    });
     return {
       sub: payload.sub as string,
       role: payload.role as string,
@@ -74,6 +78,8 @@ async function verifyToken(token: string): Promise<{
     const jwt = require("jsonwebtoken") as typeof import("jsonwebtoken");
     const payload = jwt.verify(token, jwtSecret, {
       algorithms: ["HS256"],
+      issuer: config.jwtIssuer || undefined,
+      audience: config.jwtAudience || undefined,
     }) as { sub: string; role: string; jti?: string };
     return payload;
   }

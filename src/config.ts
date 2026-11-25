@@ -4,9 +4,13 @@ import { loadSigningKeys, SigningKeys } from "./keys";
 export const SUPPORTED_NETWORKS = ["testnet", "mainnet"] as const;
 export type StellarNetwork = (typeof SUPPORTED_NETWORKS)[number];
 
+export const DEFAULT_JWT_AUDIENCE = "scoutchain-api";
+
 export interface Config {
   /** Legacy HS256 secret – retained only when JWT_ALLOW_HS256_MIGRATION=true. */
   jwtSecret: string;
+  jwtIssuer: string;
+  jwtAudience: string;
   /** Asymmetric signing keys (required unless migration flag is set). */
   signingKeys: SigningKeys | null;
   /**
@@ -27,6 +31,16 @@ export interface Config {
   adminIpLimit: number;
   maxUnconsumedChallengesPerAccount: number;
   cleanupIntervalSeconds: number;
+}
+
+export interface JwtPayload {
+  sub: string;
+  role: string;
+  iat?: number;
+  exp?: number;
+  jti?: string;
+  iss?: string;
+  aud?: string | string[];
 }
 
 const MIN_JWT_SECRET_BYTES = 32;
@@ -179,10 +193,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`Invalid environment configuration:\n  - ${errors.join("\n  - ")}`);
   }
 
+  const jwtIssuer = env.JWT_ISSUER?.trim() || (homeDomain ? `https://${homeDomain}` : "");
+  const jwtAudience = env.JWT_AUDIENCE?.trim() || DEFAULT_JWT_AUDIENCE;
+
   return {
     jwtSecret: jwtSecretRaw,
     signingKeys,
     allowHs256Migration,
+    jwtIssuer,
+    jwtAudience,
     sep10SigningSecret,
     homeDomain,
     webAuthDomain,

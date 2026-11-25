@@ -289,13 +289,21 @@ app.post(
         const kid = typeof header.kid === "string" ? header.kid : undefined;
         const pubKey = kid ? signingKeys.publicKeys.get(kid) : undefined;
         if (!pubKey) return res.status(400).json({ error: "Invalid token" });
-        const { payload } = await joseVerify(token, pubKey, { algorithms: ["EdDSA"] });
+        const { payload } = await joseVerify(token, pubKey, {
+          algorithms: ["EdDSA"],
+          issuer: config.jwtIssuer || undefined,
+          audience: config.jwtAudience || undefined,
+        });
         jtiValue = payload.jti as string | undefined;
         exp = typeof payload.exp === "number" ? payload.exp : null;
       } else if (allowHs256Migration) {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const jwt = require("jsonwebtoken") as typeof import("jsonwebtoken");
-        const payload = jwt.verify(token, jwtSecret, { algorithms: ["HS256"] }) as {
+        const payload = jwt.verify(token, jwtSecret, {
+          algorithms: ["HS256"],
+          issuer: config.jwtIssuer || undefined,
+          audience: config.jwtAudience || undefined,
+        }) as {
           jti?: string;
           exp?: number;
         };
