@@ -121,11 +121,20 @@ pub fn deregister_player(env: Env, player_id: u64) -> Result<(), ScoutChainError
 pub fn deactivate_player(env: Env, player_id: u64) -> Result<(), ScoutChainError>
 pub fn reactivate_player(env: Env, player_id: u64) -> Result<(), ScoutChainError>
 pub fn verify_scout(env: Env, scout_id: u64) -> Result<(), ScoutChainError>
+// Revokes a scout's verified status. Pro/Elite gating in scout_access re-checks
+// verification, so an unverified scout can no longer subscribe to Pro or Elite.
+pub fn unverify_scout(env: Env, scout_id: u64) -> Result<(), ScoutChainError>
+// GDPR erasure for a scout record (see docs/CONTRACT_REFERENCE.md).
+pub fn deregister_scout(env: Env, scout_id: u64) -> Result<(), ScoutChainError>
 pub fn propose_admin(env: Env, new_admin: Address) -> Result<(), ScoutChainError>
 pub fn accept_admin(env: Env) -> Result<(), ScoutChainError>
 pub fn pause_contract(env: Env) -> Result<(), ScoutChainError>
 pub fn unpause_contract(env: Env) -> Result<(), ScoutChainError>
 pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), ScoutChainError>
+
+// GDPR erasure — page through a player's data. Loop until `more == false`.
+// See docs/PLAYER_ERASURE.md.
+pub fn purge_player_data(env: Env, player_id: u64, cursor: u32) -> Result<(u32, bool), ScoutChainError>
 ```
 
 ---
@@ -220,6 +229,10 @@ pub fn accept_admin(env: Env) -> Result<(), VerificationError>
 pub fn pause_contract(env: Env) -> Result<(), VerificationError>
 pub fn unpause_contract(env: Env) -> Result<(), VerificationError>
 pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), VerificationError>
+
+// GDPR erasure — page through a player's data. Loop until `more == false`.
+// See docs/PLAYER_ERASURE.md.
+pub fn purge_player_data(env: Env, player_id: u64, cursor: u32) -> Result<(u32, bool), VerificationError>
 ```
 
 ### Protocol limits — `get_limits()`
@@ -306,6 +319,10 @@ pub fn accept_admin(env: Env) -> Result<(), ProgressError>
 pub fn pause_contract(env: Env) -> Result<(), ProgressError>
 pub fn unpause_contract(env: Env) -> Result<(), ProgressError>
 pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), ProgressError>
+
+// GDPR erasure — page through a player's data. Loop until `more == false`.
+// See docs/PLAYER_ERASURE.md.
+pub fn purge_player_data(env: Env, player_id: u64, cursor: u32) -> Result<(u32, bool), ProgressError>
 ```
 
 ### Reading progress history — use `get_history_since_v2`
@@ -416,6 +433,10 @@ pub fn accept_admin(env: Env) -> Result<(), ScoutAccessError>
 pub fn pause_contract(env: Env) -> Result<(), ScoutAccessError>
 pub fn unpause_contract(env: Env) -> Result<(), ScoutAccessError>
 pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), ScoutAccessError>
+
+// GDPR erasure — page through a player's data. Loop until `more == false`.
+// See docs/PLAYER_ERASURE.md.
+pub fn purge_player_data(env: Env, player_id: u64, cursor: u32) -> Result<(u32, bool), ScoutAccessError>
 
 // Player-initiated (issue #1380)
 pub fn revoke_evidence_access(
@@ -831,6 +852,8 @@ When the progress contract is not wired, a `progress_contract_not_set` event is 
 - **Error codes are per-contract, not global.** Code `4` means `Unauthorized` in verification but also `Unauthorized` (different context) in scout_access. Code `9` means `ContractPaused` in registration but `RegistrationCallFailed` in progress. Always check which contract returned the error.
 - **Subscription tier check is enforced on-chain.** Basic scouts cannot call `pay_to_contact`. Elite is required for `log_trial_offer`.
 - **`filter_players` requires `offset` and `limit`.** The limit is capped at 50 server-side.
+- **A scout's verified status can change.** `registration.unverify_scout` (admin only) revokes verification, and `registration.deregister_scout` (admin only) erases the scout record entirely. `scout_access` re-checks verification for Pro/Elite gating, so a previously verified scout may start receiving `ScoutNotVerified` (code 27) on `subscribe`. Do not cache verification status indefinitely.
+- **`purge_player_data(player_id, cursor) -> (u32, bool)` is paged.** It exists on `scout_access`, `verification` and `progress` (see `docs/PLAYER_ERASURE.md`). Loop until `more == false`, passing the returned `next_cursor` back as `cursor`. Never start from a non-zero cursor — the first call must use `cursor = 0`. Erasure order is scout_access → verification → progress → registration.
 - **Use `progress.get_history_since_v2`, not `get_history_since`.** The old getter silently truncates at its internal limit / 10-page scan cap. v2 returns `HistorySince { entries, truncated }`; when `truncated` is `true`, more matching entries exist — page further with `get_history_page_with_cursor` (or advance `since_timestamp`) until it is `false`.
 - **Don't hard-code verification limits.** Call `verification.get_limits()` and validate credentials length, description length, and specialization count client-side against the returned `VerificationLimits` before submitting.
 - **`set_progress_contract` on verification is first-call-only.** Returns `AlreadyConfigured` (code 11) if called again. Use `update_progress_contract` to re-wire.
