@@ -34,12 +34,16 @@ function parseArgs(argv) {
     playerIdArg: null,
     sample: null,
     json: false,
+    fromLedger: null,
+    toLedger: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--sample") args.sample = Number(argv[++i]);
     else if (a === "--json") args.json = true;
     else if (a === "--player-id") args.playerIdArg = argv[++i];
+    else if (a === "--from-ledger") args.fromLedger = Number(argv[++i]);
+    else if (a === "--to-ledger") args.toLedger = Number(argv[++i]);
     else if (!a.startsWith("--")) {
       args.playerIdArg = a;
     }
@@ -68,76 +72,43 @@ function requireEnv(names) {
   }
 }
 
+// --- Event Source abstraction ------------------------------------------------
+
+const {
+  createEventSource,
+  checkRangeCoverage,
+} = require("./lib/event-source");
+
 // --- Soroban Event Retrieval -------------------------------------------------
 
-// Maximum page size accepted by the Soroban RPC getEvents endpoint.
-const EVENTS_PAGE_SIZE = 200;
-
 /**
- * Fetch ALL events for a contract from the Soroban RPC event stream using
- * cursor-based pagination.
+ * Fetch ALL events for a contract using the pluggable event source.
  *
- * The RPC getEvents endpoint returns at most EVENTS_PAGE_SIZE events per call
- * and includes a `cursor` in the result pointing to the last returned event.
- * Passing that cursor back as `cursor` in the next request yields the next
- * page.  We loop until the page is smaller than the requested size, which
- * signals we have reached the end of the stream.
+ * When an archival source is configured (GALEXIE_ARCHIVE_URL) it is preferred
+ * for ranges that predate the RPC retention window.  When only the RPC source
+ * is available and the requested range starts before the oldest retained ledger
+ * the function throws so the caller exits non-zero instead of silently
+ * producing a partial report.
  *
- * Without this loop the caller silently receives only the first page of
- * results — dropping every event beyond the 200th — which causes missed
- * milestone/subscription events and incorrect event-chain consistency checks.
+ * @param {string}   rpcUrl      — Soroban RPC URL
+ * @param {string}   contractId  — contract ID to fetch events for
+ * @param {number}   [fromLedger=1]   — inclusive start ledger
+ * @param {number}   [toLedger]  — inclusive end ledger (omit for latest)
  */
-async function fetchEvents(rpcUrl, contractId, topic = null) {
-  const allEvents = [];
-  let cursor = undefined;
+async function fetchEvents(rpcUrl, contractId, fromLedger = 1, toLedger = undefined) {
+  const { rpc, archival } = createEventSource({ rpcUrl });
 
-  while (true) {
-    const params = {
-      contractIds: [contractId],
-      limit: EVENTS_PAGE_SIZE,
-    };
-
-    if (cursor !== undefined) {
-      params.cursor = cursor;
+  // Gap detection: refuse to proceed if the range is not fully covered.
+  if (toLedger !== undefined) {
+    const coverage = await checkRangeCoverage(fromLedger, toLedger, rpc, archival);
+    if (!coverage.ok) {
+      throw new Error(`Incomplete event range: ${coverage.message}`);
     }
-
-    if (topic) {
-      params.filters = [{ topics: topic }];
-    }
-
-    const body = {
-      jsonrpc: "2.0",
-      id: 1,
-      method: "getEvents",
-      params,
-    };
-
-    const res = await fetch(rpcUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-    const result = await res.json();
-    if (result.error) {
-      throw new Error(`RPC error: ${result.error.message}`);
-    }
-
-    const page = (result.result && result.result.events) || [];
-    allEvents.push(...page);
-
-    // A page smaller than EVENTS_PAGE_SIZE means we are at the end of the
-    // stream.  Also stop if the RPC omitted the cursor (some implementations
-    // omit it on the final page).
-    if (page.length < EVENTS_PAGE_SIZE || !result.result.cursor) {
-      break;
-    }
-
-    // Advance cursor to the last event on this page.
-    cursor = result.result.cursor;
   }
 
-  return allEvents;
+  // Prefer archival source for older ranges; fall back to RPC.
+  const source = archival ?? rpc;
+  return source.fetch([contractId], fromLedger, toLedger ?? Number.MAX_SAFE_INTEGER);
 }
 
 // --- Event Reconstruction State Machine ---------------------------------------
@@ -366,18 +337,24 @@ function getContractLevel(rpcUrl, progressId, playerId) {
 
 // --- Main Audit Logic --------------------------------------------------------
 
-async function auditPlayerHistory(rpcUrl, contractIds, playerId, pg) {
+async function auditPlayerHistory(rpcUrl, contractIds, playerId, pg, opts = {}) {
   const reconstructor = new PlayerHistoryReconstructor(playerId);
+  const fromLedger = opts.fromLedger ?? 1;
+  const toLedger = opts.toLedger;
 
-  // Fetch all events from all contracts
+  // Fetch all events from all contracts.
+  // fetchEvents will throw (non-zero exit) if the range starts before the
+  // RPC retention window and no archival source is configured.
   const events = [];
   for (const [name, id] of Object.entries(contractIds)) {
     try {
-      const contractEvents = await fetchEvents(rpcUrl, id);
+      const contractEvents = await fetchEvents(rpcUrl, id, fromLedger, toLedger);
       for (const ev of contractEvents) {
         events.push({ ...ev, contractName: name });
       }
     } catch (err) {
+      // Incomplete range errors must propagate — do not silently continue.
+      if (err.message.startsWith("Incomplete event range:")) throw err;
       console.error(`Failed to fetch events from ${name}: ${err.message}`);
     }
   }
@@ -561,7 +538,10 @@ async function main() {
   const results = [];
   for (const playerId of playerIds) {
     try {
-      const audit = await auditPlayerHistory(process.env.RPC_URL, contractIds, playerId, pg);
+      const audit = await auditPlayerHistory(process.env.RPC_URL, contractIds, playerId, pg, {
+        fromLedger: args.fromLedger ?? undefined,
+        toLedger: args.toLedger ?? undefined,
+      });
       results.push({ playerId, ...audit });
     } catch (err) {
       console.error(`Failed to audit player ${playerId}: ${err.message}`);
