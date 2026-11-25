@@ -25,9 +25,10 @@ they request it.
 |------|----------|--------|-----------|
 | Player profile (wallet, vitals, IPFS hashes) | `registration` | `Player(id)`, `PlayerByWallet(wallet)`, `PlayerLevel(id)`, `PlayerDeactivated(id)` | **Deleted** by `deregister_player` |
 | Player index membership | `registration` | `PlayerIndex`, `PlayersByLevel(level)`, `PlayersByLevelRegion(level, region)` | **Removed** by `deregister_player` |
-| Progress level | `progress` | `PlayerLevel(id)` | **Deleted** by `purge_player_data` (cursor=0) |
+| Progress level | `progress` | `PlayerLevel(id)` | **Deleted** by `purge_player_data` (final page) |
 | Progress history entries | `progress` | `HistoryEntry(id, idx)`, `HistoryPage(id, page)` | **Deleted** paged by `purge_player_data` |
-| History counter & Merkle root | `progress` | `HistoryCounter(id)`, `HistoryRoot(id)`, `HistoryVec(id)` | **Deleted** by `purge_player_data` |
+| History counter, Merkle root & frontier | `progress` | `HistoryCounter(id)`, `HistoryRoot(id)`, `HistoryVec(id)`, `HistoryFrontier(id)` | **Deleted** by `purge_player_data` (counter and frontier on the final page) |
+| Migration cursor | `progress` | `MigrationCursor(id)` | **Deleted** by `purge_player_data` (on the final page) |
 | Milestones (description, evidence CID) | `verification` | `Milestone(id, idx)` | **Deleted** paged by `purge_player_data` |
 | Milestone disputes | `verification` | `MilestoneDispute(id, idx)`, `PlayerDisputes(id)` | **Deleted** by `purge_player_data` |
 | Milestone counter, player affiliations | `verification` | `MilestoneCounter(id)`, `PlayerAffiliations(id)` | **Deleted** by `purge_player_data` |
@@ -95,6 +96,9 @@ This invariant is enforced by the combination of:
 | `progress` | `PlayerErased` | 29 |
 | `verification` | `PlayerErased` | 65 |
 | `scout_access` | `PlayerErased` | 59 |
+| `progress` | `PlayerErased` | 30 |
+| `verification` | `PlayerErased` | 66 |
+| `scout_access` | `PlayerErased` | 61 |
 
 ---
 
@@ -102,6 +106,26 @@ This invariant is enforced by the combination of:
 
 Run the following steps **in order**. Each cross-contract purge must complete
 (`more == false`) before moving to the next step.
+
+### Guards on `purge_player_data`
+
+All three `purge_player_data` functions (`scout_access`, `verification`,
+`progress`) share the same guard set and order:
+
+1. `require_admin` — erasure is admin-only.
+2. `require_initialized` — the contract must be initialized.
+3. `bump_instance_ttl` — instance storage TTL is extended.
+
+Erasure is **allowed while the contract is paused**. Pausing stops user
+activity, not compliance operations: an operator told to stop processing
+personal data during an incident must still be able to complete erasure.
+Purge calls therefore do not call `require_not_paused`. This is an intentional
+exception to the project's `require_not_paused → require_initialized` guard
+ordering convention and is recorded in `scripts/check-guard-ordering.sh`.
+
+If the escrow-refund path is added to `scout_access.purge_player_data`, note
+explicitly that refunds may occur while the contract is paused, so that
+erasure is never blocked by outstanding escrows during a pause.
 
 ```
 1. Expire or refund all outstanding trial escrows for the player.
@@ -124,19 +148,31 @@ Run the following steps **in order**. Each cross-contract purge must complete
    Call:  registration.deregister_player(player_id)
 ```
 
-Each `purge_player_data` call removes at most 50 entries to stay within
-per-transaction CPU/memory budgets. For a player with a long history, multiple
-calls with the returned cursor value are needed.
+Each `purge_player_data` call processes at most 50 paged entries, plus any
+scalar keys on the final page, to stay within per-transaction CPU/memory
+budgets. Cursors are independent per contract:
+start each purge at `cursor=0` and pass that contract's returned cursor to the
+next call. The contract stores the expected cursor and rejects a wrong, stale,
+or out-of-range value with `InvalidPurgeCursor`; do not restart a partially
+completed purge at zero. Scalar keys are removed on the final page, so an
+incorrect cursor cannot skip them while reporting completion.
 
 ---
 
 ## Outstanding escrow guard
 
 `scout_access.purge_player_data` refuses to proceed if any unexpired, non-zero
-trial escrow exists for the player. This protects scouts whose escrowed funds
-would otherwise be silently destroyed. The operator must call
-`expire_trial_offers` or wait for the escrow window to elapse before erasure
-can proceed.
+trial escrow exists for the player, returning the dedicated
+`ScoutAccessError::TrialEscrowOutstanding` error (not `TrialOfferNotFound` —
+the offer exists, but its escrow is still outstanding). This protects scouts
+whose escrowed funds would otherwise be silently destroyed. The operator must
+call `expire_trial_offers` or wait for the escrow window to elapse before
+erasure can proceed.
+
+This guard applies regardless of the pause state: erasure is permitted while
+paused, but outstanding escrows must still be expired or refunded first. If
+refunds are performed as part of the purge path, they may occur while the
+contract is paused.
 
 ---
 
@@ -175,5 +211,13 @@ The reconciliation script (`scripts/reconcile-indexer.js`) should treat a
 `player_deregistered` event as a hard delete signal, not a diff — it must
 remove the player row even if the on-chain state no longer has a matching
 record (because the key was erased).
+
+Each `purge_player_data` call on `progress`, `verification` and `scout_access`
+also emits a `player_data_purged` event (`admin`, `player_id`,
+`entries_removed`, `more`). Indexers should use it to scrub rows incrementally:
+the event is emitted once per purge page, `entries_removed` counts the keys
+removed in that call, and `more == false` signals the final page for that
+contract. See the `player_data_purged` entry in `docs/EVENT_REFERENCE.md` for
+the exact topics and data layout of each emitting contract.
 
 See `docs/INDEXER.md` for the indexer cursor model.

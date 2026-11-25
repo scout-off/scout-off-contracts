@@ -41,6 +41,10 @@ const EXPIRE_TRIAL_OFFERS_CPU_BUDGET: u64 = 8_614_029;
 // seek avoids a full scan). Measured at a mid-history page (offset 500,
 // limit 50) — see cost_get_player_access_grants_at_1000_grants below.
 const GET_PLAYER_ACCESS_GRANTS_CPU_BUDGET: u64 = 15_000_000;
+// #1827: withdraw_fees zeroes AccumulatedFees once, before the token
+// transfer (CEI). Budget unchanged by the redundant-write removal; kept as a
+// regression guard so the single-write CEI ordering stays cheap.
+const WITHDRAW_FEES_CPU_BUDGET: u64 = 400_000;
 
 fn default_fees() -> FeeConfig {
     FeeConfig {
@@ -152,6 +156,20 @@ fn cost_expire_trial_offers() {
     let swept = client.expire_trial_offers(&20u32);
     assert_eq!(swept, 20);
     assert_cpu_budget(&env, "expire_trial_offers", EXPIRE_TRIAL_OFFERS_CPU_BUDGET);
+}
+
+#[test]
+fn cost_withdraw_fees() {
+    let (env, client, xlm) = setup();
+    let scout = Address::generate(&env);
+    fund(&env, &xlm, &scout);
+    client.subscribe(&scout, &SubscriptionTier::Pro);
+    client.pay_to_contact(&scout, &1u64);
+
+    let admin = client.get_admin();
+    env.cost_estimate().budget().reset_default();
+    client.withdraw_fees(&admin);
+    assert_cpu_budget(&env, "withdraw_fees", WITHDRAW_FEES_CPU_BUDGET);
 }
 
 /// #1040: proves `get_player_access_grants`' CPU cost is independent of a

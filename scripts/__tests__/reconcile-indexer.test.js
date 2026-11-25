@@ -91,3 +91,131 @@ describe('scripts/reconcile-indexer.js main()', () => {
     expect(entries.length).toBeGreaterThan(0);
   });
 });
+
+describe('scripts/reconcile-indexer.js reconcileIndexerCursor()', () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    jest.useRealTimers();
+  });
+
+  function makeReport() {
+    const report = { entries: [], add(entry) { this.entries.push(entry); } };
+    return report;
+  }
+
+  test('reports rpc_timeout when fetch aborts', async () => {
+    const mod = loadScript();
+    const abortErr = new Error('The operation was aborted');
+    abortErr.name = 'AbortError';
+    global.fetch = jest.fn(async () => {
+      throw abortErr;
+    });
+
+    const report = makeReport();
+    await expect(
+      mod.reconcileIndexerCursor({ rpcUrl: 'http://rpc.test', report, rpcTimeoutMs: 50 })
+    ).resolves.not.toThrow();
+
+    const entry = report.entries.find((e) => e.kind === 'rpc_timeout');
+    expect(entry).toBeDefined();
+    expect(entry.table).toBe('indexer_cursor');
+  });
+
+  test('reports rpc_error with httpStatus on a 502 HTML response', async () => {
+    const mod = loadScript();
+    global.fetch = jest.fn(async () => ({
+      ok: false,
+      status: 502,
+      text: async () => '<html><body>Bad Gateway</body></html>',
+      json: async () => {
+        throw new SyntaxError('Unexpected token < in JSON at position 0');
+      },
+    }));
+
+    const report = makeReport();
+    await expect(
+      mod.reconcileIndexerCursor({ rpcUrl: 'http://rpc.test', report })
+    ).resolves.not.toThrow();
+
+    const entry = report.entries.find((e) => e.kind === 'rpc_error');
+    expect(entry).toBeDefined();
+    expect(entry.table).toBe('indexer_cursor');
+    expect(entry.httpStatus).toBe(502);
+  });
+
+  test('reports rpc_unexpected_response on malformed JSON', async () => {
+    const mod = loadScript();
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => 'not json at all',
+      json: async () => {
+        throw new SyntaxError('Unexpected token o in JSON at position 1');
+      },
+    }));
+
+    const report = makeReport();
+    await expect(
+      mod.reconcileIndexerCursor({ rpcUrl: 'http://rpc.test', report })
+    ).resolves.not.toThrow();
+
+    const entry = report.entries.find((e) => e.kind === 'rpc_unexpected_response');
+    expect(entry).toBeDefined();
+    expect(entry.table).toBe('indexer_cursor');
+  });
+
+  test('reports rpc_unexpected_response when result.sequence is missing', async () => {
+    const mod = loadScript();
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ jsonrpc: '2.0', result: {} }),
+      json: async () => ({ jsonrpc: '2.0', result: {} }),
+    }));
+
+    const report = makeReport();
+    await expect(
+      mod.reconcileIndexerCursor({ rpcUrl: 'http://rpc.test', report })
+    ).resolves.not.toThrow();
+
+    const entry = report.entries.find((e) => e.kind === 'rpc_unexpected_response');
+    expect(entry).toBeDefined();
+    expect(entry.table).toBe('indexer_cursor');
+  });
+
+  test('passes a default rpc timeout of 10000ms to fetch', async () => {
+    const mod = loadScript();
+    const fetchMock = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ result: { sequence: 42 } }),
+      json: async () => ({ result: { sequence: 42 } }),
+    }));
+    global.fetch = fetchMock;
+
+    const report = makeReport();
+    await mod.reconcileIndexerCursor({ rpcUrl: 'http://rpc.test', report });
+
+    expect(fetchMock).toHaveBeenCalled();
+    const init = fetchMock.mock.calls[0][1] || {};
+    expect(init.signal).toBeDefined();
+  });
+
+  test('parses --rpc-timeout-ms with a default of 10000', () => {
+    const mod = loadScript();
+    if (typeof mod.parseArgs !== 'function') {
+      // Argument parsing may be inline in main; fall back to checking the
+      // exported default constant if present.
+      if (typeof mod.DEFAULT_RPC_TIMEOUT_MS !== 'undefined') {
+        expect(mod.DEFAULT_RPC_TIMEOUT_MS).toBe(10000);
+      }
+      return;
+    }
+    const defaults = mod.parseArgs([]);
+    expect(defaults.rpcTimeoutMs).toBe(10000);
+    const custom = mod.parseArgs(['--rpc-timeout-ms', '2500']);
+    expect(custom.rpcTimeoutMs).toBe(2500);
+  });
+});

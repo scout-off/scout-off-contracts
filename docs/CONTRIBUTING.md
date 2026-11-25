@@ -12,7 +12,7 @@ Ensure the following tools are installed at the specified minimum versions befor
 | **clippy** | ships with Rust stable | `rustup component add clippy` |
 | **rustfmt** | ships with Rust stable | `rustup component add rustfmt` |
 | **stellar-cli** | **28.0.0** (pinned in `ci/stellar-cli-version`) | See install note below |
-| **Node.js** | 20 LTS | Required only for TypeScript bindings generation — `./scripts/generate-bindings.sh` |
+| **Node.js** | 20 LTS (minimum; `engines` requires `>=20`) | Required only for TypeScript bindings generation — `./scripts/generate-bindings.sh`. CI tests Node 20 and 22; `.nvmrc` pins the primary version (20) — run `nvm use` to match it |
 | **npm** | 10+ (ships with Node 20) | Required only for building/testing bindings packages |
 
 > The repository includes `rust-toolchain.toml`, so `rustup` automatically selects the same pinned Rust version, `wasm32v1-none` target, and formatter/linter components used by CI whenever you run `cargo` or `rustup` from this directory. If a local build diverges from CI, reinstall stellar-cli at the pinned version.
@@ -188,3 +188,118 @@ reviewer group changes.
 
 Unfamiliar with terms like *validator*, *milestone*, *subscription tier*, or *CID*?
 See [docs/GLOSSARY.md](GLOSSARY.md) for authoritative definitions of all domain-specific terms.
+
+---
+
+## Local Development
+
+This section explains how to run a full ScoutChain stack on your laptop — the
+Stellar/Soroban local sandbox, a PostgreSQL database, and the HTTP backend —
+using a single command, and how to run the end-to-end test suite against it.
+
+### Prerequisites
+
+In addition to the standard [prerequisites](#prerequisites) above, you need:
+
+| Tool | Version | Notes |
+|------|---------|-------|
+| **Docker** | 24+ | Used for the sandbox and Postgres containers |
+| **docker compose** | v2 (plugin) | Ships with Docker Desktop and Docker Engine 20.10+ |
+| **psql** | any | Only needed if you want to inspect the DB directly |
+
+The `stellar-cli` and `node` / `npm` from the standard prerequisites are also
+used by `dev-up.sh`.
+
+### Starting the stack
+
+```bash
+./scripts/dev-up.sh
+```
+
+This one command:
+1. Pulls and starts `stellar/quickstart` (pinned digest) and `postgres:15` via
+   `docker compose`.
+2. Builds WASM contracts (`cargo build --workspace --target wasm32v1-none`).
+3. Creates a local `local-deployer` keypair, funds it via the sandbox friendbot.
+4. Deploys and initialises all four contracts to the local network.
+5. Wires cross-contract references (`set_progress_contract`, etc.).
+6. Applies all SQL migrations to Postgres.
+7. Writes `.env.local` consumed by the backend container.
+8. Builds and starts the backend container.
+9. Runs `generate-bindings.sh` so the TypeScript clients reflect the local
+   contract IDs.
+
+After `dev-up.sh` completes:
+
+| Endpoint | URL |
+|----------|-----|
+| Soroban RPC | `http://localhost:8000/soroban/rpc` |
+| Backend | `http://localhost:3000` |
+| PostgreSQL | `localhost:5432` (`scoutchain`/`scoutchain`) |
+
+**Options**
+
+```bash
+./scripts/dev-up.sh --skip-build   # skip cargo build (use existing WASMs)
+./scripts/dev-up.sh --skip-deploy  # skip deploy/init/wire (reuse .env.contracts)
+```
+
+### Running the e2e tests
+
+```bash
+npx jest --config e2e/jest.config.ts --no-coverage
+```
+
+The suite (`e2e/*.e2e.test.ts`) creates fresh keypairs, funds them via
+friendbot, performs SEP-10 logins, registers a player and scout on-chain,
+subscribes, and asserts both on-chain state (via the generated binding clients)
+and backend HTTP responses.
+
+If the backend is not reachable, the tests self-skip with a warning rather than
+failing — safe to include in CI on jobs that don't start the stack.
+
+Environment variables accepted by the e2e suite:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `E2E_BACKEND_URL` | `http://localhost:3000` | Backend base URL |
+| `E2E_RPC_URL` | `http://localhost:8000/soroban/rpc` | Soroban RPC URL |
+| `E2E_FRIENDBOT_URL` | `http://localhost:8000/friendbot` | Friendbot URL |
+| `NETWORK_PASSPHRASE` | `Standalone Network ; February 2017` | Local network passphrase |
+
+### Tearing down
+
+```bash
+./scripts/dev-down.sh            # stop containers, preserve Postgres data
+./scripts/dev-down.sh --volumes  # stop containers AND wipe Postgres data
+```
+
+Pass `--volumes` to start completely fresh on the next `dev-up.sh` run.
+
+### CI
+
+The e2e suite runs automatically:
+- **Nightly** at 03:00 UTC on `main` (via `schedule` trigger).
+- On any PR or push to `main` that carries the `run-e2e` label.
+
+The CI job mirrors the local steps in `.github/workflows/contract-ci.yml`
+under the `e2e` job, using the same pinned Docker image digest and stellar-cli
+version as the existing `bindings-smoke-test` job.
+
+### Troubleshooting
+
+**RPC never becomes ready**
+: `docker compose logs stellar` — the sandbox needs ~30 s on the first pull.
+
+**Friendbot fails**
+: The sandbox Horizon endpoint lags behind the RPC. `dev-up.sh` retries 30
+  times with 2 s delays. If it still fails, run `docker compose restart stellar`
+  and re-run `dev-up.sh --skip-build`.
+
+**Backend container exits immediately**
+: Run `docker compose logs backend`. Missing or malformed `.env.local` is the
+  most common cause — delete `.env.local` and re-run `dev-up.sh --skip-deploy`.
+
+**Port conflicts**
+: Ports 3000, 5432, and 8000 must be free. Stop any conflicting local services
+  or change the host-side ports in `docker-compose.yml`.

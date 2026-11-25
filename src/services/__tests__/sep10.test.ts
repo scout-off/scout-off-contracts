@@ -49,13 +49,51 @@ import {
   accessTokenTtlSeconds,
 } from "../sep10";
 
-const SECRET = "test-secret";
+// In test, use HS256 migration mode with a known secret.
+const MIGRATION_SECRET =
+  "test-jwt-secret-that-is-at-least-32-bytes-long-xxxxxx";
+const cfg = {
+  signingKeys: null,
+  allowHs256Migration: true,
+  jwtSecret: MIGRATION_SECRET,
+};
 
 beforeAll(() => {
   process.env.SEP10_SIGNING_SECRET = Keypair.random().secret();
   process.env.HOME_DOMAIN = "scoutoff.test";
   process.env.WEB_AUTH_DOMAIN = "auth.scoutoff.test";
   process.env.STELLAR_NETWORK = "testnet";
+});
+
+describe("issueSep10Token", () => {
+  it("includes jti, sub and role claims", async () => {
+    const sub = Keypair.random().publicKey();
+    const decoded = jwt.verify(
+      await issueSep10Token({ sub, role: "scout" }, cfg),
+      MIGRATION_SECRET
+    ) as jwt.JwtPayload;
+
+    expect(decoded.sub).toBe(sub);
+    expect(decoded.role).toBe("scout");
+    expect(typeof decoded.jti).toBe("string");
+    expect(decoded.jti).not.toHaveLength(0);
+  });
+
+  it("expires after the access-token lifetime (capped at 15 minutes)", async () => {
+    const decoded = jwt.verify(
+      await issueSep10Token({ sub: "G", role: "player" }, cfg),
+      MIGRATION_SECRET
+    ) as jwt.JwtPayload;
+
+    expect(decoded.exp! - decoded.iat!).toBe(accessTokenTtlSeconds());
+    expect(accessTokenTtlSeconds()).toBeLessThanOrEqual(15 * 60);
+  });
+
+  it("uses a unique jti per token", async () => {
+    const a = jwt.decode(await issueSep10Token({ sub: "G", role: "p" }, cfg)) as jwt.JwtPayload;
+    const b = jwt.decode(await issueSep10Token({ sub: "G", role: "p" }, cfg)) as jwt.JwtPayload;
+    expect(a.jti).not.toBe(b.jti);
+  });
 });
 
 afterEach(() => {
@@ -68,36 +106,7 @@ function signChallenge(challenge: string, kp: Keypair): string {
   return tx.toXDR();
 }
 
-describe("issueSep10Token", () => {
-  it("includes jti, sub and role claims", () => {
-    const sub = Keypair.random().publicKey();
-    const decoded = jwt.verify(
-      issueSep10Token({ sub, role: "scout" }, SECRET),
-      SECRET
-    ) as jwt.JwtPayload;
 
-    expect(decoded.sub).toBe(sub);
-    expect(decoded.role).toBe("scout");
-    expect(typeof decoded.jti).toBe("string");
-    expect(decoded.jti).not.toHaveLength(0);
-  });
-
-  it("expires after the access-token lifetime (capped at 15 minutes)", () => {
-    const decoded = jwt.verify(
-      issueSep10Token({ sub: "G", role: "player" }, SECRET),
-      SECRET
-    ) as jwt.JwtPayload;
-
-    expect(decoded.exp! - decoded.iat!).toBe(accessTokenTtlSeconds());
-    expect(accessTokenTtlSeconds()).toBeLessThanOrEqual(15 * 60);
-  });
-
-  it("uses a unique jti per token", () => {
-    const a = jwt.decode(issueSep10Token({ sub: "G", role: "p" }, SECRET)) as jwt.JwtPayload;
-    const b = jwt.decode(issueSep10Token({ sub: "G", role: "p" }, SECRET)) as jwt.JwtPayload;
-    expect(a.jti).not.toBe(b.jti);
-  });
-});
 
 describe("buildChallengeTx / verifyChallengeTx", () => {
   it("verifies a challenge signed by the account it was built for", async () => {

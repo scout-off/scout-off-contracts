@@ -1743,6 +1743,9 @@ impl VerificationContract {
             }
         }
 
+        // Execution order is intentional: auth -> format -> state -> write.
+        // Reject malformed evidence before paying for persistent validator storage,
+        // then reuse the loaded Validator throughout the shared commit path.
         validate_cid(&evidence_hash).map_err(|_| VerificationError::InvalidInput)?;
 
         // Verify the caller is an active validator
@@ -1775,6 +1778,7 @@ impl VerificationContract {
         Self::commit_approved_milestone(
             &env,
             &validator_wallet,
+            &validator,
             player_id,
             description,
             evidence_hash,
@@ -1961,6 +1965,7 @@ impl VerificationContract {
             let index = Self::commit_approved_milestone(
                 &env,
                 &validator_wallet,
+                &validator,
                 player_id,
                 claim.description.clone(),
                 evidence_hash.clone(),
@@ -2339,6 +2344,7 @@ impl VerificationContract {
         let index = Self::commit_approved_milestone(
             &env,
             &validator_wallet,
+            &validator,
             attestation.player_id,
             attestation.description.clone(),
             attestation.evidence_hash.clone(),
@@ -3334,9 +3340,10 @@ impl VerificationContract {
     /// Paged erasure of a player's verification state (admin only).
     ///
     /// Removes `Milestone`, `MilestoneCounter`, `PlayerAffiliations`,
-    /// `PlayerDisputes`, and `MilestoneDispute` records for the player up to
-    /// `limit` entries per call. Pass the returned `next_cursor` back until
-    /// `more == false`. Safe to call repeatedly; already-absent keys are skipped.
+    /// `PlayerDisputes`, and `MilestoneDispute` records for the player in
+    /// pages of 50. Start with `cursor=0` and pass the returned cursor to the
+    /// next call; any other cursor is rejected. Scalar keys are removed on
+    /// the final page.
     ///
     /// **Note:** Ledger history is immutable — this only removes current-state
     /// entries. See `docs/PLAYER_ERASURE.md` for the legal/product sign-off.
@@ -3346,42 +3353,29 @@ impl VerificationContract {
         cursor: u32,
     ) -> Result<(u32, bool), VerificationError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        // Erasure is a compliance operation and stays available while paused (#1823).
+        Self::require_initialized(&env)?;
+        Self::bump_instance_ttl(&env);
 
         const PAGE_SIZE: u32 = 50;
         let mut removed: u32 = 0;
-
-        // On the first page remove the non-milestone keys.
-        if cursor == 0 {
-            if env
-                .storage()
-                .persistent()
-                .has(&DataKey::PlayerAffiliations(player_id))
-            {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::PlayerAffiliations(player_id));
-                removed += 1;
-            }
-            if env
-                .storage()
-                .persistent()
-                .has(&DataKey::PlayerDisputes(player_id))
-            {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::PlayerDisputes(player_id));
-                removed += 1;
-            }
-        }
 
         let total: u32 = env
             .storage()
             .persistent()
             .get(&DataKey::MilestoneCounter(player_id))
             .unwrap_or(0u32);
+        let expected_cursor: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PurgeCursor(player_id))
+            .unwrap_or(0u32);
+        if cursor != expected_cursor || cursor > total {
+            return Err(VerificationError::InvalidPurgeCursor);
+        }
 
         let start = cursor;
-        let end = (start + PAGE_SIZE).min(total);
+        let end = start.saturating_add(PAGE_SIZE).min(total);
 
         for idx in start..end {
             // Remove milestone record.
@@ -3406,17 +3400,26 @@ impl VerificationContract {
         let next_cursor = end;
         let more = next_cursor < total;
 
-        // On final page remove the counter itself.
-        if !more
-            && env
-                .storage()
-                .persistent()
-                .has(&DataKey::MilestoneCounter(player_id))
-        {
+        if more {
+            let key = DataKey::PurgeCursor(player_id);
+            env.storage().persistent().set(&key, &next_cursor);
             env.storage()
                 .persistent()
-                .remove(&DataKey::MilestoneCounter(player_id));
-            removed += 1;
+                .extend_ttl(&key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+        } else {
+            for key in [
+                DataKey::PlayerAffiliations(player_id),
+                DataKey::PlayerDisputes(player_id),
+                DataKey::MilestoneCounter(player_id),
+            ] {
+                if env.storage().persistent().has(&key) {
+                    env.storage().persistent().remove(&key);
+                    removed += 1;
+                }
+            }
+            env.storage()
+                .persistent()
+                .remove(&DataKey::PurgeCursor(player_id));
         }
 
         events::player_data_purged(&env, &admin, player_id, removed, more);
@@ -5052,6 +5055,7 @@ impl VerificationContract {
     fn commit_approved_milestone(
         env: &Env,
         validator_wallet: &Address,
+        validator: &Validator,
         player_id: u64,
         description: String,
         evidence_hash: String,
@@ -5217,12 +5221,6 @@ impl VerificationContract {
 
         // Diversity check uses the primary validator (the one whose vote
         // crossed the threshold) — this preserves the existing behaviour.
-        let validator: Validator = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Validator(validator_wallet.clone()))
-            .unwrap();
-
         let mut player_affiliations: Vec<String> = env
             .storage()
             .persistent()
@@ -9217,6 +9215,32 @@ mod tests {
                 ),
                 _ => None,
             })
+    }
+
+    // -------------------------------------------------------------------------
+    // Erasure: purge_player_data guard semantics and cursor safety (#1823, #1825)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn purge_player_data_succeeds_while_paused() {
+        let env = setup_env();
+        let admin = Address::generate(&env);
+        let client = deploy(&env, &admin);
+        client.pause_contract();
+        // Erasure is a compliance operation and must remain available while
+        // the contract is paused.
+        assert_eq!(client.purge_player_data(&1u64, &0u32), (0u32, false));
+    }
+
+    #[test]
+    fn purge_player_data_rejects_out_of_range_cursor() {
+        let env = setup_env();
+        let admin = Address::generate(&env);
+        let client = deploy(&env, &admin);
+        assert_eq!(
+            client.try_purge_player_data(&1u64, &u32::MAX),
+            Err(Ok(VerificationError::InvalidPurgeCursor))
+        );
     }
 
     #[test]

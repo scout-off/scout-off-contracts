@@ -600,6 +600,9 @@ pub enum DataKey {
     /// Start timestamp of the current per-(validator, player) cap window
     /// (issue #1615). Absent for counts written before windows existed.
     ValidatorPlayerWindowStart(Address, u64),
+    /// The next accepted cursor for a player's paged erasure. Absent before
+    /// erasure starts and after it completes.
+    PurgeCursor(u64),
 
     /// Tombstone flag set by `registration.deregister_player` via
     /// `mark_player_erased`. Once set, all player-scoped writes are permanently

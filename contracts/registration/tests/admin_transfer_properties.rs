@@ -8,7 +8,7 @@
 
 use scoutchain_registration::{RegistrationContract, RegistrationContractClient};
 use soroban_sdk::testutils::{Address as _, MockAuth, MockAuthInvoke};
-use soroban_sdk::{vec, Address, Env, Val, Vec};
+use soroban_sdk::{vec, Address, Env, Symbol, Val, Vec};
 
 struct Harness {
     env: Env,
@@ -53,6 +53,17 @@ fn propose(h: &Harness, new_admin: &Address) {
         vec![&h.env, new_admin.to_val()],
     );
     h.client.propose_admin(new_admin);
+}
+
+fn transfer(h: &Harness, new_admin: &Address) {
+    auth(
+        &h.env,
+        &h.admin,
+        &h.contract_id,
+        "transfer_admin",
+        vec![&h.env, new_admin.to_val()],
+    );
+    h.client.transfer_admin(new_admin);
 }
 
 // Property 1: only the proposed address can accept
@@ -143,4 +154,105 @@ fn test_replaced_proposal_cannot_accept() {
     auth(&h.env, &first, &h.contract_id, "accept_admin", vec![&h.env]);
     let result = h.client.try_accept_admin();
     assert!(result.is_err());
+}
+
+// transfer_admin alias: only proposes, never transfers immediately (#1887)
+
+#[test]
+fn test_transfer_admin_only_proposes() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    transfer(&h, &new_admin);
+
+    // Admin is still the original admin: it can still call an admin-only fn.
+    let third = Address::generate(&h.env);
+    propose(&h, &third);
+
+    // The pending admin is the one proposed via transfer_admin.
+    auth(
+        &h.env,
+        &new_admin,
+        &h.contract_id,
+        "accept_admin",
+        vec![&h.env],
+    );
+    let result = h.client.try_accept_admin();
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_transfer_admin_requires_accept() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    transfer(&h, &new_admin);
+
+    // Without the pending admin's auth, accept_admin must fail.
+    let result = h.client.try_accept_admin();
+    assert!(result.is_err());
+
+    // Admin is still the original admin: it can still propose.
+    let third = Address::generate(&h.env);
+    propose(&h, &third);
+
+    // With the pending admin's auth, accept_admin succeeds.
+    auth(
+        &h.env,
+        &new_admin,
+        &h.contract_id,
+        "accept_admin",
+        vec![&h.env],
+    );
+    let result2 = h.client.try_accept_admin();
+    assert!(result2.is_ok());
+}
+
+#[test]
+fn test_transfer_admin_non_admin_rejected() {
+    let h = setup();
+    let non_admin = Address::generate(&h.env);
+    let new_admin = Address::generate(&h.env);
+
+    auth(
+        &h.env,
+        &non_admin,
+        &h.contract_id,
+        "transfer_admin",
+        vec![&h.env, new_admin.to_val()],
+    );
+    let result = h.client.try_transfer_admin(&new_admin);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_transfer_admin_emits_propose_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+
+    transfer(&h, &new_admin);
+    let transfer_events = h.env.events().all();
+
+    let h2 = setup();
+    let new_admin2 = Address::generate(&h2.env);
+    propose(&h2, &new_admin2);
+    let propose_events = h2.env.events().all();
+
+    assert_eq!(transfer_events.len(), propose_events.len());
+    for i in 0..transfer_events.len() {
+        let (t_contract, t_topics, t_data) = transfer_events.get(i).unwrap();
+        let (p_contract, p_topics, p_data) = propose_events.get(i).unwrap();
+        assert_eq!(t_contract, p_contract);
+        assert_eq!(t_topics, p_topics);
+        assert_eq!(t_data, p_data);
+    }
+}
+
+// contract_kind is pinned for the wiring handshake (#1888)
+
+#[test]
+fn test_contract_kind() {
+    let h = setup();
+    assert_eq!(
+        h.client.contract_kind(),
+        Symbol::new(&h.env, "registration")
+    );
 }
