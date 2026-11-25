@@ -82,7 +82,10 @@ app.post("/auth", async (req: Request, res: Response) => {
       .status(400)
       .json({ error: "transaction and account are required" });
   }
-  if (typeof transaction !== "string" || !isValidAccount(account)) {
+  if (typeof transaction !== "string") {
+    return res.status(400).json({ error: "invalid transaction" });
+  }
+  if (!isValidAccount(account)) {
     return res.status(400).json({ error: "invalid account" });
   }
 
