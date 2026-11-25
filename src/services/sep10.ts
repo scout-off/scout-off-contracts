@@ -1,9 +1,10 @@
 import { v4 as uuidv4 } from "uuid";
 import { createHash, randomBytes } from "crypto";
-import jwt from "jsonwebtoken";
+import { SignJWT } from "jose";
 import { WebAuth, Keypair, Networks, TransactionBuilder } from "@stellar/stellar-sdk";
 import { prisma } from "../db";
 import { config } from "../config";
+import type { SigningKeys } from "../keys";
 
 interface Sep10TokenPayload {
   sub: string;
@@ -47,12 +48,37 @@ function refreshTokenTtlSeconds(): number {
     : DEFAULT_REFRESH_TOKEN_TTL_SECONDS;
 }
 
-export function issueSep10Token(payload: Sep10TokenPayload, secret: string) {
-  return jwt.sign(payload, secret, {
-    algorithm: "HS256",
-    expiresIn: accessTokenTtlSeconds(),
-    jwtid: uuidv4(),
-  });
+export async function issueSep10Token(
+  payload: Sep10TokenPayload,
+  cfg: {
+    signingKeys: SigningKeys | null;
+    allowHs256Migration: boolean;
+    jwtSecret: string;
+  }
+): Promise<string> {
+  const jti = uuidv4();
+  const { signingKeys, allowHs256Migration, jwtSecret } = cfg;
+
+  if (signingKeys) {
+    return new SignJWT({ sub: payload.sub, role: payload.role })
+      .setProtectedHeader({ alg: "EdDSA", kid: signingKeys.activeKid })
+      .setJti(jti)
+      .setIssuedAt()
+      .setExpirationTime(Math.floor(Date.now() / 1000) + accessTokenTtlSeconds())
+      .sign(signingKeys.activePrivateKey);
+  }
+
+  if (allowHs256Migration) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const jwt = require("jsonwebtoken") as typeof import("jsonwebtoken");
+    return jwt.sign({ sub: payload.sub, role: payload.role }, jwtSecret, {
+      algorithm: "HS256",
+      expiresIn: accessTokenTtlSeconds(),
+      jwtid: jti,
+    });
+  }
+
+  throw new Error("No signing key available: set JWT_SIGNING_KEYS");
 }
 
 function sep10Config() {
@@ -165,7 +191,7 @@ export async function verifyChallengeTx(
  */
 export async function issueSession(account: string) {
   const role = await deriveRole(account);
-  const token = issueSep10Token({ sub: account, role }, config.jwtSecret);
+  const token = await issueSep10Token({ sub: account, role }, config);
 
   const refreshToken = randomBytes(32).toString("base64url");
   await prisma.refreshToken.create({
