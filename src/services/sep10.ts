@@ -26,10 +26,8 @@ function sha256Hex(value: string): string {
  * stays the same when the client adds its signature. 64 hex chars, so it
  * fits the `VARCHAR(64)` key (the full base64 XDR would not).
  */
-function challengeHash(challengeTx: string, networkPassphrase: string): string {
-  return TransactionBuilder.fromXDR(challengeTx, networkPassphrase)
-    .hash()
-    .toString("hex");
+function challengeHash(tx: { hash(): Buffer }): string {
+  return tx.hash().toString("hex");
 }
 
 /** Access-token lifetime in seconds: ACCESS_TOKEN_TTL_SECONDS, capped at 15 minutes. */
@@ -81,16 +79,33 @@ export async function issueSep10Token(
   throw new Error("No signing key available: set JWT_SIGNING_KEYS");
 }
 
-function sep10Config() {
-  return {
-    serverKeypair: Keypair.fromSecret(config.sep10SigningSecret),
-    homeDomain: config.homeDomain,
-    webAuthDomain: config.webAuthDomain,
-    networkPassphrase:
-      config.stellarNetwork === "mainnet"
-        ? Networks.PUBLIC
-        : Networks.TESTNET,
-  };
+interface Sep10Config {
+  serverKeypair: Keypair;
+  homeDomain: string;
+  webAuthDomain: string;
+  networkPassphrase: string;
+}
+
+let cachedSep10Config: Sep10Config | undefined;
+
+/**
+ * Lazily memoised SEP-10 configuration. Config is immutable after startup,
+ * so the signing Keypair is derived once per process on first use (lazy so
+ * tests that mutate env before import still work).
+ */
+function sep10Config(): Sep10Config {
+  if (!cachedSep10Config) {
+    cachedSep10Config = {
+      serverKeypair: Keypair.fromSecret(config.sep10SigningSecret),
+      homeDomain: config.homeDomain,
+      webAuthDomain: config.webAuthDomain,
+      networkPassphrase:
+        config.stellarNetwork === "mainnet"
+          ? Networks.PUBLIC
+          : Networks.TESTNET,
+    };
+  }
+  return cachedSep10Config;
 }
 
 /**
@@ -113,9 +128,11 @@ export async function buildChallengeTx(account: string): Promise<string> {
     webAuthDomain
   );
 
+  const challengeTx = TransactionBuilder.fromXDR(challenge, networkPassphrase);
+
   await prisma.sep10Challenge.create({
     data: {
-      hash: challengeHash(challenge, networkPassphrase),
+      hash: challengeHash(challengeTx),
       account,
       expiresAt: new Date(Date.now() + CHALLENGE_TTL_SECONDS * 1000),
     },
@@ -143,7 +160,7 @@ export async function verifyChallengeTx(
 
   // readChallengeTx validates the structure, time bounds, sequence, home
   // domain, web auth domain and network passphrase.
-  const { clientAccountID } = WebAuth.readChallengeTx(
+  const { tx, clientAccountID } = WebAuth.readChallengeTx(
     challengeTx,
     serverAccount,
     networkPassphrase,
@@ -171,7 +188,7 @@ export async function verifyChallengeTx(
   const now = new Date();
   const { count } = await prisma.sep10Challenge.updateMany({
     where: {
-      hash: challengeHash(challengeTx, networkPassphrase),
+      hash: challengeHash(tx),
       account: clientAccount,
       consumedAt: null,
       expiresAt: { gt: now },
