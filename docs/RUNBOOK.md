@@ -597,3 +597,61 @@ Migration state replay must run in order: `open_migration_window` → `admin_see
 ```bash
 UPGRADE_SOURCE=admin ./scripts/upgrade.sh --contract <id> --wasm <path> [--network testnet]
 ```
+
+---
+
+## Re-index from Archive
+
+Use this procedure when the indexer must be bootstrapped from genesis (e.g.
+after a prolonged outage, a fresh deployment, or a full audit of historical
+state).
+
+### Prerequisites
+
+- A running Galexie / data-lake archive reachable via HTTP(S).  The archive
+  must expose an `index.json` manifest and JSONL partition files as described
+  in [INDEXER.md — Archival Event Source](INDEXER.md#archival-event-source).
+- `GALEXIE_ARCHIVE_URL` set to the archive base URL.
+- `RPC_URL`, `REGISTRATION_CONTRACT_ID`, `VERIFICATION_CONTRACT_ID`,
+  `PROGRESS_CONTRACT_ID`, and `SCOUT_ACCESS_CONTRACT_ID` set (or present in
+  `.env.contracts`).
+- Optional: `GALEXIE_API_KEY` for authenticated buckets.
+
+### Steps
+
+```bash
+# 1. Load environment
+source .env
+source .env.contracts
+
+# 2. Verify gap detection is working (should exit 0 with archive configured)
+GALEXIE_ARCHIVE_URL=https://your-archive.example.com/stellar-events \
+  node scripts/audit-event-history.js --player-id 1 --from-ledger 1
+
+# 3. Full from-genesis audit of all players
+GALEXIE_ARCHIVE_URL=https://your-archive.example.com/stellar-events \
+  node scripts/audit-event-history.js all --from-ledger 1
+
+# 4. Run the reconciler to sync the indexer DB
+node scripts/reconcile-indexer.js
+```
+
+### Without an archive (RPC-only)
+
+If no archive is available, omit `GALEXIE_ARCHIVE_URL`.  The audit tool will
+detect and refuse any range that starts before the RPC retention window:
+
+```
+Incomplete event range: Requested range starts at ledger 1 but the RPC node
+only retains events from ledger 95000. Configure an archival event source
+(GALEXIE_ARCHIVE_URL) to cover the full range, or start from ledger 95000.
+```
+
+Start from the reported ledger to audit only the retained window:
+
+```bash
+node scripts/audit-event-history.js all --from-ledger 95000
+```
+
+**Note:** An RPC-only audit of a partial range cannot guarantee tamper-proof
+progress claims for history outside the window.
