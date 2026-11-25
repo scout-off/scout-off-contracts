@@ -50,7 +50,6 @@ fi
 
 CONFIG_OUT=$(python3 "$(dirname "$0")/lib/read_network_config.py" "$CONFIG_FILE" "${XLM_TOKEN_ADDRESS:-}") || exit 1
 read -r XLM_TOKEN _REG_COOLDOWN_SECS FEE_CONFIG_JSON <<<"$CONFIG_OUT"
-=======
 
 # Mainnet safety check: verify config file has no placeholders
 if [[ "$NETWORK" == "mainnet" ]]; then
@@ -82,7 +81,6 @@ if [[ -f ".env.contracts" ]]; then
   echo "==> Pre-deploy snapshot saved to ${SNAPSHOT_BASE}.env"
   echo "    Latest snapshot mirrored to .env.contracts.snapshot"
 fi
-=======
 
 if command -v sha256sum >/dev/null 2>&1; then
   hash_wasm() { sha256sum "$1" | awk '{print $1}'; }
@@ -246,4 +244,3 @@ echo "==> All contracts deployed. IDs saved to .env.contracts"
 echo "    Snapshots are kept in $SNAPSHOT_DIR (latest mirrored to .env.contracts.snapshot)"
 echo "    To list snapshots: ./scripts/rollback.sh --list"
 echo "    To roll back: ./scripts/rollback.sh $NETWORK"
-=======
