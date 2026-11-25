@@ -5,5 +5,9 @@ module.exports = {
   setupFiles: ["<rootDir>/tests/setupEnv.ts"],
   transform: {
     "^.+\\.tsx?$": "ts-jest"
-  }
+  },
+  testPathIgnorePatterns: [
+    "/node_modules/",
+    "<rootDir>/e2e/"
+  ]
 };

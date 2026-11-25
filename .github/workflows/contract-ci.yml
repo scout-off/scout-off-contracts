@@ -7,6 +7,8 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  schedule:
+    - cron: "0 3 * * *"  # nightly at 03:00 UTC (triggers e2e job)
 
 env:
   CARGO_TERM_COLOR: always
@@ -797,3 +799,191 @@ jobs:
             out-1/wasm-hashes.json
             out-1/SHA256SUMS
             out-1/*.optimized.wasm
+
+  # ── End-to-end: local stack (nightly + label-triggered) ─────────────────────
+  e2e:
+    name: E2E (local stack)
+    runs-on: ubuntu-latest
+    # Run nightly on main, or on PRs/pushes that carry the "run-e2e" label.
+    if: >
+      github.event_name == 'schedule' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      contains(github.event.pull_request.labels.*.name, 'run-e2e')
+    env:
+      NETWORK_PASSPHRASE: "Standalone Network ; February 2017"
+      STELLAR_SOURCE_ACCOUNT: ci-deployer
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
+        with:
+          toolchain: 1.97.1
+          targets: wasm32v1-none
+
+      - name: Cache cargo
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-wasm32v1-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install Stellar CLI (pinned)
+        run: |
+          bash scripts/install-stellar-cli.sh
+          echo "$HOME/.stellar/bin" >> "$GITHUB_PATH"
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+
+      - name: Install npm dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build WASM contracts
+        run: cargo build --workspace --target wasm32v1-none --release --locked
+
+      - name: Start Soroban local sandbox
+        run: |
+          docker run -d \
+            --name stellar-local \
+            -p 8000:8000 \
+            stellar/quickstart:testing@sha256:66a19476f2ce2ed09c4dccf3f1af4d438209eee9ee05eb113a02dd926e2b03f5 \
+            --local \
+            --limits unlimited
+          echo "Waiting for Soroban RPC..."
+          for i in $(seq 1 60); do
+            LEDGER=$(curl -sf http://localhost:8000/soroban/rpc \
+              -X POST -H 'Content-Type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"getLatestLedger"}' \
+              2>/dev/null \
+              | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('result',{}).get('sequence',0))" \
+              2>/dev/null || echo 0)
+            if [ "${LEDGER:-0}" -gt 0 ]; then echo "RPC ready (ledger ${LEDGER})"; break; fi
+            sleep 2
+          done
+
+      - name: Start PostgreSQL
+        run: |
+          docker run -d \
+            --name e2e-postgres \
+            -e POSTGRES_USER=scoutchain \
+            -e POSTGRES_PASSWORD=scoutchain \
+            -e POSTGRES_DB=scoutchain_dev \
+            -p 5432:5432 \
+            postgres:15
+          for i in $(seq 1 20); do
+            if docker exec e2e-postgres pg_isready -U scoutchain -d scoutchain_dev >/dev/null 2>&1; then
+              echo "PostgreSQL ready"; break
+            fi
+            sleep 2
+          done
+
+      - name: Register local network with Stellar CLI
+        run: |
+          stellar network add local \
+            --rpc-url http://localhost:8000/soroban/rpc \
+            --network-passphrase "$NETWORK_PASSPHRASE"
+
+      - name: Create and fund deployer identity
+        run: |
+          stellar keys generate ci-deployer --network local
+          echo "ADMIN_ADDRESS=$(stellar keys address ci-deployer)" >> "$GITHUB_ENV"
+          for i in $(seq 1 30); do
+            stellar keys fund ci-deployer --network local && exit 0 || sleep 2
+          done
+          exit 1
+
+      - name: Deploy contracts and write .env.contracts
+        run: |
+          set -euo pipefail
+          WASM=target/wasm32v1-none/release
+          ADMIN=$(stellar keys address ci-deployer)
+          XLM_TOKEN="$(stellar contract asset deploy \
+            --asset native --source ci-deployer --network local 2>/dev/null \
+            || stellar contract id asset --asset native --network local)"
+          read -r _ _ FEE_CONFIG_JSON \
+            <<<"$(python3 scripts/lib/read_network_config.py config/testnet.json "$XLM_TOKEN")"
+
+          _deploy() {
+            local pkg="$1"; shift
+            local opt="$WASM/scoutchain_${pkg}.optimized.wasm"
+            stellar contract optimize --wasm "$WASM/scoutchain_${pkg}.wasm" \
+              --wasm-out "$opt" >/dev/null 2>&1 || cp "$WASM/scoutchain_${pkg}.wasm" "$opt"
+            stellar contract deploy \
+              --wasm "$opt" --source ci-deployer --network local \
+              -- "$@" | grep -oE 'C[A-Z0-9]{55}' | tail -1
+          }
+
+          REG=$(_deploy registration --admin "$ADMIN" --xlm-token "$XLM_TOKEN" \
+              --fee-config "$FEE_CONFIG_JSON")
+          VER=$(_deploy verification --admin "$ADMIN" --registration-contract "$REG")
+          PROG=$(_deploy progress --admin "$ADMIN" --registration-contract "$REG")
+          SCOUT=$(_deploy scout_access --admin "$ADMIN" --xlm-token "$XLM_TOKEN" \
+              --fee-config "$FEE_CONFIG_JSON" --registration-contract "$REG")
+
+          stellar contract invoke --id "$VER" --source ci-deployer --network local \
+            -- set_progress_contract --progress-contract "$PROG" >/dev/null
+          stellar contract invoke --id "$SCOUT" --source ci-deployer --network local \
+            -- set_progress_contract --progress-contract "$PROG" >/dev/null
+
+          cat > .env.contracts <<EOF
+          REGISTRATION_CONTRACT_ID=$REG
+          VERIFICATION_CONTRACT_ID=$VER
+          PROGRESS_CONTRACT_ID=$PROG
+          SCOUT_ACCESS_CONTRACT_ID=$SCOUT
+          NETWORK=local
+          NETWORK_PASSPHRASE=$NETWORK_PASSPHRASE
+          XLM_TOKEN_ADDRESS=$XLM_TOKEN
+          ADMIN_ADDRESS=$ADMIN
+          EOF
+
+      - name: Apply SQL migrations
+        run: |
+          for sql in migrations/*.sql; do
+            psql postgresql://scoutchain:scoutchain@localhost:5432/scoutchain_dev < "$sql" >/dev/null 2>&1 || true
+          done
+        env:
+          PGPASSWORD: scoutchain
+
+      - name: Write .env.local for backend
+        run: |
+          SECRET=$(stellar keys show ci-deployer 2>/dev/null || echo "")
+          JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+          source .env.contracts
+          cat > .env.local <<EOF
+          DATABASE_URL=postgresql://scoutchain:scoutchain@localhost:5432/scoutchain_dev
+          JWT_SECRET=$JWT_SECRET
+          JWT_ALLOW_HS256_MIGRATION=true
+          SEP10_SIGNING_SECRET=${SECRET}
+          HOME_DOMAIN=localhost:3000
+          WEB_AUTH_DOMAIN=localhost:3000
+          STELLAR_NETWORK=local
+          NETWORK_PASSPHRASE=$NETWORK_PASSPHRASE
+          REGISTRATION_CONTRACT_ID=${REGISTRATION_CONTRACT_ID}
+          VERIFICATION_CONTRACT_ID=${VERIFICATION_CONTRACT_ID}
+          PROGRESS_CONTRACT_ID=${PROGRESS_CONTRACT_ID}
+          SCOUT_ACCESS_CONTRACT_ID=${SCOUT_ACCESS_CONTRACT_ID}
+          ADMIN_ADDRESS=${ADMIN_ADDRESS}
+          EOF
+
+      - name: Start backend
+        run: |
+          set -a; source .env.local; set +a
+          node dist/src/server.js &
+          for i in $(seq 1 24); do
+            curl -sf http://localhost:3000/health >/dev/null && echo "Backend ready" && exit 0
+            sleep 5
+          done
+          exit 1
+
+      - name: Run e2e tests
+        run: npx jest --config e2e/jest.config.ts --no-coverage
+        env:
+          E2E_BACKEND_URL: http://localhost:3000
+          E2E_RPC_URL: http://localhost:8000/soroban/rpc
+          NETWORK_PASSPHRASE: "Standalone Network ; February 2017"
+          E2E_FRIENDBOT_URL: http://localhost:8000/friendbot
