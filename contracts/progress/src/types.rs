@@ -188,6 +188,10 @@ pub enum DataKey {
     /// How far a resumable migration has progressed. Stores the highest
     /// `player_id` the cursor has already visited, so a second `migrate` call
     /// resumes instead of re-scanning from zero. Absent means "not started".
+    ///
+    /// Removed by `progress.purge_player_data` on the final page of a complete
+    /// purge (alongside [`DataKey::HistoryCounter`]), so no per-player
+    /// migration state survives erasure.
     MigrationCursor(u64),
     /// Total items rewritten by a migration across all calls. Diagnostic only:
     /// it lets an operator confirm progress across several `migrate` calls
@@ -212,6 +216,11 @@ pub enum DataKey {
     ///
     /// Absent for players whose history predates this key; the first append
     /// after an upgrade rebuilds it lazily from the existing history.
+    ///
+    /// Removed by `progress.purge_player_data` on the final page of a complete
+    /// purge (alongside [`DataKey::HistoryCounter`]), so no per-player
+    /// commitment state survives erasure. Because the key may be absent, the
+    /// purge tolerates its absence rather than requiring it.
     HistoryFrontier(u64),
 
     /// Boolean flag (`true`) written by `open_migration_window`; absent or

@@ -27,7 +27,8 @@ they request it.
 | Player index membership | `registration` | `PlayerIndex`, `PlayersByLevel(level)`, `PlayersByLevelRegion(level, region)` | **Removed** by `deregister_player` |
 | Progress level | `progress` | `PlayerLevel(id)` | **Deleted** by `purge_player_data` (cursor=0) |
 | Progress history entries | `progress` | `HistoryEntry(id, idx)`, `HistoryPage(id, page)` | **Deleted** paged by `purge_player_data` |
-| History counter & Merkle root | `progress` | `HistoryCounter(id)`, `HistoryRoot(id)`, `HistoryVec(id)` | **Deleted** by `purge_player_data` |
+| History counter, Merkle root & frontier | `progress` | `HistoryCounter(id)`, `HistoryRoot(id)`, `HistoryVec(id)`, `HistoryFrontier(id)` | **Deleted** by `purge_player_data` (counter and frontier on the final page) |
+| Migration cursor | `progress` | `MigrationCursor(id)` | **Deleted** by `purge_player_data` (on the final page) |
 | Milestones (description, evidence CID) | `verification` | `Milestone(id, idx)` | **Deleted** paged by `purge_player_data` |
 | Milestone disputes | `verification` | `MilestoneDispute(id, idx)`, `PlayerDisputes(id)` | **Deleted** by `purge_player_data` |
 | Milestone counter, player affiliations | `verification` | `MilestoneCounter(id)`, `PlayerAffiliations(id)` | **Deleted** by `purge_player_data` |

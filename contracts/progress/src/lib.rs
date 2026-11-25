@@ -1268,10 +1268,14 @@ impl ProgressContract {
 
     /// Paged erasure of a player's progress state (admin only).
     ///
-    /// Removes `PlayerLevel`, `HistoryCounter`, `HistoryRoot`, and up to
-    /// `limit` `HistoryEntry` records per call, starting at `cursor` (0 = start).
+    /// Removes `PlayerLevel`, `HistoryRoot`, `HistoryVec`, and up to
+    /// `PAGE_SIZE` `HistoryEntry` / `HistoryPage` records per call, starting at
+    /// `cursor` (0 = start). On the final page it also removes
+    /// `HistoryCounter`, `HistoryFrontier` and `MigrationCursor`.
     /// When `more` is `false` in the returned tuple all data has been removed.
     /// Safe to call repeatedly: already-absent keys are skipped silently.
+    /// `HistoryFrontier` is only present for players whose history was written
+    /// after #1368, so its absence is tolerated.
     ///
     /// # Safety invariants
     /// - Ledger history (the transaction record itself) is immutable and cannot
@@ -1365,6 +1369,33 @@ impl ProgressContract {
                 .persistent()
                 .remove(&DataKey::HistoryCounter(player_id));
             removed += 1;
+        }
+
+        // On the final page, also drop the per-player commitment state: the
+        // Merkle frontier accumulator (#1368) and the migration cursor. The
+        // frontier only exists for players whose history postdates #1368, so
+        // its absence is expected and skipped silently.
+        if !more {
+            if env
+                .storage()
+                .persistent()
+                .has(&DataKey::HistoryFrontier(player_id))
+            {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::HistoryFrontier(player_id));
+                removed += 1;
+            }
+            if env
+                .storage()
+                .persistent()
+                .has(&DataKey::MigrationCursor(player_id))
+            {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::MigrationCursor(player_id));
+                removed += 1;
+            }
         }
 
         events::player_data_purged(&env, &admin, player_id, removed, more);
@@ -3816,6 +3847,64 @@ mod tests {
                 .persistent()
                 .has(&DataKey::HistoryFrontier(player))
         }));
+    }
+
+    /// A complete purge must also erase the per-player commitment state:
+    /// `HistoryFrontier` (written on every append since #1368) and
+    /// `MigrationCursor`. Otherwise per-player commitment state would survive
+    /// erasure (issue #1826).
+    #[test]
+    fn purge_player_data_removes_frontier_and_migration_cursor() {
+        let (env, client, id) = setup_for_storage_tests();
+        let player = 77u64;
+        for _ in 0..5 {
+            append_reset(&client, player);
+        }
+
+        // Precondition: the frontier exists because history was appended.
+        assert!(env.as_contract(&id, || {
+            env.storage()
+                .persistent()
+                .has(&DataKey::HistoryFrontier(player))
+        }));
+
+        // Simulate a migration cursor for this player.
+        env.as_contract(&id, || {
+            env.storage()
+                .persistent()
+                .set(&DataKey::MigrationCursor(player), &player);
+        });
+
+        // Purge to completion.
+        let mut cursor = 0u32;
+        loop {
+            let (next, more) = client.purge_player_data(&player, &cursor);
+            cursor = next;
+            if !more {
+                break;
+            }
+        }
+
+        env.as_contract(&id, || {
+            assert!(
+                !env.storage()
+                    .persistent()
+                    .has(&DataKey::HistoryFrontier(player)),
+                "HistoryFrontier must be removed by a complete purge"
+            );
+            assert!(
+                !env.storage()
+                    .persistent()
+                    .has(&DataKey::MigrationCursor(player)),
+                "MigrationCursor must be removed by a complete purge"
+            );
+            assert!(
+                !env.storage()
+                    .persistent()
+                    .has(&DataKey::HistoryCounter(player)),
+                "HistoryCounter must be removed by a complete purge"
+            );
+        });
     }
 
     /// After a lazy rebuild, a second append must be incremental from the
