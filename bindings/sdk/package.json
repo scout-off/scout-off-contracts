@@ -1,0 +1,49 @@
+{
+  "name": "@scoutchain/sdk",
+  "version": "2.0.0",
+  "description": "Unified ScoutChain SDK composing all four generated contract clients with typed errors and high-level helpers.",
+  "keywords": ["stellar", "soroban", "scoutchain", "sdk"],
+  "homepage": "https://github.com/GoodnessJohn/scout-off-contracts",
+  "license": "MIT",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    },
+    "./errors": {
+      "import": "./dist/errors.js",
+      "require": "./dist/errors.cjs",
+      "types": "./dist/errors.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "scripts"
+  ],
+  "scripts": {
+    "build": "tsc --project tsconfig.json && node scripts/build-cjs.js",
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "generate-errors": "node scripts/generate-errors.js",
+    "check-errors-drift": "node scripts/generate-errors.js --check",
+    "test": "node --experimental-vm-modules ../../node_modules/.bin/jest --config jest.config.js --no-coverage",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@scoutchain/bindings-progress": "*",
+    "@scoutchain/bindings-registration": "*",
+    "@scoutchain/bindings-scout_access": "*",
+    "@scoutchain/bindings-verification": "*",
+    "@stellar/stellar-sdk": "^13.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  },
+  "peerDependencies": {
+    "@stellar/stellar-sdk": "^13.0.0"
+  }
+}
