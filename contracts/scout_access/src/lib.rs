@@ -3285,8 +3285,9 @@ impl ScoutAccessContract {
         cursor: u32,
     ) -> Result<(u32, bool), ScoutAccessError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
-        Self::require_not_paused(&env)?;
+        // Erasure is a compliance operation and stays available while paused (#1823).
         Self::require_initialized(&env)?;
+        Self::bump_instance_ttl(&env);
 
         const PAGE_SIZE: u32 = 50;
         let mut removed: u32 = 0;

@@ -3353,6 +3353,9 @@ impl VerificationContract {
         cursor: u32,
     ) -> Result<(u32, bool), VerificationError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        // Erasure is a compliance operation and stays available while paused (#1823).
+        Self::require_initialized(&env)?;
+        Self::bump_instance_ttl(&env);
 
         const PAGE_SIZE: u32 = 50;
         let mut removed: u32 = 0;
@@ -9212,6 +9215,32 @@ mod tests {
                 ),
                 _ => None,
             })
+    }
+
+    // -------------------------------------------------------------------------
+    // Erasure: purge_player_data guard semantics and cursor safety (#1823, #1825)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn purge_player_data_succeeds_while_paused() {
+        let env = setup_env();
+        let admin = Address::generate(&env);
+        let client = deploy(&env, &admin);
+        client.pause_contract();
+        // Erasure is a compliance operation and must remain available while
+        // the contract is paused.
+        assert_eq!(client.purge_player_data(&1u64, &0u32), (0u32, false));
+    }
+
+    #[test]
+    fn purge_player_data_rejects_out_of_range_cursor() {
+        let env = setup_env();
+        let admin = Address::generate(&env);
+        let client = deploy(&env, &admin);
+        assert_eq!(
+            client.try_purge_player_data(&1u64, &u32::MAX),
+            Err(Ok(VerificationError::InvalidPurgeCursor))
+        );
     }
 
     #[test]
