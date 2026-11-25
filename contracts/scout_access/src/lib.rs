@@ -1246,6 +1246,7 @@ impl ScoutAccessContract {
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
         Self::require_pay_to_contact_not_paused(&env)?;
+        Self::require_player_not_erased(&env, player_id)?;
         scout.require_auth();
 
         // Reject deactivated scouts.
@@ -1321,6 +1322,12 @@ impl ScoutAccessContract {
 
         // Reject deactivated scouts.
         Self::require_scout_not_deactivated(&env, &scout)?;
+
+        // Reject erased players in the batch.
+        for i in 0..player_ids.len() {
+            let pid = player_ids.get(i).unwrap();
+            Self::require_player_not_erased(&env, pid)?;
+        }
 
         let sub = Self::require_active_subscription(&env, &scout)?;
 
@@ -1431,6 +1438,7 @@ impl ScoutAccessContract {
         Self::bump_instance_ttl(&env);
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
+        Self::require_player_not_erased(&env, player_id)?;
         scout.require_auth();
 
         // Reject deactivated scouts.
@@ -2920,6 +2928,7 @@ impl ScoutAccessContract {
         require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         Self::require_initialized(&env)?;
         Self::require_migration_active(&env)?;
+        Self::require_player_not_erased(&env, contact.player_id)?;
 
         let cr_key = DataKey::ContactRecord(contact.player_id, contact.scout.clone());
 
@@ -3005,6 +3014,7 @@ impl ScoutAccessContract {
         require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         Self::require_initialized(&env)?;
         Self::require_migration_active(&env)?;
+        Self::require_player_not_erased(&env, player_id)?;
 
         let to_key = DataKey::TrialOffer(player_id, trial_index);
 
@@ -3487,6 +3497,47 @@ impl ScoutAccessContract {
         {
             return Err(ScoutAccessError::PayToContactPaused);
         }
+        Ok(())
+    }
+
+    /// Require that the player has not been erased via `registration.deregister_player`.
+    /// This is the push-model erasure guard — registration pushes a tombstone to each
+    /// contract rather than each contract pulling from registration on every write.
+    fn require_player_not_erased(env: &Env, player_id: u64) -> Result<(), ScoutAccessError> {
+        if env
+            .storage()
+            .persistent()
+            .get::<DataKey, bool>(&DataKey::Erased(player_id))
+            .unwrap_or(false)
+        {
+            return Err(ScoutAccessError::PlayerErased);
+        }
+        Ok(())
+    }
+
+    /// Mark a player as erased. Called by `registration.deregister_player` after
+    /// purging the player's data from all contracts. Once set, all player-scoped
+    /// writes are permanently blocked for this player_id.
+    ///
+    /// Only the registration contract may call this function (enforced via auth).
+    pub fn mark_player_erased(env: Env, player_id: u64) -> Result<(), ScoutAccessError> {
+        // Verify the caller is the registration contract
+        let registration_addr = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::RegistrationContract);
+        let registration_addr = registration_addr.ok_or(ScoutAccessError::RegistrationContractNotSet)?;
+
+        registration_addr.require_auth();
+
+        // Write the tombstone flag with long TTL (same as core identity data)
+        env.storage()
+            .persistent()
+            .set(&DataKey::Erased(player_id), &true);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Erased(player_id), PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+
         Ok(())
     }
 

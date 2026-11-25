@@ -43,6 +43,59 @@ they request it.
 | Player ID counter monotonic value | IDs must never be reused after erasure to prevent `ContactRecord` collisions (see issue #234). The counter itself is not erased. |
 | Validator `MilestoneRef` entries in `ValidatorMilestones(validator)` | Keeps the validator's per-player milestone count intact for audit; the underlying `Milestone` record itself is erased so no PII is accessible via this index. |
 | Scout `ContactRecord(player_id, scout)` individual entries | Retains the scout's paid-for contact event for billing audit. The `PlayerContacts(player_id)` reverse index is erased. |
+| **Erasure tombstone flag** | `DataKey::Erased(player_id)` written by `registration.deregister_player` to each contract. Once set, all player-scoped writes are permanently blocked with `PlayerErased` error (issue #1622). |
+
+---
+
+## Erasure tombstone invariant (issue #1622)
+
+### Problem
+
+Between and after the paged purge calls, nothing prevents state for the same `player_id` from being written again:
+- `progress.admin_seed_history` during a migration window
+- `restore_*` record entrypoints
+- `verification` approval paths when registration is unwired (require_active_player fails open)
+- `scout_access` writes for a player whose registration lookup is not performed on that path
+
+### Solution: Push-model tombstone
+
+When `registration.deregister_player` completes, it cross-calls each wired contract's `mark_player_erased(player_id)` function. This writes a local `Erased(player_id)` tombstone flag in persistent storage with long TTL (same as core identity data).
+
+Each contract then checks this flag in **all player-scoped write entrypoints**:
+- **progress**: `advance_level`, `advance_level_for_scout`, `reset_player_level`, `admin_seed_history`, `restore_player_level_record`
+- **verification**: `approve_milestone`, `attest_milestone`, `submit_attested_milestone`, `dispute_milestone`, `admin_seed_milestone`, `admin_seed_dispute`, `restore_milestone_record`
+- **scout_access**: `pay_to_contact`, `batch_contact_players`, `log_trial_offer`, `admin_seed_contact`, `admin_seed_trial_offer`
+
+If the tombstone is set, the entrypoint returns `PlayerErased` error.
+
+### Why push instead of pull?
+
+A pull design (each contract calling `registration.is_erased(player_id)` on every write) would:
+- Add cross-contract call overhead to hot paths
+- Fail open when registration is unwired (the check would be skipped)
+
+The push design:
+- Avoids per-write cross-contract calls (O(1) local check)
+- Fails closed even if registration is later unwired (tombstone is local)
+- Is idempotent (calling `mark_player_erased` multiple times is safe)
+
+### Invariant
+
+**Once erasure starts, no contract accepts writes for this `player_id` again.**
+
+This invariant is enforced by the combination of:
+1. `deregister_player` pushing tombstones to all wired contracts
+2. Each contract checking the tombstone before any player-scoped write
+3. The tombstone persisting with long TTL (same as core identity data)
+
+### Error codes
+
+| Contract | Error | Code |
+|---------|-------|------|
+| `registration` | `PlayerErased` | 22 |
+| `progress` | `PlayerErased` | 30 |
+| `verification` | `PlayerErased` | 66 |
+| `scout_access` | `PlayerErased` | 61 |
 
 ---
 

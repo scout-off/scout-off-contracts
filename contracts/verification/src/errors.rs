@@ -228,6 +228,11 @@ pub enum VerificationError {
     /// `purge_player_data` was called with a cursor other than the next
     /// expected cursor for this player.
     InvalidPurgeCursor = 65,
+
+    // ── Player erasure tombstone ──
+    /// The player has been erased via `registration.deregister_player`; all
+    /// player-scoped writes are permanently blocked for this player_id.
+    PlayerErased = 66,
 }
 
 impl AdminError for VerificationError {
