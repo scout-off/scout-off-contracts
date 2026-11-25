@@ -6178,8 +6178,10 @@ with `InvalidPeerContract` (#1610).
 
 Admin-only, paged GDPR erasure of a player's current-state ledger entries.
 Call with `cursor = 0`, then pass the returned cursor back while the returned
-flag is `true`. scout_access refuses (`TrialOfferNotFound`) while any of the
-player's trial escrows is still outstanding.
+flag is `true`. scout_access refuses (`TrialEscrowOutstanding`, code 59) while
+any of the player's trial escrows is still outstanding — refund or expire the
+escrow first (see `admin_refund_trial_escrow` and `expire_trial_offers`).
+=======
 
 Full per-contract reference sections (signature, guards, keys removed per page,
 errors and the `player_data_purged` event) are documented under

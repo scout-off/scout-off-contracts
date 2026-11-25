@@ -80,10 +80,12 @@ calls with the returned cursor value are needed.
 ## Outstanding escrow guard
 
 `scout_access.purge_player_data` refuses to proceed if any unexpired, non-zero
-trial escrow exists for the player. This protects scouts whose escrowed funds
-would otherwise be silently destroyed. The operator must call
-`expire_trial_offers` or wait for the escrow window to elapse before erasure
-can proceed.
+trial escrow exists for the player, returning the dedicated
+`ScoutAccessError::TrialEscrowOutstanding` error (not `TrialOfferNotFound` —
+the offer exists, but its escrow is still outstanding). This protects scouts
+whose escrowed funds would otherwise be silently destroyed. The operator must
+call `expire_trial_offers` or wait for the escrow window to elapse before
+erasure can proceed.
 
 ---
 
