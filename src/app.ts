@@ -1,5 +1,5 @@
 import express, { Request, Response, NextFunction } from "express";
-import jwt from "jsonwebtoken";
+import { jwtVerify as joseVerify } from "jose";
 import { StrKey } from "@stellar/stellar-sdk";
 import { config } from "./config";
 import {
@@ -10,9 +10,21 @@ import {
 } from "./services/sep10";
 import { requireAuth, requireRole } from "./middleware/auth";
 import { prisma } from "./db";
+import { buildJwks } from "./jwks";
 
 const app = express();
 app.use(express.json());
+
+// JWKS endpoint – exposes only public keys so verifiers can rotate without
+// sharing secrets. max-age = max access token lifetime (15 min).
+app.get("/.well-known/jwks.json", (_req: Request, res: Response) => {
+  if (!config.signingKeys) {
+    return res.status(503).json({ error: "JWKS not available in HS256 migration mode" });
+  }
+  res
+    .set("Cache-Control", "public, max-age=900")
+    .json(buildJwks(config.signingKeys));
+});
 
 function isValidAccount(account: unknown): account is string {
   return typeof account === "string" && StrKey.isValidEd25519PublicKey(account);
@@ -125,15 +137,34 @@ app.post(
     let jti: string;
 
     try {
-      const payload = jwt.verify(token, config.jwtSecret, { algorithms: ["HS256"] }) as {
-        jti?: string;
-      };
-      if (!payload.jti) {
-        return res
-          .status(400)
-          .json({ error: "Token does not contain a jti claim" });
+      // Use the same asymmetric / migration verification logic as requireAuth.
+      const { signingKeys, allowHs256Migration, jwtSecret } = config;
+      let jtiValue: string | undefined;
+
+      if (signingKeys) {
+        const parts = token.split(".");
+        if (parts.length !== 3) throw new Error("malformed");
+        const header = JSON.parse(Buffer.from(parts[0], "base64url").toString());
+        const kid = typeof header.kid === "string" ? header.kid : undefined;
+        const pubKey = kid ? signingKeys.publicKeys.get(kid) : undefined;
+        if (!pubKey) return res.status(400).json({ error: "Invalid token" });
+        const { payload } = await joseVerify(token, pubKey, { algorithms: ["EdDSA"] });
+        jtiValue = payload.jti as string | undefined;
+      } else if (allowHs256Migration) {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const jwt = require("jsonwebtoken") as typeof import("jsonwebtoken");
+        const payload = jwt.verify(token, jwtSecret, { algorithms: ["HS256"] }) as {
+          jti?: string;
+        };
+        jtiValue = payload.jti;
+      } else {
+        return res.status(500).json({ error: "No verification key available" });
       }
-      jti = payload.jti;
+
+      if (!jtiValue) {
+        return res.status(400).json({ error: "Token does not contain a jti claim" });
+      }
+      jti = jtiValue;
     } catch {
       return res.status(400).json({ error: "Invalid token" });
     }

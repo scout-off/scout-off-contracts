@@ -1,4 +1,4 @@
-import jwt from "jsonwebtoken";
+import { jwtVerify } from "jose";
 import { Request, Response, NextFunction } from "express";
 import { prisma } from "../db";
 import { config } from "../config";
@@ -29,6 +29,52 @@ export async function isTokenRevoked(jti: string): Promise<boolean> {
   return !!existingRevocation;
 }
 
+/**
+ * Verify a JWT using the active signing configuration.
+ *
+ * - Asymmetric (EdDSA): look up the public key by `kid`; reject tokens with
+ *   an unknown or missing `kid`.
+ * - Migration mode (HS256 fallback): accepted only when
+ *   `config.allowHs256Migration` is true.
+ * - `alg: none` and cross-algorithm confusion are prevented by pinning
+ *   the allowed algorithms list.
+ */
+async function verifyToken(token: string): Promise<{
+  sub: string;
+  role: string;
+  jti?: string;
+}> {
+  const { signingKeys, allowHs256Migration, jwtSecret } = config;
+
+  if (signingKeys) {
+    // Decode header to pick the right public key by kid (before full verify).
+    const parts = token.split(".");
+    if (parts.length !== 3) throw new Error("malformed token");
+    const header = JSON.parse(Buffer.from(parts[0], "base64url").toString());
+    const kid = typeof header.kid === "string" ? header.kid : undefined;
+    if (!kid) throw new Error("missing kid");
+    const pubKey = signingKeys.publicKeys.get(kid);
+    if (!pubKey) throw new Error(`unknown kid: ${kid}`);
+    const { payload } = await jwtVerify(token, pubKey, { algorithms: ["EdDSA"] });
+    return {
+      sub: payload.sub as string,
+      role: payload.role as string,
+      jti: payload.jti as string | undefined,
+    };
+  }
+
+  if (allowHs256Migration) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const jwt = require("jsonwebtoken") as typeof import("jsonwebtoken");
+    const payload = jwt.verify(token, jwtSecret, {
+      algorithms: ["HS256"],
+    }) as { sub: string; role: string; jti?: string };
+    return payload;
+  }
+
+  throw new Error("No verification key available");
+}
+
 export async function requireAuth(
   req: Request,
   res: Response,
@@ -44,11 +90,7 @@ export async function requireAuth(
   const token = authHeader.split(" ")[1];
 
   try {
-    const payload = jwt.verify(token, config.jwtSecret, { algorithms: ["HS256"] }) as {
-      sub: string;
-      role: string;
-      jti?: string;
-    };
+    const payload = await verifyToken(token);
 
     if (!payload.jti) {
       res.status(401).json({ error: "Unauthorized - token has no jti claim" });
@@ -91,3 +133,4 @@ export function requireRole(allowedRoles: string[]) {
     next();
   };
 }
+

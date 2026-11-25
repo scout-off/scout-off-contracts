@@ -1,10 +1,19 @@
 import { StrKey } from "@stellar/stellar-sdk";
+import { loadSigningKeys, SigningKeys } from "./keys";
 
 export const SUPPORTED_NETWORKS = ["testnet", "mainnet"] as const;
 export type StellarNetwork = (typeof SUPPORTED_NETWORKS)[number];
 
 export interface Config {
+  /** Legacy HS256 secret – retained only when JWT_ALLOW_HS256_MIGRATION=true. */
   jwtSecret: string;
+  /** Asymmetric signing keys (required unless migration flag is set). */
+  signingKeys: SigningKeys | null;
+  /**
+   * When true, the server falls back to HS256 so existing deployments can
+   * migrate. Set JWT_ALLOW_HS256_MIGRATION=true only during the transition.
+   */
+  allowHs256Migration: boolean;
   sep10SigningSecret: string;
   homeDomain: string;
   webAuthDomain: string;
@@ -32,9 +41,36 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     return value;
   };
 
-  const jwtSecret = required("JWT_SECRET");
-  if (jwtSecret && Buffer.byteLength(jwtSecret, "utf8") < MIN_JWT_SECRET_BYTES) {
+  const allowHs256Migration =
+    env.JWT_ALLOW_HS256_MIGRATION?.trim().toLowerCase() === "true";
+
+  // JWT_SECRET is required during migration; optional (but accepted) otherwise.
+  const jwtSecretRaw = env.JWT_SECRET?.trim() || "";
+  if (allowHs256Migration && !jwtSecretRaw) {
+    errors.push("JWT_SECRET is required when JWT_ALLOW_HS256_MIGRATION=true");
+  }
+  if (
+    jwtSecretRaw &&
+    Buffer.byteLength(jwtSecretRaw, "utf8") < MIN_JWT_SECRET_BYTES
+  ) {
     errors.push(`JWT_SECRET must be at least ${MIN_JWT_SECRET_BYTES} bytes`);
+  }
+
+  // Asymmetric signing keys – required unless migration mode is active.
+  let signingKeys: SigningKeys | null = null;
+  try {
+    signingKeys = loadSigningKeys(env);
+  } catch (err) {
+    errors.push(
+      `JWT_SIGNING_KEYS: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+
+  if (!signingKeys && !allowHs256Migration) {
+    errors.push(
+      "JWT_SIGNING_KEYS is required. " +
+        "Set JWT_ALLOW_HS256_MIGRATION=true to keep HS256 during migration."
+    );
   }
 
   const sep10SigningSecret = required("SEP10_SIGNING_SECRET");
@@ -55,7 +91,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
 
   return {
-    jwtSecret,
+    jwtSecret: jwtSecretRaw,
+    signingKeys,
+    allowHs256Migration,
     sep10SigningSecret,
     homeDomain,
     webAuthDomain,

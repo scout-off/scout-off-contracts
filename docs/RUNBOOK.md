@@ -4,6 +4,82 @@ Operational procedures for the ScoutChain platform.
 
 ---
 
+## JWT Key Rotation (EdDSA Asymmetric Signing)
+
+ScoutChain access tokens are signed with **Ed25519 (EdDSA)**. The active
+private key is identified by a `kid` header; verifiers fetch public keys from
+`GET /.well-known/jwks.json`.
+
+### How rotation works (overlap-safe)
+
+Tokens have a maximum lifetime of **15 minutes** (`MAX_ACCESS_TOKEN_TTL_SECONDS`).
+To rotate without invalidating existing sessions, the old public key must remain
+in `JWT_SIGNING_KEYS` until all tokens issued under it have expired.
+
+#### Step-by-step
+
+1. **Generate a new key pair**
+
+   ```bash
+   node -e "
+   const { generateKeyPairSync } = require('crypto');
+   const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+   console.log('PRIVATE:', privateKey.export({ type:'pkcs8', format:'pem' }).toString().replace(/\n/g,'\\n'));
+   console.log('PUBLIC:',  publicKey.export({ type:'spki',  format:'pem' }).toString().replace(/\n/g,'\\n'));
+   "
+   ```
+
+2. **Add the new key to `JWT_SIGNING_KEYS`** (keep the old key)
+
+   ```
+   JWT_SIGNING_KEYS=new-kid-1,<new-private-PEM>;old-kid,<old-public-PEM>
+   JWT_SIGNING_ACTIVE_KID=new-kid-1
+   ```
+
+   The server now **signs** new tokens with `new-kid-1` and can still
+   **verify** tokens signed with `old-kid`.
+
+3. **Deploy** the updated environment and restart the backend.
+
+4. **Wait** at least 15 minutes (or the value of `ACCESS_TOKEN_TTL_SECONDS`)
+   for all old-signed tokens to expire naturally.
+
+5. **Remove the old public key** from `JWT_SIGNING_KEYS`:
+
+   ```
+   JWT_SIGNING_KEYS=new-kid-1,<new-private-PEM>
+   JWT_SIGNING_ACTIVE_KID=new-kid-1
+   ```
+
+6. **Deploy** again. Rotation is complete.
+
+### JWKS endpoint cache
+
+The endpoint sends `Cache-Control: public, max-age=900` (15 min). External
+verifiers should respect this; during rotation keep the old key in the JWKS
+response for the same 15-minute overlap window so cached responses remain valid.
+
+### Emergency revocation (compromise)
+
+If a signing key is compromised:
+
+1. Remove the compromised private key from `JWT_SIGNING_KEYS` immediately.
+2. Deploy; the server will refuse to sign new tokens with the old key.
+3. All existing tokens signed by that key will be rejected (unknown `kid`).
+4. Users must re-authenticate via SEP-10.
+
+### Migration from HS256
+
+To migrate an existing HS256 deployment:
+
+1. Set `JWT_ALLOW_HS256_MIGRATION=true` and add `JWT_SIGNING_KEYS` with the new asymmetric key.
+2. The server will sign **new** tokens asymmetrically and verify both HS256 (old) and EdDSA (new).
+3. After `MAX_ACCESS_TOKEN_TTL_SECONDS` (15 min), all old HS256 tokens expire.
+4. Set `JWT_ALLOW_HS256_MIGRATION=false` (or remove it) and redeploy.
+
+---
+
+
 ## Emergency: Pause All Contracts
 
 Use this procedure when a security incident requires immediately halting all

@@ -6,8 +6,13 @@ import { prisma } from "../../src/db";
 
 import { config } from "../../src/config";
 
-// The app verifies tokens with the secret src/config loaded at import time.
-const TEST_SECRET = config.jwtSecret;
+// In test, setupEnv sets JWT_ALLOW_HS256_MIGRATION=true so config has no
+// signingKeys but allowHs256Migration=true with a known jwtSecret.
+const migrationConfig = {
+  signingKeys: null,
+  allowHs256Migration: true,
+  jwtSecret: config.jwtSecret,
+};
 
 beforeEach(async () => {
   await prisma.revokedToken.deleteMany();
@@ -18,13 +23,13 @@ afterAll(async () => {
 });
 
 describe("Token revocation through real SEP-10 flow", () => {
-  it("should include jti claim in JWT issued through sep10 signing path", () => {
-    const token = issueSep10Token(
+  it("should include jti claim in JWT issued through sep10 signing path", async () => {
+    const token = await issueSep10Token(
       { sub: "user123", role: "validator" },
-      TEST_SECRET
+      migrationConfig
     );
 
-    const decoded = jwt.verify(token, TEST_SECRET) as { jti?: string };
+    const decoded = jwt.verify(token, config.jwtSecret) as { jti?: string };
 
     expect(decoded.jti).toBeDefined();
     expect(typeof decoded.jti).toBe("string");
@@ -32,9 +37,9 @@ describe("Token revocation through real SEP-10 flow", () => {
 
   it("should allow revoking a token via the admin endpoint when jti is present", async () => {
     // Issue an admin-role token so requireRole(["admin"]) is satisfied.
-    const token = issueSep10Token(
+    const token = await issueSep10Token(
       { sub: "admin1", role: "admin" },
-      TEST_SECRET
+      migrationConfig
     );
 
     await request(app)
@@ -48,9 +53,9 @@ describe("Token revocation through real SEP-10 flow", () => {
   });
 
   it("should block the revoked token on subsequent requests", async () => {
-    const token = issueSep10Token(
+    const token = await issueSep10Token(
       { sub: "admin1", role: "admin" },
-      TEST_SECRET
+      migrationConfig
     );
 
     await request(app)
@@ -69,13 +74,13 @@ describe("Token revocation through real SEP-10 flow", () => {
   it("should return 400 if token does not contain jti claim (manual test helper tokens)", async () => {
     // Use an admin token to pass the auth middleware, but send a manual
     // (jti-free) token as the payload to revoke.
-    const adminToken = issueSep10Token(
+    const adminToken = await issueSep10Token(
       { sub: "admin1", role: "admin" },
-      TEST_SECRET
+      migrationConfig
     );
     const manualToken = jwt.sign(
       { sub: "user123", role: "validator" },
-      TEST_SECRET
+      config.jwtSecret
     );
 
     await request(app)
