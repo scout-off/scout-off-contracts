@@ -3193,8 +3193,8 @@ impl ScoutAccessContract {
     /// **Outstanding escrows must be refunded before calling this** — the
     /// function returns `TrialOfferNotFound` if any unexpired escrow remains
     /// for the player (callers should first call `expire_trial_offers` or
-    /// wait for expiry). Pass `cursor=0` to start; pass returned `next_cursor`
-    /// back until `more == false`.
+    /// wait for expiry). Start with `cursor=0` and pass the returned cursor
+    /// back until `more == false`; any other cursor is rejected.
     pub fn purge_player_data(
         env: Env,
         player_id: u64,
@@ -3213,6 +3213,14 @@ impl ScoutAccessContract {
             .persistent()
             .get(&DataKey::TrialCounter(player_id))
             .unwrap_or(0u32);
+        let expected_cursor: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PurgeCursor(player_id))
+            .unwrap_or(0u32);
+        if cursor != expected_cursor || cursor > trial_count {
+            return Err(ScoutAccessError::InvalidPurgeCursor);
+        }
         let now = env.ledger().timestamp();
         // Trial indices are 1-based (log_trial_offer returns 1 for the first).
         for idx in 1..=trial_count {
@@ -3224,49 +3232,13 @@ impl ScoutAccessContract {
             }
         }
 
-        // On the first page remove non-paged scalar keys.
-        if cursor == 0 {
-            // PlayerContacts index.
-            if env
-                .storage()
-                .persistent()
-                .has(&DataKey::PlayerContacts(player_id))
-            {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::PlayerContacts(player_id));
-                removed += 1;
-            }
-            // EvidenceAccessGrantCount.
-            if env
-                .storage()
-                .persistent()
-                .has(&DataKey::EvidenceAccessGrantCount(player_id))
-            {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::EvidenceAccessGrantCount(player_id));
-                removed += 1;
-            }
-            // TrialCounter.
-            if env
-                .storage()
-                .persistent()
-                .has(&DataKey::TrialCounter(player_id))
-            {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::TrialCounter(player_id));
-                removed += 1;
-            }
-        }
-
         // Paged removal: trial offers + escrows. `cursor` counts the indices
         // already processed, so this page covers (cursor, end] of the
         // 1-based trial indices.
         let start = cursor;
-        let end = (start + PAGE_SIZE).min(trial_count);
-        for idx in (start + 1)..=end {
+        let end = start.saturating_add(PAGE_SIZE).min(trial_count);
+        for offset in 0..(end - start) {
+            let idx = start + offset + 1;
             let tok = DataKey::TrialOffer(player_id, idx);
             if env.storage().persistent().has(&tok) {
                 env.storage().persistent().remove(&tok);
@@ -3281,6 +3253,28 @@ impl ScoutAccessContract {
 
         let next_cursor = end;
         let more = next_cursor < trial_count;
+
+        if more {
+            let key = DataKey::PurgeCursor(player_id);
+            env.storage().persistent().set(&key, &next_cursor);
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+        } else {
+            for key in [
+                DataKey::PlayerContacts(player_id),
+                DataKey::EvidenceAccessGrantCount(player_id),
+                DataKey::TrialCounter(player_id),
+            ] {
+                if env.storage().persistent().has(&key) {
+                    env.storage().persistent().remove(&key);
+                    removed += 1;
+                }
+            }
+            env.storage()
+                .persistent()
+                .remove(&DataKey::PurgeCursor(player_id));
+        }
 
         events::player_data_purged(&env, &admin, player_id, removed, more);
         Ok((next_cursor, more))

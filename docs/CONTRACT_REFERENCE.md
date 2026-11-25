@@ -6177,11 +6177,12 @@ with `InvalidPeerContract` (#1610).
 #### `purge_player_data(player_id, cursor) -> Result<(u32, bool), Error>` — verification, progress, scout_access
 
 Admin-only, paged GDPR erasure of a player's current-state ledger entries.
-Call with `cursor = 0`, then pass the returned cursor back while the returned
-flag is `true`. scout_access refuses (`TrialEscrowOutstanding`, code 59) while
-any of the player's trial escrows is still outstanding — refund or expire the
-escrow first (see `admin_refund_trial_escrow` and `expire_trial_offers`).
-=======
+Call with `cursor = 0`, then pass that contract's returned cursor back while
+the returned flag is `true`. Wrong, stale, and out-of-range cursors are
+rejected with `InvalidPurgeCursor`; scalar keys are removed on the final page.
+scout_access refuses (`TrialEscrowOutstanding`, code 59) while any of the
+player's trial escrows is still outstanding — refund or expire the escrow first
+(see `admin_refund_trial_escrow` and `expire_trial_offers`).
 
 Full per-contract reference sections (signature, guards, keys removed per page,
 errors and the `player_data_purged` event) are documented under

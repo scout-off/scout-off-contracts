@@ -245,4 +245,7 @@ pub enum DataKey {
     /// Re-wiring epoch for [`DataKey::ScoutAccessContract`], bumped by
     /// every `set_scout_access_contract` call.
     ScoutAccessContractEpoch,
+    /// The next accepted cursor for a player's paged erasure. Absent before
+    /// erasure starts and after it completes.
+    PurgeCursor(u64),
 }
