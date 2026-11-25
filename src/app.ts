@@ -24,7 +24,7 @@ import {
   register,
 } from "./metrics";
 import { buildJwks } from "./jwks";
-
+import { listPlayers, getPlayer } from "./services/players";
 const app = express();
 
 // Health endpoints are registered before the JSON body parser and any
@@ -375,5 +375,77 @@ app.get("/api/tokens/me", requireAuth, async (req: Request, res: Response) => {
   );
   return res.json({ sub, role, jti });
 });
+
+// Player discovery endpoint — scouts only
+// GET /api/players?region=NG&position=FW&minLevel=2&cursor=...&limit=...
+app.get(
+  "/api/players",
+  requireAuth,
+  requireRole(["scout", "admin"]),
+  async (req: Request, res: Response) => {
+    const { sub: scoutWallet, role } = req.user!;
+    const { region, position, minLevel, cursor, limit } = req.query;
+
+    try {
+      const result = await listPlayers(
+        scoutWallet,
+        {
+          region: region as string | undefined,
+          position: position as string | undefined,
+          minLevel: minLevel ? parseInt(minLevel as string, 10) : undefined,
+        },
+        cursor as string | null,
+        limit ? parseInt(limit as string, 10) : 20
+      );
+
+      res.json(result);
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.message === "Invalid region code") {
+          return res.status(400).json({ error: "invalid_region" });
+        }
+        if (error.message === "Invalid position code") {
+          return res.status(400).json({ error: "invalid_position" });
+        }
+        if (error.message === "Invalid minLevel") {
+          return res.status(400).json({ error: "invalid_min_level" });
+        }
+        if (error.message === "Invalid cursor") {
+          return res.status(400).json({ error: "invalid_cursor" });
+        }
+      }
+      console.error("GET /api/players: unexpected error", error);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
+// Single player endpoint — scout or the player themselves
+// GET /api/players/:playerId
+app.get(
+  "/api/players/:playerId",
+  requireAuth,
+  async (req: Request, res: Response) => {
+    const { sub: requesterWallet, role } = req.user!;
+    const { playerId } = req.params;
+
+    try {
+      const playerIdBigInt = BigInt(playerId);
+      const player = await getPlayer(playerIdBigInt, requesterWallet, role);
+
+      if (!player) {
+        return res.status(404).json({ error: "player_not_found" });
+      }
+
+      res.json(player);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("invalid BigInt")) {
+        return res.status(400).json({ error: "invalid_player_id" });
+      }
+      console.error("GET /api/players/:playerId: unexpected error", error);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
 
 export { app };

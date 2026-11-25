@@ -147,11 +147,45 @@ Progress levels are configured per player and enforced on-chain by authorized va
 ### Scout Functions
 
 - `subscribe(scout_wallet, tier)` — Purchase a scout subscription to access filtered talent pool
-- `pay_to_contact(player_id, scout_wallet)` — Pay micro-fee to unlock premium data or initiate direct contact
-- `log_trial_offer(player_id, scout_wallet, details_hash)` — Record a trial offer on-chain and escrow the trial fee (step 1 of 2; does not advance the player's level)
-- `confirm_trial_offer(player_wallet, player_id, index, idempotency_nonce)` — Player confirms a pending trial offer before it expires, releasing the escrow and advancing the player to Level 3 (step 2 of 2)
+- `pay_to_contact(scout_wallet, player_id)` — Pay micro-fee to unlock player contact information (scout auth required)
+- `log_trial_offer(scout_wallet, player_id, details_hash)` — Log a trial offer for Elite Tier advancement (Elite scout auth required)
 
-### Subscription Tier Access
+### Backend API Endpoints
+
+The backend service provides REST endpoints for player discovery and authentication:
+
+#### Authentication (SEP-10)
+
+- `GET /auth?account=...` — Request a SEP-10 challenge transaction
+- `POST /auth` — Submit signed challenge to receive access token
+- `POST /auth/refresh` — Refresh access token using refresh token
+
+#### Player Discovery (Scout-Only)
+
+- `GET /api/players?region=NG&position=FW&minLevel=2&cursor=...&limit=...` — Search players with filters and keyset pagination
+  - Requires valid JWT with `scout` or `admin` role
+  - Filters: `region` (ISO 3166-1 alpha-2), `position` (e.g., ST, FW, GK), `minLevel` (0-3)
+  - Pagination: opaque `cursor` for keyset pagination, `limit` (1-50, default 20)
+  - Tier visibility: wallet and IPFS hashes omitted for under-tier scouts
+  - Deactivated/erased players are excluded
+- `GET /api/players/:playerId` — Get single player profile
+  - Accessible to the player themselves (full data), scouts (tier-gated), or admins (full data)
+  - Returns 404 for deactivated or non-existent players
+
+#### Subscription Tier Access
+
+Player visibility is gated by subscription tier per the cross-doc consistency check:
+
+| ProgressLevel | Minimum Tier | Description |
+|---------------|--------------|-------------|
+| Unverified (0) | None | Public profile metadata only (no contact) |
+| VerifiedIdentity (1) | Basic | Basic scouts can view full profile |
+| PerformanceMilestones (2) | Pro | Pro scouts can view full profile |
+| EliteTier (3) | Elite | Elite scouts can view full profile |
+
+See `scripts/check-cross-doc-consistency.sh` for the automated consistency check between README.md and CONTRACT_REFERENCE.md.
+
+### Subscription Tier Access (On-Chain)
 
 Each tier controls which player progress levels a scout can view and what actions they can perform. These rules are enforced on-chain by the `scout_access` contract.
 
