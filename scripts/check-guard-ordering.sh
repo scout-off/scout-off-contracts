@@ -45,6 +45,12 @@ INTENTIONAL_EXEMPTIONS=(
     "upgrade"
     # update_progress_contract — admin-only re-wiring, no user data access.
     "update_progress_contract"
+    # purge_player_data — erasure is a compliance operation, not user activity,
+    # so it is intentionally allowed while the contract is paused. All three
+    # contracts use require_admin → require_initialized → bump_instance_ttl
+    # (no require_not_paused), so this is an intentional exception to the
+    # not_paused → initialized convention.
+    "purge_player_data"
 )
 
 ERRORS=0

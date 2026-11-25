@@ -104,6 +104,26 @@ This invariant is enforced by the combination of:
 Run the following steps **in order**. Each cross-contract purge must complete
 (`more == false`) before moving to the next step.
 
+### Guards on `purge_player_data`
+
+All three `purge_player_data` functions (`scout_access`, `verification`,
+`progress`) share the same guard set and order:
+
+1. `require_admin` — erasure is admin-only.
+2. `require_initialized` — the contract must be initialized.
+3. `bump_instance_ttl` — instance storage TTL is extended.
+
+Erasure is **allowed while the contract is paused**. Pausing stops user
+activity, not compliance operations: an operator told to stop processing
+personal data during an incident must still be able to complete erasure.
+Purge calls therefore do not call `require_not_paused`. This is an intentional
+exception to the project's `require_not_paused → require_initialized` guard
+ordering convention and is recorded in `scripts/check-guard-ordering.sh`.
+
+If the escrow-refund path is added to `scout_access.purge_player_data`, note
+explicitly that refunds may occur while the contract is paused, so that
+erasure is never blocked by outstanding escrows during a pause.
+
 ```
 1. Expire or refund all outstanding trial escrows for the player.
    Call:  scout_access.expire_trial_offers(limit)
@@ -145,6 +165,11 @@ the offer exists, but its escrow is still outstanding). This protects scouts
 whose escrowed funds would otherwise be silently destroyed. The operator must
 call `expire_trial_offers` or wait for the escrow window to elapse before
 erasure can proceed.
+
+This guard applies regardless of the pause state: erasure is permitted while
+paused, but outstanding escrows must still be expired or refunded first. If
+refunds are performed as part of the purge path, they may occur while the
+contract is paused.
 
 ---
 
