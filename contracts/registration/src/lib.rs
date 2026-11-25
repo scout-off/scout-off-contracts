@@ -9,10 +9,13 @@ mod events;
 mod types;
 
 use types::{
-    ContractHealth, FilterResult, PlayerProfile, PlayerStatus, PlayerSummary, ProgressLevel,
-    RegistrationWiringState, ScoutProfile, ScoutStatus, ScoutVerificationRecord,
-    StoredPlayerProfile,
+    ContractHealth, PlayerStatus, PlayerSummary, ProgressLevel, RegistrationWiringState,
+    ScoutProfile, ScoutStatus, ScoutVerificationRecord, StoredPlayerProfile,
 };
+// Re-exported so external integration tests (e.g. tests/integration_progress_sync.rs)
+// can construct register_player's `vitals` argument and read filter_players /
+// get_player results — mirrors scout_access's `pub use types::{FeeConfig, ...}`.
+pub use types::{FilterResult, PlayerProfile};
 
 pub use errors::ScoutChainError;
 pub use types::{DataKey, MigrationAuthorization, MigrationRole};
