@@ -165,7 +165,6 @@ relies on that single build — it does not build the workspace separately. To
 skip building entirely, point `deploy.sh` at prebuilt release WASMs with
 `PREBUILT_WASM_DIR` (see [Reproducible builds and deployed-WASM
 verification](#reproducible-builds-and-deployed-wasm-verification-issue-1614)).
-=======
 
 ### 3. Initialize and wire contracts
 
