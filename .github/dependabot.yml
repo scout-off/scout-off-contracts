@@ -5,3 +5,60 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+
+  # Rust dependencies (Cargo.lock), including soroban-sdk and crypto crates.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+    groups:
+      soroban:
+        patterns:
+          - "soroban-*"
+      other:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "soroban-*"
+    ignore:
+      # soroban-sdk major bumps require a coordinated protocol migration.
+      - dependency-name: soroban-sdk
+        update-types:
+          - version-update:semver-major
+
+  # npm dependencies at the repo root.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+    groups:
+      dev-dependencies:
+        dependency-type: development
+      prod-dependencies:
+        dependency-type: production
+
+  # npm dependencies for each bindings/* directory.
+  # These packages are regenerated from the contracts, so updates are
+  # intentionally limited to keep PR noise down; bump them manually when
+  # regenerating bindings.
+  - package-ecosystem: npm
+    directory: /bindings
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    groups:
+      dev-dependencies:
+        dependency-type: development
+      prod-dependencies:
+        dependency-type: production

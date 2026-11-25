@@ -437,6 +437,55 @@ stellar contract invoke \
 
 Without the full wiring, milestones and trial offers are recorded but player levels do not advance.
 
+### `contract_kind()` and the wiring handshake
+
+Every contract exposes `contract_kind() -> Symbol`, which identifies the kind of
+contract at that address:
+
+| Contract | `contract_kind()` returns |
+|----------|---------------------------|
+| `contracts/registration` | `"registration"` |
+| `contracts/verification` | `"verification"` |
+| `contracts/progress` | `"progress"` |
+| `contracts/scout_access` | `"scout_access"` |
+
+Each `set_*_contract` setter performs an on-chain **wiring handshake** before
+storing the peer address: it calls `contract_kind()` on the candidate address
+and rejects it when the returned symbol does not match the expected peer kind.
+The setters that check the handshake are:
+
+| Contract | Setter | Expected peer kind |
+|----------|--------|--------------------|
+| `registration` | `set_progress_contract` | `"progress"` |
+| `verification` | `set_progress_contract`, `update_progress_contract` | `"progress"` |
+| `verification` | `set_registration_contract` | `"registration"` |
+| `progress` | `set_verification_contract` | `"verification"` |
+| `progress` | `set_registration_contract` | `"registration"` |
+| `progress` | `set_scout_access_contract` | `"scout_access"` |
+| `scout_access` | `set_progress_contract`, `update_progress_contract` | `"progress"` |
+| `scout_access` | `set_registration_contract` | `"registration"` |
+
+On a mismatch the setter fails with the contract's `InvalidPeerContract` error
+variant and the address is **not** stored:
+
+| Contract | Error variant | Code |
+|----------|---------------|------|
+| `registration` | `ScoutChainError::InvalidPeerContract` | 19 |
+| `verification` | `VerificationError::InvalidPeerContract` | 44 |
+| `progress` | `ProgressError::InvalidPeerContract` | 11 |
+| `scout_access` | `ScoutAccessError::InvalidPeerContract` | 24 |
+
+The same `InvalidPeerContract` error is returned when the candidate address is
+not a ScoutChain contract at all (for example a plain Stellar account, a token
+contract, or a typo'd contract ID) — the `contract_kind()` call fails or returns
+an unexpected symbol, and the setter rejects the address. This catches
+mis-wiring at configuration time rather than as an opaque failure on the first
+cross-contract call.
+
+See [`docs/WIRING_REGISTRY_DESIGN.md`](docs/WIRING_REGISTRY_DESIGN.md) for the
+canonical link list and [`docs/CONTRACT_REFERENCE.md`](docs/CONTRACT_REFERENCE.md)
+for the full setter reference.
+
 ## TypeScript Bindings
 
 After deployment, run `./scripts/generate-bindings.sh testnet` to produce auto-generated TypeScript clients in `bindings/`. The backend and frontend import these directly:
@@ -702,6 +751,7 @@ Each contract defines its own error enum. The same numeric code can mean differe
 | 16 | `RegistrationCooldown` | Caller attempted to register again before the cooldown period elapsed | Wait for the cooldown window to pass, then retry |
 | 17 | `PlayerRecordEvicted` | `restore_player_record` targeted a player entry whose archival grace period has fully elapsed | Unrecoverable; the record was evicted, not merely archived |
 | 18 | `ScoutRecordEvicted` | `restore_scout_record` targeted a scout entry that has been fully evicted | Unrecoverable; the record was evicted, not merely archived |
+| 19 | `InvalidPeerContract` | A `set_*_contract` setter was given an address whose `contract_kind()` does not match the expected peer kind (or is not a ScoutChain contract) | Pass the contract ID of the correct contract kind; see "Cross-Contract Wiring" |
 
 ### `VerificationError` (verification contract)
 
@@ -750,6 +800,7 @@ Each contract defines its own error enum. The same numeric code can mean differe
 | 41 | `AlreadyVoted` | `cast_dispute_vote` called by a validator who has already voted on this dispute | No action; one vote per validator per dispute |
 | 42 | `VotingWindowOpen` | `tally_dispute` called before the voting window closes, with the vote count tied at or above quorum | Wait for the voting window to close before tallying a tied vote |
 | 43 | `QuorumNotReached` | `tally_dispute` called before the voting window closes and the required quorum of votes has not yet been reached | Wait for more votes or for the voting window to close |
+| 44 | `InvalidPeerContract` | A `set_*_contract` / `update_progress_contract` setter was given an address whose `contract_kind()` does not match the expected peer kind (or is not a ScoutChain contract) | Pass the contract ID of the correct contract kind; see "Cross-Contract Wiring" |
 
 ### `ProgressError` (progress contract)
 
@@ -765,6 +816,7 @@ Each contract defines its own error enum. The same numeric code can mean differe
 | 8 | `Overflow` | History counter overflowed | Contact admin |
 | 9 | `RegistrationCallFailed` | Cross-contract call to registration contract failed | Verify the registration contract is deployed and wired |
 | 10 | `PendingAdminNotSet` | `accept_admin` called without a prior `propose_admin` | Call `propose_admin` first, then have the proposed address call `accept_admin` |
+| 11 | `InvalidPeerContract` | A `set_*_contract` setter was given an address whose `contract_kind()` does not match the expected peer kind (or is not a ScoutChain contract) | Pass the contract ID of the correct contract kind; see "Cross-Contract Wiring" |
 
 ### `ScoutAccessError` (scout_access contract)
 
@@ -792,6 +844,7 @@ Each contract defines its own error enum. The same numeric code can mean differe
 | 21 | `PendingAdminNotSet` | `accept_admin` called before an admin transfer was proposed | Call `propose_admin` first, then have the proposed address call `accept_admin` |
 | 22 | `TrialOfferAlreadyConfirmed` | `confirm_trial_offer` called twice for the same offer | No action; the offer was already confirmed |
 | 23 | `TrialOfferExpired` | Legacy error code retained for compatibility; expiry confirmation now commits the refund and returns success | Log a new trial offer after the refund event |
+| 24 | `InvalidPeerContract` | A `set_*_contract` / `update_progress_contract` setter was given an address whose `contract_kind()` does not match the expected peer kind (or is not a ScoutChain contract) | Pass the contract ID of the correct contract kind; see "Cross-Contract Wiring" |
 
 ## Events
 
@@ -844,7 +897,7 @@ MIT
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — full deployment guide including mainnet checklist
 - [docs/CONTRACT_REFERENCE.md](docs/CONTRACT_REFERENCE.md) — complete function reference for all four contracts
 - [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) — PR checklist and contribution guidelines
-- [docs/GLOSSARY.md](docs/GLOSSARY.md) — definitions of all domain-specific terms (scout, validator, milestone, CID, etc.)
+- [docs/GLOSSARY.md](docs/GLOSSARY.md) — definitions of all domain-specific terms (scout, validator, milestone, CID, wiring handshake, etc.)
 - [ai.md](ai.md) — cross-repo integration guide for AI assistants and new team members
 
 ## Support
