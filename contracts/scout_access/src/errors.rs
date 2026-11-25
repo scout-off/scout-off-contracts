@@ -134,6 +134,11 @@ pub enum ScoutAccessError {
     /// `admin_revoke_evidence_access` targeted a (player_id, scout) pair for
     /// which no `EvidenceAccessGrant` record exists.
     GrantNotFound = 38,
+
+    // ── Player erasure (issue #1781) ──
+    /// The supplied cursor does not match the stored purge cursor for this player.
+    /// This prevents skipping data by passing a wrong starting position.
+    PurgeCursorMismatch = 39,
 }
 
 impl AdminError for ScoutAccessError {

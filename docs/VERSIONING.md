@@ -10,7 +10,7 @@ ScoutChain contracts follow [Semantic Versioning 2.0.0](https://semver.org/) —
 | **MINOR** | Backward-compatible addition — new function, new event, new error code appended at end of enum |
 | **PATCH** | Backward-compatible fix — bug fix, gas optimisation, documentation update in source |
 
-The current workspace version of all four contracts is **v1.1.0**. Contract-specific
+The current workspace version of all four contracts is **v1.2.0**. Contract-specific
 releases in the Version History table may describe changes that were deployed to
 only one contract, but the shared workspace version remains the build-time value
 reported by every contract's `version()` function.
@@ -143,6 +143,7 @@ When adding new entries to the Version History table:
 | v0.3.1 (scout_access) | 2026-08-18 | MINOR | Implemented `EvidenceAccessGrant` confidential-evidence access tracking: `pay_to_contact` and `batch_contact_players` record a grant, `has_evidence_access` / `get_evidence_access_grant` / `get_player_access_grants` expose it, and `admin_revoke_evidence_access` makes a grant non-active without deleting the historical record. |
 | v0.4.0 (verification) | 2026-08-19 | MAJOR | BREAKING: Added dispute-jury escalation for high-impact milestone disputes. `MilestoneDispute` grows with `impact_score`, `jury_required`, `quorum`, `votes_for`, `votes_against`, and `voting_deadline`; `set_jury_config`, `cast_dispute_vote`, and `tally_dispute` add the full jury flow, while low-impact disputes remain admin-resolved. Requires migration for existing stored disputes. |
 | v1.0.0 (verification) | 2026-08-19 | MAJOR | BREAKING: `revoke_validator` and `batch_revoke_validators` parameter lists changed — explicit `RevocationSeverity` enum replaces magic-string severity inference. Added for-cause cascade sweep (`run_cascade_sweep`, `continue_revocation_cascade`), `is_milestone_flagged`, `rereview_milestone`, `get_revocation_record`. New error codes 32 (`NotEligibleToReReview`) and 33 (`MilestoneNotFlagged`). New events: `milestone_flagged`, `milestone_flag_cleared`, `revocation_cascade_complete`, `revocation_cascade_continued`. See CHANGELOG.md and docs/VALIDATOR_REVOCATION_REREVIEW.md for full details. |
+| v1.2.0 (all) | 2026-11-25 | MINOR | Added resumable player-erasure progress and status views to `progress`, `verification`, and `scout_access`, plus an aggregate registration view and explicit start/completion events (issue #1781). Additive ABI change; see CHANGELOG.md and docs/PLAYER_ERASURE.md. |
 | v1.1.0 (all) | 2026-08-20 | MINOR | Added unauthenticated scalar peer-address getters (issue #1116) for six of the platform's eight cross-contract wiring links (see `docs/WIRING_REGISTRY_DESIGN.md` for the full list); each returns `None` until configured and leaves the aggregate wiring-state APIs unchanged. |
 <!-- Template / Example for future entries: -->
 <!-- | v0.2.0 (verification) | YYYY-MM-DD | MINOR | Added batch verification helper functions | -->

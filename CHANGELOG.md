@@ -28,6 +28,12 @@ Use the structure below for upcoming MINOR or MAJOR contract changes:
 
 > **Breaking-change classification rules:** See [docs/VERSIONING.md — What Constitutes a Breaking Change](VERSIONING.md#what-constitutes-a-breaking-change) for the full criteria (storage layout changes, function signature changes, error code renumbering, event schema changes, cross-contract interface changes).
 
+- Version: `v1.2.0`
+- Release date: `2026-11-25`
+- Contracts affected: `progress`, `registration`, `scout_access`, `verification`
+- Summary: Added resumable, on-chain player-erasure status to all three purging contracts and an aggregate status view to registration (issue #1781). Purge calls now validate and advance the stored cursor; new `player_purge_started` and `player_purge_completed` events bracket the existing per-page event. These additive views, events, and storage keys are a MINOR ABI change; see [docs/PLAYER_ERASURE.md](docs/PLAYER_ERASURE.md) and [docs/EVENT_REFERENCE.md](docs/EVENT_REFERENCE.md).
+- Classification: `Non-breaking (MINOR)`
+
 - Version: `v0.4.0`
 - Release date: `2026-08-19`
 - Contracts affected: `verification`

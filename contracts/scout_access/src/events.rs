@@ -21,6 +21,9 @@ pub const FEE_CONFIG_PROPOSED: &str = "fee_config_proposed";
 pub const FEE_CONFIG_UPDATED: &str = "fee_config_updated";
 pub const FEE_CONFIG_DELAY_BYPASSED: &str = "fee_config_delay_bypassed";
 pub const WIRING_UPDATED: &str = "wiring_updated";
+pub const PLAYER_PURGE_STARTED: &str = "player_purge_started";
+pub const PLAYER_DATA_PURGED: &str = "player_data_purged";
+pub const PLAYER_PURGE_COMPLETED: &str = "player_purge_completed";
 
 /// topics: (event_name, admin)  data: admin
 pub fn contract_initialized(env: &Env, admin: &Address) {
@@ -356,5 +359,41 @@ pub fn evidence_access_revoked(env: &Env, player_id: u64, scout: &Address, admin
     env.events().publish(
         (Symbol::new(env, EVIDENCE_ACCESS_REVOKED), scout.clone()),
         (player_id, admin.clone()),
+    );
+}
+
+// ── Player erasure events (issue #1781) ──────────────────────────────────────
+
+/// Emitted on the **first** page of `purge_player_data` for a player.
+/// topics: (event_name, admin)  data: player_id
+pub fn player_purge_started(env: &Env, admin: &Address, player_id: u64) {
+    env.events().publish(
+        (Symbol::new(env, PLAYER_PURGE_STARTED), admin.clone()),
+        player_id,
+    );
+}
+
+/// Emitted on **every** page (including start and completion pages).
+/// topics: (event_name, admin)  data: (player_id, entries_removed, next_cursor, more)
+pub fn player_data_purged(
+    env: &Env,
+    admin: &Address,
+    player_id: u64,
+    entries_removed: u32,
+    next_cursor: u32,
+    more: bool,
+) {
+    env.events().publish(
+        (Symbol::new(env, PLAYER_DATA_PURGED), admin.clone()),
+        (player_id, entries_removed, next_cursor, more),
+    );
+}
+
+/// Emitted on the **last** page of `purge_player_data` when no data remains.
+/// topics: (event_name, admin)  data: player_id
+pub fn player_purge_completed(env: &Env, admin: &Address, player_id: u64) {
+    env.events().publish(
+        (Symbol::new(env, PLAYER_PURGE_COMPLETED), admin.clone()),
+        player_id,
     );
 }

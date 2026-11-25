@@ -2,6 +2,22 @@ use soroban_sdk::{contracttype, Address, String};
 
 pub use scoutchain_shared_types::WiringLink;
 
+/// On-chain erasure progress for one player on this contract.
+///
+/// Returned by `get_purge_status`. Answers "is player X fully erased here?"
+/// without event-log replay.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PurgeStatus {
+    /// Whether purge_player_data has been called at least once for this player.
+    pub started: bool,
+    /// The stored cursor position (next batch to remove).
+    /// Only meaningful while `started && !completed`.
+    pub cursor: u32,
+    /// Whether all player data has been removed from this contract.
+    pub completed: bool,
+}
+
 /// Paginated response for `get_scout_contacts_page`.
 ///
 /// Follows the `{ entries, total }` convention established by
@@ -284,6 +300,17 @@ pub enum DataKey {
     /// scanning every grant a popular player has ever accumulated. See
     /// `ACCESS_GRANT_PAGE_SIZE` in `lib.rs`.
     EvidenceAccessGrantPage(u64, u32),
+
+    // ── Player erasure (issue #1781) ──
+    /// Stored cursor for an in-progress or completed purge of `player_id`.
+    /// Written on the first `purge_player_data` call and updated on every
+    /// subsequent page. The value is the *next* cursor position to process;
+    /// `0` while not yet started (key absent), advancing by one per page.
+    PurgeCursor(u64),
+    /// Marker written (value: `true`) after the final `purge_player_data`
+    /// page removes all remaining entries for `player_id`. Stored with a
+    /// long TTL so auditors can confirm erasure without replaying events.
+    PurgeCompleted(u64),
 }
 
 /// Snapshot of both cross-contract peer address pointers held by the

@@ -20,8 +20,8 @@ pub use types::{
     AttestationStatus, ContractHealth, DataKey, DisputeVote, DiversityConfig, GlobalMilestoneEntry,
     GlobalMilestoneIndexPage, JuryConfig, Milestone, MilestoneAttestation, MilestoneDispute,
     MilestoneRef, MilestoneRefPage, MilestoneWithValidatorStatus, PendingMilestoneClaim,
-    PendingVoteRef, RevocationRecord, RevocationSeverity, Validator, ValidatorActivityReport,
-    ValidatorPlayersPage, ValidatorStatus, VerificationWiringState,
+    PendingVoteRef, PurgeStatus, RevocationRecord, RevocationSeverity, Validator,
+    ValidatorActivityReport, ValidatorPlayersPage, ValidatorStatus, VerificationWiringState,
 };
 
 use soroban_sdk::xdr::ToXdr;
@@ -3753,6 +3753,222 @@ impl VerificationContract {
             }
         }
         results
+    }
+
+    // -------------------------------------------------------------------------
+    // Player erasure (issue #1781)
+    // -------------------------------------------------------------------------
+
+    /// Remove all on-chain milestone and dispute data for `player_id` from
+    /// this contract, one page at a time.
+    ///
+    /// Pages:
+    /// - Page 0: `MilestoneCounter(player_id)`, `PlayerDisputes(player_id)`,
+    ///           `PlayerAffiliations(player_id)`.
+    /// - Pages 1…n: `Milestone(player_id, i)` batches of `PURGE_PAGE_SIZE`.
+    ///
+    /// A `player_purge_started` event is emitted on the first call.
+    /// `player_data_purged` is emitted every call. `player_purge_completed`
+    /// is emitted — and `PurgeCompleted` stored — when erasure finishes.
+    ///
+    /// Admin-only. The supplied `cursor` must equal the stored cursor or be
+    /// `0` on the first call.
+    pub fn purge_player_data(
+        env: Env,
+        admin: Address,
+        player_id: u64,
+        cursor: u32,
+    ) -> Result<(u32, bool), VerificationError> {
+        admin.require_auth();
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+
+        const PURGE_PAGE_SIZE: u32 = 20;
+
+        let stored_cursor: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PurgeCursor(player_id))
+            .unwrap_or(0u32);
+
+        if cursor != stored_cursor {
+            return Err(VerificationError::InvalidInput);
+        }
+
+        let already_done: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PurgeCompleted(player_id))
+            .unwrap_or(false);
+        if already_done {
+            return Ok((0u32, false));
+        }
+
+        if stored_cursor == 0 {
+            events::player_purge_started(&env, &admin, player_id);
+        }
+
+        let mut entries_removed: u32 = 0u32;
+
+        if stored_cursor == 0 {
+            // Read milestone count BEFORE removing the counter key.
+            let milestone_count: u32 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::MilestoneCounter(player_id))
+                .unwrap_or(0u32);
+
+            // Remove scalar player keys.
+            let keys_to_try: [DataKey; 3] = [
+                DataKey::MilestoneCounter(player_id),
+                DataKey::PlayerDisputes(player_id),
+                DataKey::PlayerAffiliations(player_id),
+            ];
+            for key in &keys_to_try {
+                if env.storage().persistent().has(key) {
+                    env.storage().persistent().remove(key);
+                    entries_removed = entries_removed
+                        .checked_add(1)
+                        .ok_or(VerificationError::Overflow)?;
+                }
+            }
+
+            if env
+                .storage()
+                .persistent()
+                .has(&DataKey::PurgeCompleted(player_id))
+            {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::PurgeCompleted(player_id));
+            }
+
+            let has_more = milestone_count > 0
+                && env
+                    .storage()
+                    .persistent()
+                    .has(&DataKey::Milestone(player_id, 1));
+
+            let next_cursor: u32 = if has_more { 1u32 } else { 0u32 };
+            let more = next_cursor > 0;
+
+            env.storage()
+                .persistent()
+                .set(&DataKey::PurgeCursor(player_id), &next_cursor);
+            env.storage().persistent().extend_ttl(
+                &DataKey::PurgeCursor(player_id),
+                PERSISTENT_TTL_MIN,
+                PERSISTENT_TTL_MAX,
+            );
+
+            if !more {
+                Self::ver_mark_purge_complete(
+                    &env,
+                    &admin,
+                    player_id,
+                    entries_removed,
+                    next_cursor,
+                );
+                return Ok((0u32, false));
+            }
+
+            events::player_data_purged(&env, &admin, player_id, entries_removed, next_cursor, more);
+            return Ok((next_cursor, more));
+        }
+
+        // Pages 1+: Milestone batches.
+        let batch_start = (stored_cursor - 1) * PURGE_PAGE_SIZE + 1;
+        let batch_end = batch_start + PURGE_PAGE_SIZE;
+
+        let mut last_removed: u32 = 0;
+        for i in batch_start..batch_end {
+            let m_key = DataKey::Milestone(player_id, i);
+            if env.storage().persistent().has(&m_key) {
+                env.storage().persistent().remove(&m_key);
+                entries_removed = entries_removed
+                    .checked_add(1)
+                    .ok_or(VerificationError::Overflow)?;
+                last_removed = i;
+                // Also remove associated dispute record if present.
+                let d_key = DataKey::MilestoneDispute(player_id, i);
+                if env.storage().persistent().has(&d_key) {
+                    env.storage().persistent().remove(&d_key);
+                    entries_removed = entries_removed
+                        .checked_add(1)
+                        .ok_or(VerificationError::Overflow)?;
+                }
+            } else {
+                break;
+            }
+        }
+
+        let next_entry = last_removed + 1;
+        let has_more = last_removed > 0
+            && env
+                .storage()
+                .persistent()
+                .has(&DataKey::Milestone(player_id, next_entry));
+
+        let next_cursor: u32 = if has_more { stored_cursor + 1 } else { 0u32 };
+        let more = next_cursor > 0;
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::PurgeCursor(player_id), &next_cursor);
+        env.storage().persistent().extend_ttl(
+            &DataKey::PurgeCursor(player_id),
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
+
+        if !more {
+            Self::ver_mark_purge_complete(&env, &admin, player_id, entries_removed, next_cursor);
+            return Ok((0u32, false));
+        }
+
+        events::player_data_purged(&env, &admin, player_id, entries_removed, next_cursor, more);
+        Ok((next_cursor, more))
+    }
+
+    /// Return the on-chain erasure status for `player_id` on this contract.
+    pub fn get_purge_status(env: Env, player_id: u64) -> PurgeStatus {
+        let started = env
+            .storage()
+            .persistent()
+            .has(&DataKey::PurgeCursor(player_id));
+        let cursor: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PurgeCursor(player_id))
+            .unwrap_or(0u32);
+        let completed: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PurgeCompleted(player_id))
+            .unwrap_or(false);
+        PurgeStatus {
+            started,
+            cursor,
+            completed,
+        }
+    }
+
+    fn ver_mark_purge_complete(
+        env: &Env,
+        admin: &Address,
+        player_id: u64,
+        entries_removed: u32,
+        next_cursor: u32,
+    ) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::PurgeCompleted(player_id), &true);
+        env.storage().persistent().extend_ttl(
+            &DataKey::PurgeCompleted(player_id),
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
+        events::player_data_purged(env, admin, player_id, entries_removed, next_cursor, false);
+        events::player_purge_completed(env, admin, player_id);
     }
 
     // -------------------------------------------------------------------------

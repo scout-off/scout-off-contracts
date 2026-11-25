@@ -7,6 +7,9 @@ pub const ADMIN_TRANSFER_PROPOSED: &str = "admin_transfer_proposed";
 pub const PROGRESS_UPDATED: &str = "progress_updated";
 pub const PLAYER_LEVEL_RESET: &str = "player_level_reset";
 pub const WIRING_UPDATED: &str = "wiring_updated";
+pub const PLAYER_PURGE_STARTED: &str = "player_purge_started";
+pub const PLAYER_DATA_PURGED: &str = "player_data_purged";
+pub const PLAYER_PURGE_COMPLETED: &str = "player_purge_completed";
 
 /// topics: (event_name, old_admin)  data: new_admin
 pub fn admin_transferred(env: &Env, old_admin: &Address, new_admin: &Address) {
@@ -99,6 +102,42 @@ pub fn player_level_record_restored(env: &Env, admin: &Address, player_id: u64) 
             Symbol::new(env, "player_level_record_restored"),
             admin.clone(),
         ),
+        player_id,
+    );
+}
+
+// ── Player erasure events (issue #1781) ──────────────────────────────────────
+
+/// Emitted on the **first** page of `purge_player_data` for a player.
+/// topics: (event_name, admin)  data: player_id
+pub fn player_purge_started(env: &Env, admin: &Address, player_id: u64) {
+    env.events().publish(
+        (Symbol::new(env, "player_purge_started"), admin.clone()),
+        player_id,
+    );
+}
+
+/// Emitted on **every** page (including start and completion pages).
+/// topics: (event_name, admin)  data: (player_id, entries_removed, next_cursor, more)
+pub fn player_data_purged(
+    env: &Env,
+    admin: &Address,
+    player_id: u64,
+    entries_removed: u32,
+    next_cursor: u32,
+    more: bool,
+) {
+    env.events().publish(
+        (Symbol::new(env, "player_data_purged"), admin.clone()),
+        (player_id, entries_removed, next_cursor, more),
+    );
+}
+
+/// Emitted on the **last** page of `purge_player_data` when no data remains.
+/// topics: (event_name, admin)  data: player_id
+pub fn player_purge_completed(env: &Env, admin: &Address, player_id: u64) {
+    env.events().publish(
+        (Symbol::new(env, "player_purge_completed"), admin.clone()),
         player_id,
     );
 }
