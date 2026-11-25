@@ -743,6 +743,27 @@ Migration state replay must run in order: `open_migration_window` → `admin_see
 UPGRADE_SOURCE=admin ./scripts/upgrade.sh --contract <id> --wasm <path> [--network testnet]
 ```
 
+### Monitoring migration windows
+
+An **open migration window is security-relevant**: while it is open, the
+`admin_seed_*` entrypoints accept writes that bypass normal validation, so an
+unexpectedly open window is an incident signal.
+
+- **Alert on `migration_window_opened` in production (mainnet).** Page the
+  on-call operator on any occurrence that was not scheduled as part of a
+  planned upgrade. `migration_window_closed` should follow within the planned
+  maintenance window; a window left open past its expected close time is also
+  worth alerting on.
+- `migration_window_opened` / `migration_window_closed` are emitted by
+  `progress`, `verification` and `scout_access`; `progress` additionally emits
+  `schema_migrated` from `migrate()`. See the
+  [EVENT_REFERENCE.md entries](EVENT_REFERENCE.md#migration-window-events)
+  for the exact topics/data per contract.
+- **Registration is different.** It has no migration window and does not emit
+  these events — it uses a separate migration-ticket mechanism instead. Do not
+  expect `migration_window_*` events from the registration contract, and do not
+  treat their absence there as a problem.
+
 ---
 
 ## Re-index from Archive
