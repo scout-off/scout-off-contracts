@@ -19,7 +19,7 @@ Stellar is the backbone: transactions cost fractions of a cent and settle in 3�
 - **Scout Discovery**: Filter players by region, position, and verified progress tier
 - **Pay-to-Contact**: Scouts pay micro-fees in $XLM or platform token to unlock premium data or initiate contact
 - **Validator Network**: Local coaches, academy directors, and certified trainers act as trusted on-chain validators
-- **Wallet-Based Auth**: Players and scouts log in securely via Stellar wallets (Freighter, Albedo, or Lobstr) using SEP-10
+- **Wallet-Based Auth**: Players and scouts log in securely via Stellar wallets (Freighter, Albedo, or Lobstr) using SEP-10 — see the [backend wallet-login guide](docs/BACKEND_AUTH.md) for the full challenge/sign/verify/refresh flow
 - **Fractionalized Sponsorship** *(Future)*: Fans and local investors fund players via "Player Tokens" with transfer fee revenue sharing
 
 ## Architecture
@@ -190,10 +190,30 @@ Each tier controls which player progress levels a scout can view and what action
 - `get_progress_history(player_id)` — Tamper-proof timeline of milestone approvals, returned in full. For players with very long histories, use the paginated getters below instead.
 - `get_progress_history_page(player_id, offset, limit)` — Offset-based paginated history, `limit` capped at 50 entries per page
 - `get_history_page_with_cursor(player_id, cursor_snapshot, cursor_next_index, limit)` — Cursor-based paginated history that snapshots the entry count on the first call, so pages stay consistent even if `advance_level` is called concurrently; `limit` capped at 50 entries per page
+- `get_history_since_v2(player_id, since_timestamp, limit) -> HistorySince` — **Recommended** timestamp-based history query. Returns a `HistorySince` with two fields:
+  - `entries` — the matching history entries, newest first, up to `limit`
+  - `truncated` — `true` when more matching entries may exist beyond `limit` or beyond the 10-page scan cap; `false` when the result is complete
+  When `truncated` is `true`, page further with `get_history_page_with_cursor` (or raise `limit`) until you have everything — do not assume `entries` is the full set.
+- `get_history_since(player_id, since_timestamp, limit)` — **Superseded — prefer `get_history_since_v2`.** This variant silently truncates at `limit` or the 10-page scan cap and gives no signal that entries were dropped, so clients can miss history without noticing.
 - `filter_players(region, position, min_level, offset, limit)` — Paginated scout discovery query; returns a `FilterResult` with a `profiles` page and a `next_cursor` (pass it back as `offset` to continue, `0` means no more results)
 - `get_trial_offers_page(player_id, offset, limit)` — Offset-based paginated trial offers for a player; `limit` is capped at the contract's maximum page size and the returned page carries a `more` flag indicating whether further offers remain. This **replaces** `get_all_trial_offers`, which silently returns only the 20 oldest offers — use `get_trial_offers_page` whenever a player may have more than 20 offers.
 - `get_validators()` — Active validator registry
 - `health()` — On-chain health check
+
+### Verification Limits
+
+- `get_limits() -> VerificationLimits` — Returns the verification contract's compile-time protocol constants so clients can pre-validate input instead of hard-coding limits:
+
+| Field | Meaning | Current value |
+|-------|---------|---------------|
+| `max_validators` | Maximum number of registered validators | 100 |
+| `min_credentials_len` | Minimum credentials string length | 1 |
+| `max_credentials_len` | Maximum credentials string length | 256 |
+| `max_description_len` | Maximum milestone description length | 256 |
+| `max_specializations` | Maximum specialization tags per validator | 8 |
+| `max_dispute_rounds` | Maximum dispute rounds per milestone | 3 |
+
+**Client-side validation:** call `get_limits()` and validate against the returned values rather than hard-coding constants — the limits can change with a contract upgrade, and a stale hard-coded value will cause rejected transactions. See the bindings example at [`bindings/verification/examples/getLimits.ts`](bindings/verification/examples/getLimits.ts).
 
 ## Progress Verification Flow
 
@@ -894,6 +914,7 @@ MIT
 
 ## Documentation
 
+- [docs/BACKEND_AUTH.md](docs/BACKEND_AUTH.md) — backend wallet-login (SEP-10) guide with sequence diagram, request/response examples and error codes
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — full deployment guide including mainnet checklist
 - [docs/CONTRACT_REFERENCE.md](docs/CONTRACT_REFERENCE.md) — complete function reference for all four contracts
 - [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) — PR checklist and contribution guidelines
