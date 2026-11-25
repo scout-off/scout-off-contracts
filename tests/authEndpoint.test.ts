@@ -1,4 +1,5 @@
 import request from "supertest";
+import jwt from "jsonwebtoken";
 import { logOutput, mockLogger } from "./setupEnv";
 
 jest.mock("../src/db", () => ({ prisma: {} }));
@@ -23,6 +24,8 @@ jest.mock("../src/logger", () => ({
 
 import { app } from "../src/app";
 import { buildChallengeTx, verifyChallengeTx } from "../src/services/sep10";
+import { config } from "../src/config";
+import { verifyToken } from "../src/middleware/auth";
 
 const VALID_ACCOUNT = "GD2DO5BIZZDWS5URPBXFHFZJR3VFXGGAFSRSAGNJA5AWVKXE53LRZM5N";
 
@@ -129,5 +132,56 @@ describe("x-request-id header", () => {
     const res = await request(app).get("/auth").query({ account: VALID_ACCOUNT });
     expect(res.headers["x-request-id"]).toBeDefined();
     expect(typeof res.headers["x-request-id"]).toBe("string");
+  });
+});
+
+describe("JWT iss/aud enforcement", () => {
+  const sign = (payload: object, options: jwt.SignOptions = {}) =>
+    jwt.sign(payload, config.jwtSecret, {
+      algorithm: "HS256",
+      issuer: config.jwtIssuer,
+      audience: config.jwtAudience,
+      ...options,
+    });
+
+  it("accepts a token with the correct iss and aud", async () => {
+    const token = sign({ sub: VALID_ACCOUNT, role: "user" });
+    const decoded = await verifyToken(token);
+    expect(decoded.sub).toBe(VALID_ACCOUNT);
+  });
+
+  it("rejects a token with the wrong audience", async () => {
+    const token = sign({ sub: VALID_ACCOUNT, role: "user" }, { audience: "other-service" });
+    await expect(verifyToken(token)).rejects.toThrow();
+  });
+
+  it("rejects a token with the wrong issuer", async () => {
+    const token = sign({ sub: VALID_ACCOUNT, role: "user" }, { issuer: "https://evil.example" });
+    await expect(verifyToken(token)).rejects.toThrow();
+  });
+
+  it("rejects a token with no iss or aud", async () => {
+    const token = jwt.sign({ sub: VALID_ACCOUNT, role: "user" }, config.jwtSecret, {
+      algorithm: "HS256",
+    });
+    await expect(verifyToken(token)).rejects.toThrow();
+  });
+
+  it("returns 401 on a protected route for a token with the wrong audience", async () => {
+    const token = sign({ sub: VALID_ACCOUNT, role: "admin" }, { audience: "other-service" });
+    const res = await request(app)
+      .post("/admin/revoke")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ jti: "some-jti" });
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 401 on a protected route for a token with the wrong issuer", async () => {
+    const token = sign({ sub: VALID_ACCOUNT, role: "admin" }, { issuer: "https://evil.example" });
+    const res = await request(app)
+      .post("/admin/revoke")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ jti: "some-jti" });
+    expect(res.status).toBe(401);
   });
 });

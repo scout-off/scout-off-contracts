@@ -62,6 +62,8 @@ export async function issueSep10Token(
       .setProtectedHeader({ alg: "EdDSA", kid: signingKeys.activeKid })
       .setJti(jti)
       .setIssuedAt()
+      .setIssuer(config.jwtIssuer)
+      .setAudience(config.jwtAudience)
       .setExpirationTime(Math.floor(Date.now() / 1000) + accessTokenTtlSeconds())
       .sign(signingKeys.activePrivateKey);
   }
@@ -73,6 +75,8 @@ export async function issueSep10Token(
       algorithm: "HS256",
       expiresIn: accessTokenTtlSeconds(),
       jwtid: jti,
+      issuer: config.jwtIssuer,
+      audience: config.jwtAudience,
     });
   }
 
