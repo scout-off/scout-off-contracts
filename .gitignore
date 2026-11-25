@@ -10,16 +10,12 @@ target/
 .env
 .env.contracts
 .env.contracts.json
--.env.contracts.snapshot
-.env.local
-.env.contracts.json
 .env.contracts.snapshot
+.env.contracts.snapshots/
+.env.local
 
 # Migration state exports (may contain player PII) -- never commit these
 migration-export/
-
-# Migration state exports (may contain player PII) -- never commit these
--migration-export/
 
 # Optimized WASM outputs
 *.optimized.wasm

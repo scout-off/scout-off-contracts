@@ -261,6 +261,34 @@ dispute mechanism itself only records the outcome on-chain.
 
 ---
 
+## Paged Purge (purge_player_data)
+
+The bounded, cursor-driven deletion mechanism used to erase a deregistered
+player's off-chain-referenced state. `purge_player_data` deletes at most
+**50 entries per call** and returns a cursor plus a `more` flag; the caller
+repeats the call with the returned cursor until `more == false`. This keeps
+each invocation within Soroban's CPU and ledger-entry limits instead of
+attempting an unbounded wipe in a single transaction.
+
+A purge removes the player's progress history and verification records, and
+the related `scout_access` records (contact records and evidence access
+grants) that are eligible for deletion. It is guarded so that a player with a
+pending trial-offer escrow cannot be purged until the escrow is resolved
+(confirmed or expired/refunded), preventing escrowed funds from being orphaned.
+
+What is deleted is the mutable on-chain state; what is retained is the
+immutable transaction history and events, plus tombstone records that other
+contracts or audit trails depend on. See [Player Erasure](#player-erasure).
+
+- Relevant functions: `purge_player_data` — see
+  [CONTRACT_REFERENCE.md — registration](CONTRACT_REFERENCE.md#registration)
+  and [CONTRACT_REFERENCE.md — scout_access](CONTRACT_REFERENCE.md#scout_access).
+- Full procedure and retention rules: [PLAYER_ERASURE.md](PLAYER_ERASURE.md).
+- Related: [Player Erasure](#player-erasure),
+  [Scout Deregistration](#scout-deregistration).
+
+---
+
 ## Player
 
 A registered footballer with an on-chain identity. A player is identified by a
@@ -273,6 +301,32 @@ See [Trial Offer](#trial-offer) and [Progress Level](#progress-level).
 
 - Relevant functions: `register_player`, `get_player`, `filter_players` — see
   [CONTRACT_REFERENCE.md](CONTRACT_REFERENCE.md#registration).
+
+---
+
+## Player Erasure
+
+The process by which a player's on-chain profile is removed at the player's
+request via `deregister_player`. Erasure deletes the player profile and the
+indexes that point to it (so the player no longer appears in `filter_players`
+or other lookups), and is followed by [paged purges](#paged-purge-purge_player_data)
+of the remaining mutable state.
+
+Erasure is deliberately **partial**: on-chain transaction history and emitted
+events are immutable and are never deleted — they remain queryable by indexers
+and auditors forever. Records that other parties rely on are retained as
+tombstones rather than removed, for example validator milestone records (so a
+validator's approval history stays auditable) and `ContactRecord` entries (so
+scouts' paid-contact audit trails stay intact). A `player_id` is tombstoned on
+erasure and is **never reused**; a returning player receives a fresh ID.
+
+- Relevant functions: `deregister_player`, `purge_player_data` — see
+  [CONTRACT_REFERENCE.md — registration](CONTRACT_REFERENCE.md#registration)
+  and [CONTRACT_REFERENCE.md — scout_access](CONTRACT_REFERENCE.md#scout_access).
+- Full procedure, retained keys, and tombstone list:
+  [PLAYER_ERASURE.md](PLAYER_ERASURE.md).
+- Related: [Paged Purge (purge_player_data)](#paged-purge-purge_player_data),
+  [Scout Deregistration](#scout-deregistration).
 
 ---
 
@@ -338,6 +392,26 @@ only) log trial offers that a player can confirm to reach Level 3.
 - Relevant functions: `register_scout`, `subscribe`, `pay_to_contact`,
   `log_trial_offer` — see
   [CONTRACT_REFERENCE.md](CONTRACT_REFERENCE.md#scout_access).
+
+---
+
+## Scout Deregistration
+
+The removal of a scout's on-chain profile via `deregister_scout`. The call
+deletes the scout profile and the indexes that reference it, so the scout no
+longer appears in scout lookups and can no longer act as an active scout.
+
+As with [Player Erasure](#player-erasure), deregistration is partial: the
+scout's subscription records and contact audit records (including
+`ContactRecord` and evidence access grants) are **retained** so that payment
+and access history stays auditable, and on-chain transaction history and events
+are immutable and never deleted. Scout IDs are tombstoned and never reused.
+
+- Relevant functions: `deregister_scout` — see
+  [CONTRACT_REFERENCE.md — scout_access](CONTRACT_REFERENCE.md#scout_access).
+- Full procedure and retention rules: [PLAYER_ERASURE.md](PLAYER_ERASURE.md).
+- Related: [Player Erasure](#player-erasure), [Scout](#scout),
+  [ContactRecord](#contactrecord).
 
 ---
 
