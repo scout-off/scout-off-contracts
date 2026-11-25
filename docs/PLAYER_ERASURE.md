@@ -184,4 +184,12 @@ The reconciliation script (`scripts/reconcile-indexer.js`) should treat a
 remove the player row even if the on-chain state no longer has a matching
 record (because the key was erased).
 
+Each `purge_player_data` call on `progress`, `verification` and `scout_access`
+also emits a `player_data_purged` event (`admin`, `player_id`,
+`entries_removed`, `more`). Indexers should use it to scrub rows incrementally:
+the event is emitted once per purge page, `entries_removed` counts the keys
+removed in that call, and `more == false` signals the final page for that
+contract. See the `player_data_purged` entry in `docs/EVENT_REFERENCE.md` for
+the exact topics and data layout of each emitting contract.
+
 See `docs/INDEXER.md` for the indexer cursor model.
