@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 import { createHash, randomBytes } from "crypto";
-import { SignJWT } from "jose";
+import { SignJWT, decodeJwt } from "jose";
 import { WebAuth, Keypair, Networks, TransactionBuilder } from "@stellar/stellar-sdk";
 import { prisma } from "../db";
 import { config } from "../config";
@@ -106,6 +106,19 @@ function sep10Config(): Sep10Config {
     };
   }
   return cachedSep10Config;
+}
+
+/**
+ * Decode the exp claim from a SEP-10 token without verifying it.
+ * Used to store the expiry time in revoked_tokens.
+ */
+export function decodeTokenExpiry(token: string): number | null {
+  try {
+    const payload = decodeJwt(token);
+    return typeof payload.exp === "number" ? payload.exp : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

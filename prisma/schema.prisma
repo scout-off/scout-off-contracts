@@ -14,8 +14,10 @@ datasource db {
 model RevokedToken {
   jti       String   @id @db.VarChar(128)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz(6)
 
   @@index([createdAt], map: "idx_revoked_tokens_created_at")
+  @@index([expiresAt], map: "idx_revoked_tokens_expires_at")
   @@map("revoked_tokens")
 }
 

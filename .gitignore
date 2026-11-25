@@ -37,6 +37,9 @@ Thumbs.db
 # Pull-request drafts
 pr-*.md
 
+# Change summary (local tracking only)
+CHANGES.md
+
 # ── Node / TypeScript build output ──
 # Compiled JS lives in dist/ — never commit it.
 dist/

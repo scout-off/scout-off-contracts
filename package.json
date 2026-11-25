@@ -15,7 +15,8 @@
     "reconcile-indexer": "node scripts/reconcile-indexer.js",
     "test": "jest",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src tests --ext .ts"
+    "lint": "eslint src tests --ext .ts",
+    "cleanup": "ts-node src/jobs/cleanup.ts"
   },
   "dependencies": {
     "@prisma/client": "5.16.2",

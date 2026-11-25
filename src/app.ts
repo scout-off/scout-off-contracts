@@ -9,6 +9,7 @@ import {
   refreshSession,
 } from "./services/sep10";
 import { requireAuth, requireRole } from "./middleware/auth";
+import { initRateLimiting, checkChallengeLimit } from "./middleware/rateLimit";
 import { prisma } from "./db";
 import { logger, generateRequestId, attachRequestIdToResponse } from "./logger";
 import pinoHttp from "pino-http";
@@ -107,6 +108,9 @@ app.get("/.well-known/jwks.json", (_req: Request, res: Response) => {
     .json(buildJwks(config.signingKeys));
 });
 
+// Initialize rate limiting middleware
+const rateLimitMiddleware = initRateLimiting(app);
+
 function isValidAccount(account: unknown): account is string {
   return typeof account === "string" && StrKey.isValidEd25519PublicKey(account);
 }
@@ -131,7 +135,11 @@ function classifyAuthError(error: unknown): string | null {
 
 // SEP-10 challenge endpoint — returns a server-signed challenge
 // transaction that the client must sign and return.
-app.get("/auth", async (req: Request, res: Response) => {
+app.get(
+  "/auth",
+  rateLimitMiddleware.getAuth,
+  rateLimitMiddleware.getAuthAccount,
+  async (req: Request, res: Response) => {
   const requestId = (req as Request & { requestId?: string }).requestId;
   const account = req.query.account;
   if (account === undefined || account === "") {
@@ -162,7 +170,10 @@ app.get("/auth", async (req: Request, res: Response) => {
 // SEP-10 verification endpoint — client submits the signed challenge
 // transaction; server verifies it and issues an access token plus a rotating
 // refresh token, with the role derived from on-chain / indexer state.
-app.post("/auth", async (req: Request, res: Response) => {
+app.post(
+  "/auth",
+  rateLimitMiddleware.postAuth,
+  async (req: Request, res: Response) => {
   const requestId = (req as Request & { requestId?: string }).requestId;
   const { transaction, account } = req.body as {
     transaction?: string;
@@ -186,6 +197,10 @@ app.post("/auth", async (req: Request, res: Response) => {
 
   try {
     const verifiedAccount = await verifyChallengeTx(transaction, account);
+    
+    // Cap outstanding unconsumed challenges per account
+    await checkChallengeLimit(account, config.maxUnconsumedChallengesPerAccount);
+    
     const session = await issueSession(verifiedAccount);
 
     logger.info(
@@ -210,7 +225,7 @@ app.post("/auth", async (req: Request, res: Response) => {
 });
 
 // Refresh endpoint — rotates the refresh token and re-derives the role.
-app.post("/auth/refresh", async (req: Request, res: Response) => {
+app.post("/auth/refresh", rateLimitMiddleware.postAuthRefresh, async (req: Request, res: Response) => {
   const requestId = (req as Request & { requestId?: string }).requestId;
   const { refreshToken } = req.body as { refreshToken?: string };
 
@@ -244,8 +259,10 @@ app.post("/auth/refresh", async (req: Request, res: Response) => {
 
 // Revoke token endpoint (admin only) — requireAuth must precede requireRole
 // so req.user is populated before the role check runs.
+// Rate limiting is applied to all admin endpoints.
 app.post(
   "/api/admin/tokens/revoke",
+  rateLimitMiddleware.admin,
   requireAuth,
   requireRole(["admin"]),
   async (req: Request, res: Response) => {
@@ -258,6 +275,7 @@ app.post(
     }
 
     let jti: string;
+    let exp: number | null = null;
 
     try {
       // Use the same asymmetric / migration verification logic as requireAuth.
@@ -273,13 +291,16 @@ app.post(
         if (!pubKey) return res.status(400).json({ error: "Invalid token" });
         const { payload } = await joseVerify(token, pubKey, { algorithms: ["EdDSA"] });
         jtiValue = payload.jti as string | undefined;
+        exp = typeof payload.exp === "number" ? payload.exp : null;
       } else if (allowHs256Migration) {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const jwt = require("jsonwebtoken") as typeof import("jsonwebtoken");
         const payload = jwt.verify(token, jwtSecret, { algorithms: ["HS256"] }) as {
           jti?: string;
+          exp?: number;
         };
         jtiValue = payload.jti;
+        exp = payload.exp ?? null;
       } else {
         return res.status(500).json({ error: "No verification key available" });
       }
@@ -293,8 +314,12 @@ app.post(
       return res.status(400).json({ error: "Invalid token" });
     }
 
+    // Store the token expiry so cleanup can properly track when to delete the revocation
     await prisma.revokedToken.create({
-      data: { jti },
+      data: {
+        jti,
+        expiresAt: exp ? new Date(exp * 1000) : undefined,
+      },
     });
 
     logger.info({ requestId, jti }, "POST /api/admin/tokens/revoke: token revoked");
