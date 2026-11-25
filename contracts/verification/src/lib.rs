@@ -1742,6 +1742,9 @@ impl VerificationContract {
             }
         }
 
+        // Execution order is intentional: auth -> format -> state -> write.
+        // Reject malformed evidence before paying for persistent validator storage,
+        // then reuse the loaded Validator throughout the shared commit path.
         validate_cid(&evidence_hash).map_err(|_| VerificationError::InvalidInput)?;
 
         // Verify the caller is an active validator
@@ -1774,6 +1777,7 @@ impl VerificationContract {
         Self::commit_approved_milestone(
             &env,
             &validator_wallet,
+            &validator,
             player_id,
             description,
             evidence_hash,
@@ -1959,6 +1963,7 @@ impl VerificationContract {
             let index = Self::commit_approved_milestone(
                 &env,
                 &validator_wallet,
+                &validator,
                 player_id,
                 claim.description.clone(),
                 evidence_hash.clone(),
@@ -2336,6 +2341,7 @@ impl VerificationContract {
         let index = Self::commit_approved_milestone(
             &env,
             &validator_wallet,
+            &validator,
             attestation.player_id,
             attestation.description.clone(),
             attestation.evidence_hash.clone(),
@@ -5299,6 +5305,7 @@ impl VerificationContract {
     fn commit_approved_milestone(
         env: &Env,
         validator_wallet: &Address,
+        validator: &Validator,
         player_id: u64,
         description: String,
         evidence_hash: String,
@@ -5464,12 +5471,6 @@ impl VerificationContract {
 
         // Diversity check uses the primary validator (the one whose vote
         // crossed the threshold) — this preserves the existing behaviour.
-        let validator: Validator = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Validator(validator_wallet.clone()))
-            .unwrap();
-
         let mut player_affiliations: Vec<String> = env
             .storage()
             .persistent()
