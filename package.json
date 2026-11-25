@@ -5,11 +5,11 @@
   "description": "Node.js Express API + on-chain/off-chain indexer reconciliation tooling for ScoutChain.",
   "license": "MIT",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "main": "dist/server.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
     "dev": "ts-node src/server.ts",
     "reconcile-indexer": "node scripts/reconcile-indexer.js",
