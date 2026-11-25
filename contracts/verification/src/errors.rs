@@ -232,7 +232,6 @@ pub enum VerificationError {
     // ── Player erasure tombstone ──
     /// The player has been erased via `registration.deregister_player`; all
     /// player-scoped writes are permanently blocked for this player_id.
-    PlayerErased = 65,
     PlayerErased = 66,
 }
 

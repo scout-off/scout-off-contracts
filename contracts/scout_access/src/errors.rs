@@ -224,10 +224,6 @@ pub enum ScoutAccessError {
     /// `InvalidHistoryIndex` for the same contiguity violation.
     InvalidTrialIndex = 58,
 
-    // ── Player erasure tombstone ──
-    /// The player has been erased via `registration.deregister_player`; all
-    /// player-scoped writes are permanently blocked for this player_id.
-    PlayerErased = 59,
     // ── Player erasure (issue #1824) ──
     /// `purge_player_data` found an unexpired, non-zero `TrialEscrow` for the
     /// player. The escrow must be refunded or allowed to expire before the
