@@ -885,3 +885,7 @@ Quick checklist:
 
 <!-- handsoff-issue-1681 -->
 - #1681: verification: remove the redundant `has(ProgressContract)` check inside its own else-branch in commit_approved_milestone
+
+## Wallet login (SEP-10)
+
+Wallets discover the server key and auth endpoint at /.well-known/stellar.toml, request a challenge with GET /auth, and submit the signed challenge with POST /auth. Multisig accounts are verified against their medium threshold, and client_domain wallet attribution is supported. Full flow, error codes and config: [docs/SEP10_WALLET_LOGIN.md](docs/SEP10_WALLET_LOGIN.md).
