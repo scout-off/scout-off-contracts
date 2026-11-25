@@ -15,6 +15,7 @@ psql $DATABASE_URL -f migrations/004_scout_subscriptions_auto_renew.sql
 psql $DATABASE_URL -f migrations/005_evidence_access_grants.sql
 psql $DATABASE_URL -f migrations/006_dispute_jury.sql
 psql $DATABASE_URL -f migrations/007_milestone_flags.sql
+psql $DATABASE_URL -f migrations/008_evidence_key_wrapping.sql
 ```
 
 All migration files are idempotent — every `CREATE TABLE`, `CREATE INDEX`, and
@@ -32,6 +33,7 @@ any file against an already-migrated database.
 | `005_evidence_access_grants.sql` | `evidence_access_grants` table (off-chain mirror of `scout_access.EvidenceAccessGrant`) |
 | `006_dispute_jury.sql` | Jury-escalation columns on `milestone_disputes`; `dispute_votes` table |
 | `007_milestone_flags.sql` | `milestone_flags` and `revocation_records` tables |
+| `008_evidence_key_wrapping.sql` | Encrypted evidence-key storage, key-release audit log, and JWT revocations |
 
 ## Related Documentation
 

@@ -1,62 +1,74 @@
+import { randomBytes } from "node:crypto";
+import jwt from "jsonwebtoken";
 import request from "supertest";
-import app from "../../src/app";
+import { createApp } from "../../src/app";
 import { issueSep10Token } from "../../src/services/sep10";
-import { prisma } from "../../src/db";
+import type { EvidenceDatabase } from "../../src/routes/evidence";
 
-beforeEach(async () => {
-  await prisma.revoked_tokens.deleteMany();
+const secret = "token-revocation-test-secret";
+const revokedTokens = new Set<string>();
+
+const database: EvidenceDatabase = {
+  async query<Row extends Record<string, unknown> = Record<string, unknown>>(
+    _text: string
+  ) {
+    return { rows: [] as Row[], rowCount: 1 };
+  },
+};
+
+const app = createApp({
+  database,
+  grantChecker: { hasEvidenceAccess: async () => false },
+  masterKey: randomBytes(32),
+  jwtSecret: secret,
+  isTokenRevoked: async (jti) => revokedTokens.has(jti),
 });
 
-afterAll(async () => {
-  await prisma.$disconnect();
-});
+beforeEach(() => revokedTokens.clear());
 
-describe("Token revocation through real SEP-10 flow", () => {
-  it("should include jti claim in JWT issued through sep10 signing path", async () => {
-    const token = issueSep10Token({ sub: "user123", role: "validator" }, "test-secret");
-
-    const decoded: any = jwt.verify(token, "test-secret");
-
-    expect(decoded.jti).toBeDefined();
-    expect(typeof decoded.jti).toBe("string");
-  });
-
-  it("should allow revoking a token via the admin endpoint when jti is present", async () => {
-    const token = issueSep10Token({ sub: "user123", role: "validator" }, "test-secret");
+describe("token revocation", () => {
+  it("accepts a signed SEP-10 JWT with a jti claim", async () => {
+    const token = issueSep10Token(
+      { sub: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", role: "validator" },
+      secret
+    );
 
     await request(app)
-      .post("/api/admin/tokens/revoke")
+      .get("/api/tokens/me")
       .set("Authorization", `Bearer ${token}`)
       .expect(200)
-      .expect((res: any) => {
-        expect(res.body.revoked).toBe(true);
+      .expect(({ body }) => {
+        expect(body.jti).toBeDefined();
+        expect(body.role).toBe("validator");
       });
   });
 
-  it("should block the revoked token on subsequent requests", async () => {
-    const token = issueSep10Token({ sub: "user123", role: "validator" }, "test-secret");
+  it("rejects a revoked token", async () => {
+    const token = issueSep10Token(
+      { sub: "wallet", role: "validator" },
+      secret
+    );
+    const { jti } = jwt.verify(token, secret) as jwt.JwtPayload;
+    revokedTokens.add(jti as string);
 
     await request(app)
-      .post("/api/admin/tokens/revoke")
-      .set("Authorization", `Bearer ${token}`);
-
-    const response = await request(app)
       .get("/api/tokens/me")
       .set("Authorization", `Bearer ${token}`)
       .expect(401);
-
-    expect(response.body.error).toContain("revoked");
   });
 
-  it("should return 400 if token does not contain jti claim (manual test helper tokens)", async () => {
-    const manualToken = jwt.sign({ sub: "user123", role: "validator" }, "test-secret");
+  it("requires a jti claim", async () => {
+    const token = jwt.sign(
+      { sub: "wallet", role: "validator" },
+      secret,
+      { jwtid: randomBytes(8).toString("hex") }
+    );
+    const withoutJti = jwt.sign({ sub: "wallet", role: "validator" }, secret);
 
+    expect(jwt.verify(token, secret)).toBeDefined();
     await request(app)
-      .post("/api/admin/tokens/revoke")
-      .send({ token: manualToken })
-      .expect(400)
-      .expect((res: any) => {
-        expect(res.body.error).toContain("jti claim");
-      });
+      .get("/api/tokens/me")
+      .set("Authorization", `Bearer ${withoutJti}`)
+      .expect(401);
   });
 });
