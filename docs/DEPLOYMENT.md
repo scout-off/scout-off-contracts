@@ -207,6 +207,7 @@ psql $DATABASE_URL -f migrations/004_scout_subscriptions_auto_renew.sql
 psql $DATABASE_URL -f migrations/005_evidence_access_grants.sql
 psql $DATABASE_URL -f migrations/006_dispute_jury.sql
 psql $DATABASE_URL -f migrations/007_milestone_flags.sql
+psql $DATABASE_URL -f migrations/008_session_management.sql
 ```
 
 All migration files are idempotent (`CREATE TABLE IF NOT EXISTS`,

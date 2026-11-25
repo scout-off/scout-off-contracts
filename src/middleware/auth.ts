@@ -1,78 +1,126 @@
-import jwt from "jsonwebtoken";
-import { PrismaClient } from "@prisma/client";
+import jwt, { JwtPayload } from "jsonwebtoken";
+import type { RequestHandler } from "express";
+import { prisma } from "../db";
 
-const prisma = new PrismaClient();
-
-export async function isTokenRevoked(jti: string): Promise<boolean> {
-  if (!jti) {
-    return false;
-  }
-
-  const existingRevocation = await prisma.revoked_tokens.findFirst({
-    where: { jti },
-  });
-
-  return !!existingRevocation;
+export interface UserIdentity {
+  sub: string;
+  role: string;
+  jti: string;
+  sid?: string;
 }
 
-export function requireAuth(
-  req: Request,
-  res: any,
-  next: () => void
-) {
-  const authHeader = req.headers["authorization"];
+const SESSION_CACHE_TTL_MS = 2_000;
+const sessionRevocationCache = new Map<string, { revoked: boolean; expiresAt: number }>();
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Unauthorized - no token provided" });
+export function clearSessionRevocationCache(sessionIds: string[]): void {
+  for (const sessionId of sessionIds) {
+    sessionRevocationCache.delete(sessionId);
+  }
+}
+
+export async function isTokenRevoked(jti: string): Promise<boolean> {
+  return Boolean(await prisma.revokedToken.findUnique({ where: { jti } }));
+}
+
+export async function isSessionRevoked(sid: string): Promise<boolean> {
+  const cached = sessionRevocationCache.get(sid);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.revoked;
   }
 
-  const token = authHeader.split(" ")[1];
+  const session = await prisma.session.findUnique({
+    where: { id: sid },
+    select: { revokedAt: true },
+  });
+  const revoked = !session || session.revokedAt !== null;
+  sessionRevocationCache.set(sid, {
+    revoked,
+    expiresAt: Date.now() + SESSION_CACHE_TTL_MS,
+  });
+  return revoked;
+}
+
+function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error("JWT_SECRET is not configured");
+  }
+  return secret;
+}
+
+export const requireAuth: RequestHandler = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    res.status(401).json({ error: "Unauthorized - no token provided" });
+    return;
+  }
+
+  let secret: string;
+  try {
+    secret = getJwtSecret();
+  } catch (error) {
+    next(error);
+    return;
+  }
+
+  let payload: JwtPayload;
+  try {
+    const verified = jwt.verify(authHeader.slice(7), secret);
+    if (typeof verified === "string") {
+      res.status(401).json({ error: "Unauthorized - invalid token" });
+      return;
+    }
+    payload = verified;
+  } catch {
+    res.status(401).json({ error: "Unauthorized - invalid token" });
+    return;
+  }
+
+  if (
+    typeof payload.sub !== "string" ||
+    typeof payload.role !== "string" ||
+    typeof payload.jti !== "string"
+  ) {
+    res.status(401).json({ error: "Unauthorized - token is missing required claims" });
+    return;
+  }
 
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET!) as {
-      sub: string;
-      role: string;
-      jti?: string;
-    };
-
-    if (!payload.jti) {
-      return res.status(401).json({ error: "Unauthorized - token has no jti claim" });
+    if (await isTokenRevoked(payload.jti)) {
+      res.status(401).json({ error: "Unauthorized - token has been revoked" });
+      return;
     }
-
-    const isRevoked = await isTokenRevoked(payload.jti);
-
-    if (isRevoked) {
-      return res.status(401).json({ error: "Unauthorized - token has been revoked" });
+    if (typeof payload.sid === "string" && await isSessionRevoked(payload.sid)) {
+      res.status(401).json({ error: "Unauthorized - session has been revoked" });
+      return;
     }
 
     req.user = {
       sub: payload.sub,
       role: payload.role,
       jti: payload.jti,
+      ...(typeof payload.sid === "string" ? { sid: payload.sid } : {}),
     };
-
     next();
   } catch (error) {
-    return res.status(401).json({ error: "Unauthorized - invalid token" });
+    next(error);
   }
-}
+};
 
-export function requireRole(
-  allowedRoles: string[]
-) {
-  return function (
-    req: Request,
-    res: any,
-    next: () => void
-  ) {
-    if (!req.user || !req.user.role) {
-      return res.status(401).json({ error: "Unauthorized - no user role" });
+export function requireRole(allowedRoles: string[]): RequestHandler {
+  return (req, res, next) => {
+    if (!req.user?.role) {
+      res.status(401).json({ error: "Unauthorized - no user role" });
+      return;
     }
-
     if (!allowedRoles.includes(req.user.role)) {
-      return res.status(403).json({ error: "Forbidden - insufficient role" });
+      res.status(403).json({ error: "Forbidden - insufficient role" });
+      return;
     }
-
     next();
   };
+}
+
+export function getConfiguredJwtSecret(): string {
+  return getJwtSecret();
 }

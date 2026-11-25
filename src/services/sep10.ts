@@ -1,6 +1,5 @@
-import { v4 as uuidv4 } from "uuid";
 import jwt from "jsonwebtoken";
-import type { Request } from "express";
+import { randomUUID } from "node:crypto";
 
 interface Sep10TokenPayload {
   sub: string;
@@ -9,7 +8,7 @@ interface Sep10TokenPayload {
 
 export function issueSep10Token(payload: Sep10TokenPayload, secret: string) {
   return jwt.sign(payload, secret, {
-    expiresIn: "7d",
-    jwtid: uuidv4(),
+    expiresIn: "15m",
+    jwtid: randomUUID(),
   });
 }

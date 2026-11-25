@@ -1,4 +1,6 @@
-generator client = "prisma-client";
+generator client {
+  provider = "prisma-client-js"
+}
 
 datasource db {
   provider = "postgresql"
@@ -7,5 +9,33 @@ datasource db {
 
 model RevokedToken {
   jti       String   @id
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("revoked_tokens")
+}
+
+model Session {
+  id            String         @id @default(uuid())
+  account       String
+  createdAt     DateTime       @default(now()) @map("created_at")
+  revokedAt     DateTime?      @map("revoked_at")
+  revokedReason String?        @map("revoked_reason")
+  refreshTokens RefreshToken[]
+
+  @@index([account, revokedAt])
+  @@map("sessions")
+}
+
+model RefreshToken {
+  id         String    @id
+  sessionId  String    @map("session_id")
+  role       String
+  createdAt  DateTime  @default(now()) @map("created_at")
+  revokedAt  DateTime? @map("revoked_at")
+  rotatedAt  DateTime? @map("rotated_at")
+  replacedBy String?   @map("replaced_by")
+  session    Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, revokedAt])
+  @@map("refresh_tokens")
 }
