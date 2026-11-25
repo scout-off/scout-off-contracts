@@ -41,6 +41,29 @@ mod progress_contract {
     #[allow(dead_code)]
     pub trait ProgressContractClient {
         fn get_level(env: Env, player_id: u64) -> ProgressLevel;
+        fn mark_player_erased(env: Env, player_id: u64);
+    }
+}
+
+// Generated client stub for the verification contract — used to mark players as erased.
+mod verification_contract {
+    use soroban_sdk::{contractclient, Env};
+
+    #[contractclient(name = "Client")]
+    #[allow(dead_code)]
+    pub trait VerificationContractClient {
+        fn mark_player_erased(env: Env, player_id: u64);
+    }
+}
+
+// Generated client stub for the scout_access contract — used to mark players as erased.
+mod scout_access_contract {
+    use soroban_sdk::{contractclient, Env};
+
+    #[contractclient(name = "Client")]
+    #[allow(dead_code)]
+    pub trait ScoutAccessContractClient {
+        fn mark_player_erased(env: Env, player_id: u64);
     }
 }
 
@@ -724,6 +747,31 @@ impl RegistrationContract {
         // PlayerRegLastSent is intentionally preserved so that a rapid
         // re-registration from the same wallet is still subject to the
         // per-wallet cooldown.
+
+        // Push erasure tombstones to wired contracts (issue #1622).
+        // This ensures that even if the registration contract is later unwired,
+        // the other contracts still have local tombstones that block writes.
+        if let Some(progress_addr) = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::ProgressContract)
+        {
+            progress_contract::Client::new(&env, &progress_addr).mark_player_erased(&player_id);
+        }
+        if let Some(verification_addr) = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::VerificationContract)
+        {
+            verification_contract::Client::new(&env, &verification_addr).mark_player_erased(&player_id);
+        }
+        if let Some(scout_access_addr) = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::ScoutAccessContract)
+        {
+            scout_access_contract::Client::new(&env, &scout_access_addr).mark_player_erased(&player_id);
+        }
 
         events::player_deregistered(&env, player_id, &level, &region, &admin);
         Ok(())

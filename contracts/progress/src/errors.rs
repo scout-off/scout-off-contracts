@@ -103,6 +103,11 @@ pub enum ProgressError {
     /// `purge_player_data` was called with a cursor other than the next
     /// expected cursor for this player.
     InvalidPurgeCursor = 29,
+
+    // ── Player erasure tombstone ──
+    /// The player has been erased via `registration.deregister_player`; all
+    /// player-scoped writes are permanently blocked for this player_id.
+    PlayerErased = 30,
 }
 
 impl AdminError for ProgressError {
@@ -142,5 +147,6 @@ mod tests {
         assert_eq!(ProgressError::UnknownSchemaTarget as u32, 23);
         assert_eq!(ProgressError::HistoryRootMissing as u32, 28);
         assert_eq!(ProgressError::InvalidPurgeCursor as u32, 29);
+        assert_eq!(ProgressError::PlayerErased as u32, 30);
     }
 }
