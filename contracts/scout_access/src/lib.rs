@@ -3255,15 +3255,30 @@ impl ScoutAccessContract {
 
     /// Paged erasure of a player's scout_access state (admin only).
     ///
-    /// Removes `ContactRecord`, `PlayerContacts`, `EvidenceAccessGrant`,
-    /// `EvidenceAccessGrantPage`, `EvidenceAccessGrantCount`, `TrialOffer`,
-    /// `TrialEscrow`, and `TrialCounter` for the player.
+    /// Removes `PlayerContacts`, `TrialOffer`, `TrialEscrow`, `TrialCounter`,
+    /// `ScoutTrialOffers` back-references, `EvidenceAccessGrant`,
+    /// `EvidenceAccessGrantPage`, and `EvidenceAccessGrantCount` for the player.
+    ///
+    /// `ContactRecord(player_id, scout)` entries are **retained** for billing
+    /// audit as documented in `docs/PLAYER_ERASURE.md`.
     ///
     /// **Outstanding escrows must be refunded before calling this** — the
     /// function returns `TrialOfferNotFound` if any unexpired escrow remains
     /// for the player (callers should first call `expire_trial_offers` or
-    /// wait for expiry). Start with `cursor=0` and pass the returned cursor
-    /// back until `more == false`; any other cursor is rejected.
+    /// wait for expiry). Start with `cursor=0` and pass the returned cursor to
+    /// the next call until `more == false`; any other cursor is rejected with
+    /// `InvalidPurgeCursor`. The cursor is monotonically non-decreasing.
+    ///
+    /// ## Pagination phases
+    ///
+    /// - `cursor < trial_count`: removing `TrialOffer` / `TrialEscrow` entries
+    ///   (and the scout back-references) in pages of 50 (1-based indices).
+    /// - `cursor >= trial_count`: removing one `EvidenceAccessGrantPage` (and
+    ///   the `EvidenceAccessGrant` entries it lists) per call; the grant page
+    ///   index is `cursor - trial_count`.
+    ///
+    /// `TrialCounter`, `EvidenceAccessGrantCount` and `PlayerContacts` are
+    /// removed only on the final call (when `more == false`).
     pub fn purge_player_data(
         env: Env,
         player_id: u64,
@@ -3276,20 +3291,30 @@ impl ScoutAccessContract {
         const PAGE_SIZE: u32 = 50;
         let mut removed: u32 = 0;
 
-        // Refuse if any unexpired escrow still exists for this player.
+        // Counters are kept alive until the final page (#1784).
         let trial_count: u32 = env
             .storage()
             .persistent()
             .get(&DataKey::TrialCounter(player_id))
             .unwrap_or(0u32);
+        let grant_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EvidenceAccessGrantCount(player_id))
+            .unwrap_or(0u32);
+        let grant_pages: u32 = grant_count.div_ceil(ACCESS_GRANT_PAGE_SIZE);
+        let total = trial_count.saturating_add(grant_pages);
+
         let expected_cursor: u32 = env
             .storage()
             .persistent()
             .get(&DataKey::PurgeCursor(player_id))
             .unwrap_or(0u32);
-        if cursor != expected_cursor || cursor > trial_count {
+        if cursor != expected_cursor || cursor > total {
             return Err(ScoutAccessError::InvalidPurgeCursor);
         }
+
+        // Refuse if any unexpired escrow still exists for this player.
         let now = env.ledger().timestamp();
         // Trial indices are 1-based (log_trial_offer returns 1 for the first).
         for idx in 1..=trial_count {
@@ -3301,27 +3326,75 @@ impl ScoutAccessContract {
             }
         }
 
-        // Paged removal: trial offers + escrows. `cursor` counts the indices
-        // already processed, so this page covers (cursor, end] of the
-        // 1-based trial indices.
-        let start = cursor;
-        let end = start.saturating_add(PAGE_SIZE).min(trial_count);
-        for offset in 0..(end - start) {
-            let idx = start + offset + 1;
-            let tok = DataKey::TrialOffer(player_id, idx);
-            if env.storage().persistent().has(&tok) {
-                env.storage().persistent().remove(&tok);
+        let next_cursor: u32;
+        if cursor < trial_count {
+            // ── Phase 1: TrialOffer + TrialEscrow, page covers (cursor, end] ──
+            let start = cursor;
+            let end = start.saturating_add(PAGE_SIZE).min(trial_count);
+            for offset in 0..(end - start) {
+                let idx = start + offset + 1;
+                let tok = DataKey::TrialOffer(player_id, idx);
+                if let Some(offer) = env
+                    .storage()
+                    .persistent()
+                    .get::<DataKey, TrialOffer>(&tok)
+                {
+                    // Strip this (player_id, idx) pair from the scout's index
+                    // so no dangling back-reference survives (#1785).
+                    let sto_key = DataKey::ScoutTrialOffers(offer.scout.clone());
+                    if let Some(sto) = env
+                        .storage()
+                        .persistent()
+                        .get::<DataKey, soroban_sdk::Vec<(u64, u32)>>(&sto_key)
+                    {
+                        let mut kept: soroban_sdk::Vec<(u64, u32)> = soroban_sdk::Vec::new(&env);
+                        for entry in sto.iter() {
+                            if entry != (player_id, idx) {
+                                kept.push_back(entry);
+                            }
+                        }
+                        if kept.is_empty() {
+                            env.storage().persistent().remove(&sto_key);
+                        } else {
+                            env.storage().persistent().set(&sto_key, &kept);
+                        }
+                    }
+                    env.storage().persistent().remove(&tok);
+                    removed += 1;
+                }
+                let tek = DataKey::TrialEscrow(player_id, idx);
+                if env.storage().persistent().has(&tek) {
+                    env.storage().persistent().remove(&tek);
+                    removed += 1;
+                }
+            }
+            next_cursor = end;
+        } else if cursor < total {
+            // ── Phase 2: one EvidenceAccessGrantPage per call (#1785) ─────────
+            let page_idx = cursor - trial_count;
+            let page_key = DataKey::EvidenceAccessGrantPage(player_id, page_idx);
+            if let Some(scouts) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, soroban_sdk::Vec<Address>>(&page_key)
+            {
+                for scout in scouts.iter() {
+                    let gk = DataKey::EvidenceAccessGrant(player_id, scout);
+                    if env.storage().persistent().has(&gk) {
+                        env.storage().persistent().remove(&gk);
+                        removed += 1;
+                    }
+                }
+                env.storage().persistent().remove(&page_key);
                 removed += 1;
             }
-            let tek = DataKey::TrialEscrow(player_id, idx);
-            if env.storage().persistent().has(&tek) {
-                env.storage().persistent().remove(&tek);
-                removed += 1;
-            }
+            next_cursor = cursor + 1;
+        } else {
+            // Nothing (left) to page through.
+            next_cursor = cursor;
         }
 
-        let next_cursor = end;
-        let more = next_cursor < trial_count;
+        let more = next_cursor < total;
 
         if more {
             let key = DataKey::PurgeCursor(player_id);
@@ -7715,5 +7788,303 @@ mod tests {
             client.get_fee_config().elite_sub_stroops,
             original.elite_sub_stroops
         );
+    }
+
+    // ── #1784 / #1785 regression tests ───────────────────────────────────────
+
+    /// Seed `count` trial offers for `player_id` with no escrow so the purge
+    /// escrow-guard does not fire.  Uses the migration window (no subscription
+    /// or escrow funds needed).
+    fn seed_trial_offers_no_escrow(
+        env: &Env,
+        client: &ScoutAccessContractClient<'static>,
+        player_id: u64,
+        count: u32,
+    ) {
+        client.open_migration_window();
+        for i in 1..=count {
+            let offer = TrialOffer {
+                player_id,
+                scout: Address::generate(env),
+                details_hash: String::from_str(
+                    env,
+                    "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB",
+                ),
+                logged_at: 1_000 + u64::from(i),
+            };
+            client.admin_seed_trial_offer(&player_id, &i, &offer, &None);
+        }
+        client.close_migration_window();
+    }
+
+    /// #1784: TrialCounter must survive until the final purge page so that
+    /// offers beyond index 50 are actually removed.
+    #[test]
+    fn test_purge_trial_counter_preserved_across_pages() {
+        let (env, _, _, _, client) = setup();
+        let player_id: u64 = 42;
+
+        // Seed 120 trial offers — three pages of 50 needed.
+        seed_trial_offers_no_escrow(&env, &client, player_id, 120);
+        assert_eq!(client.get_trial_count(&player_id), 120);
+
+        // Page 1: cursor=0 → processes indices 1..=50, returns (50, true).
+        let (c1, more1) = client.purge_player_data(&player_id, &0u32);
+        assert_eq!(c1, 50);
+        assert!(more1, "page 1 should report more=true");
+
+        // TrialCounter must still be present so the next call knows the range.
+        assert_eq!(
+            client.get_trial_count(&player_id),
+            120,
+            "TrialCounter must survive page 1"
+        );
+
+        // Page 2: cursor=50 → processes indices 51..=100.
+        let (c2, more2) = client.purge_player_data(&player_id, &c1);
+        assert!(c2 >= 100, "cursor must advance past 100");
+        assert!(more2, "page 2 should report more=true");
+        assert!(c2 >= c1, "cursor must be monotonically non-decreasing");
+
+        // Page 3: processes indices 101..=120 (and enters grant phase if any).
+        let (c3, more3) = client.purge_player_data(&player_id, &c2);
+        assert!(!more3, "page 3 should report more=false");
+        assert!(c3 >= c2, "cursor must be monotonically non-decreasing");
+
+        // TrialCounter must be gone on the final page.
+        env.as_contract(&client.address, || {
+            assert!(
+                !env.storage()
+                    .persistent()
+                    .has(&DataKey::TrialCounter(player_id)),
+                "TrialCounter must be removed on the final page"
+            );
+        });
+
+        // All TrialOffer keys for indices 1..=120 must be gone.
+        env.as_contract(&client.address, || {
+            for idx in 1u32..=120 {
+                assert!(
+                    !env.storage()
+                        .persistent()
+                        .has(&DataKey::TrialOffer(player_id, idx)),
+                    "TrialOffer({player_id}, {idx}) must be removed"
+                );
+            }
+        });
+    }
+
+    /// #1784: cursor is monotonically non-decreasing across all calls.
+    #[test]
+    fn test_purge_cursor_monotonic_no_offers() {
+        let (_, _, _, _, client) = setup();
+        let player_id: u64 = 99;
+
+        // Player with no offers at all — single call must complete.
+        let (c, more) = client.purge_player_data(&player_id, &0u32);
+        assert!(!more);
+        assert_eq!(c, 0);
+    }
+
+    /// #1785: EvidenceAccessGrant and EvidenceAccessGrantPage keys must be
+    /// removed by purge_player_data, and has_evidence_access must return false.
+    #[test]
+    fn test_purge_removes_evidence_access_grants() {
+        let (env, _, xlm, _, client) = setup();
+        let player_id: u64 = 7;
+
+        // Create 3 scouts, each paying to contact the player (which writes
+        // EvidenceAccessGrant and EvidenceAccessGrantPage records).
+        let scouts: soroban_sdk::Vec<Address> = (0..3)
+            .map(|_| {
+                let scout = Address::generate(&env);
+                mint_token(&env, &xlm, &Address::generate(&env), &scout, 50_000_000);
+                client.subscribe(&scout, &SubscriptionTier::Elite);
+                client.pay_to_contact(&scout, &player_id);
+                scout
+            })
+            .collect::<std::vec::Vec<_>>()
+            .into_iter()
+            .fold(soroban_sdk::Vec::new(&env), |mut acc, s| {
+                acc.push_back(s);
+                acc
+            });
+
+        // Confirm grants were written.
+        for i in 0..scouts.len() {
+            let scout = scouts.get(i).unwrap();
+            assert!(
+                client.has_evidence_access(&player_id, &scout),
+                "grant must exist before purge"
+            );
+        }
+
+        // Run purge to completion.
+        let mut cursor: u32 = 0;
+        loop {
+            let (next, more) = client.purge_player_data(&player_id, &cursor);
+            assert!(next >= cursor, "cursor must not decrease");
+            cursor = next;
+            if !more {
+                break;
+            }
+        }
+
+        // All grants must be gone.
+        for i in 0..scouts.len() {
+            let scout = scouts.get(i).unwrap();
+            assert!(
+                !client.has_evidence_access(&player_id, &scout),
+                "has_evidence_access must be false after purge"
+            );
+            env.as_contract(&client.address, || {
+                assert!(
+                    !env.storage()
+                        .persistent()
+                        .has(&DataKey::EvidenceAccessGrant(player_id, scout.clone())),
+                    "EvidenceAccessGrant key must be removed"
+                );
+            });
+        }
+
+        // EvidenceAccessGrantCount must be gone.
+        env.as_contract(&client.address, || {
+            assert!(
+                !env.storage()
+                    .persistent()
+                    .has(&DataKey::EvidenceAccessGrantCount(player_id)),
+                "EvidenceAccessGrantCount must be removed on final page"
+            );
+            // EvidenceAccessGrantPage(player_id, 0) must be gone.
+            assert!(
+                !env.storage()
+                    .persistent()
+                    .has(&DataKey::EvidenceAccessGrantPage(player_id, 0)),
+                "EvidenceAccessGrantPage must be removed"
+            );
+        });
+    }
+
+    /// #1785 + #1784 combined: player with 120 trial offers AND multiple
+    /// evidence access grants — full multi-page purge removes everything.
+    #[test]
+    fn test_purge_full_multi_page_offers_and_grants() {
+        let (env, _, xlm, _, client) = setup();
+        let player_id: u64 = 11;
+
+        // Seed 120 trial offers (no escrow).
+        seed_trial_offers_no_escrow(&env, &client, player_id, 120);
+
+        // Create 2 scouts with grants.
+        let mut scouts_with_grants = soroban_sdk::Vec::<Address>::new(&env);
+        for _ in 0..2u32 {
+            let scout = Address::generate(&env);
+            mint_token(&env, &xlm, &Address::generate(&env), &scout, 50_000_000);
+            client.subscribe(&scout, &SubscriptionTier::Elite);
+            client.pay_to_contact(&scout, &player_id);
+            scouts_with_grants.push_back(scout);
+        }
+
+        // Drive purge to completion, checking cursor monotonicity.
+        let mut cursor: u32 = 0;
+        let mut calls: u32 = 0;
+        loop {
+            let (next, more) = client.purge_player_data(&player_id, &cursor);
+            assert!(next >= cursor, "cursor must be monotonically non-decreasing");
+            cursor = next;
+            calls += 1;
+            if !more {
+                break;
+            }
+            assert!(calls < 20, "purge took unexpectedly many calls");
+        }
+
+        // All TrialOffer keys gone.
+        env.as_contract(&client.address, || {
+            for idx in 1u32..=120 {
+                assert!(
+                    !env.storage()
+                        .persistent()
+                        .has(&DataKey::TrialOffer(player_id, idx)),
+                    "TrialOffer({player_id}, {idx}) must be removed"
+                );
+            }
+            assert!(
+                !env.storage()
+                    .persistent()
+                    .has(&DataKey::TrialCounter(player_id)),
+                "TrialCounter must be removed"
+            );
+        });
+
+        // All grant keys gone.
+        for i in 0..scouts_with_grants.len() {
+            let scout = scouts_with_grants.get(i).unwrap();
+            assert!(!client.has_evidence_access(&player_id, &scout));
+        }
+        env.as_contract(&client.address, || {
+            assert!(
+                !env.storage()
+                    .persistent()
+                    .has(&DataKey::EvidenceAccessGrantCount(player_id)),
+            );
+        });
+    }
+
+    /// #1785: ScoutTrialOffers back-references are cleaned during purge.
+    #[test]
+    fn test_purge_cleans_scout_trial_offers_backreference() {
+        let (env, _, _, _, client) = setup();
+        let player_id: u64 = 55;
+
+        // Seed 2 offers, each from a distinct scout.
+        client.open_migration_window();
+        let scout_a = Address::generate(&env);
+        let scout_b = Address::generate(&env);
+        for (i, scout) in [(1u32, &scout_a), (2u32, &scout_b)] {
+            let offer = TrialOffer {
+                player_id,
+                scout: scout.clone(),
+                details_hash: String::from_str(
+                    &env,
+                    "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB",
+                ),
+                logged_at: 1_000 + u64::from(i),
+            };
+            client.admin_seed_trial_offer(&player_id, &i, &offer, &None);
+        }
+        client.close_migration_window();
+
+        // Purge to completion.
+        let mut cursor = 0u32;
+        loop {
+            let (next, more) = client.purge_player_data(&player_id, &cursor);
+            cursor = next;
+            if !more {
+                break;
+            }
+        }
+
+        // ScoutTrialOffers back-reference for both scouts must be gone.
+        env.as_contract(&client.address, || {
+            let sto_a: Option<soroban_sdk::Vec<(u64, u32)>> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::ScoutTrialOffers(scout_a.clone()));
+            let sto_b: Option<soroban_sdk::Vec<(u64, u32)>> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::ScoutTrialOffers(scout_b.clone()));
+
+            let a_has_ref = sto_a
+                .map(|v| v.iter().any(|(pid, _)| pid == player_id))
+                .unwrap_or(false);
+            let b_has_ref = sto_b
+                .map(|v| v.iter().any(|(pid, _)| pid == player_id))
+                .unwrap_or(false);
+
+            assert!(!a_has_ref, "ScoutTrialOffers for scout_a must not reference purged player");
+            assert!(!b_has_ref, "ScoutTrialOffers for scout_b must not reference purged player");
+        });
     }
 }
