@@ -658,6 +658,73 @@ the on-chain code is not the tagged build: treat it as an incident (consider the
 pause procedure above) until explained. Set `WASM_HASHES_FILE` to verify against
 a local manifest. See [DEPLOYMENT.md](DEPLOYMENT.md#reproducible-builds-and-deployed-wasm-verification-issue-1614).
 
+## Solvency Monitor
+
+The `scripts/solvency-monitor.js` script reads on-chain state from the
+`scout_access` contract and verifies the invariant:
+
+```
+token.balance(contract) >= AccumulatedFees + Σ outstanding TrialEscrow.amount
+```
+
+A **deficit** means the contract cannot pay all its obligations (fees owed to
+admin plus escrowed trial-offer funds owed to scouts). A **surplus** beyond the
+configured tolerance may indicate a bookkeeping regression.
+
+### Automated checks
+
+The GitHub Actions workflow `.github/workflows/solvency-monitor.yml` runs every
+6 hours against testnet. It uploads a JSON report artifact named
+`solvency-report-<run_id>` with 30 days' retention. The workflow requires two
+repository secrets:
+
+| Secret | Description |
+|---|---|
+| `TESTNET_SCOUT_ACCESS_CONTRACT_ID` | Contract ID of `scout_access` on testnet |
+| `SOLVENCY_ALERT_WEBHOOK_URL` | Slack/Discord/generic webhook URL (optional) |
+
+### Manual run
+
+```bash
+# Against testnet (requires stellar CLI configured for testnet)
+SCOUT_ACCESS_CONTRACT_ID=CXXXXXXXX \
+  node scripts/solvency-monitor.js --network testnet --json
+
+# With a surplus tolerance of 1 XLM (10_000_000 stroops)
+SCOUT_ACCESS_CONTRACT_ID=CXXXXXXXX \
+  node scripts/solvency-monitor.js --network testnet \
+  --tolerance 10000000
+```
+
+### Responding to a deficit
+
+A deficit means `balance < AccumulatedFees + Σ escrow`. Possible causes:
+
+1. **Escrow bug**: a purge or refund call destroyed an escrow without returning
+   the funds. Check for recent `purge_player_data` calls, then compare the
+   `player_data_purged` events against `trial_offer_refunded` events.
+2. **Accounting regression**: `AccumulatedFees` was incremented without a
+   corresponding token transfer. Check recent fee-collection transactions.
+3. **Direct token withdrawal**: `withdraw_fees` was called beyond the actual
+   contract balance. This is a contract bug — pause immediately.
+
+**Immediate response**:
+1. Pause the contract (`./scripts/emergency-pause.sh`).
+2. Run the solvency monitor manually with `--json` and save the report.
+3. Cross-check with `scripts/audit-event-history.js` for the affected player IDs.
+4. File an incident and notify the admin multi-sig before any further action.
+
+### Responding to a surplus
+
+An unexplained surplus may mean:
+
+- Someone sent XLM directly to the contract address (donation / mistake).
+- An escrow was cleaned up without decrementing the outstanding index.
+
+A surplus alone does not require pausing. Investigate via `audit-event-history.js`
+and document the finding. If it cannot be explained, treat it as a potential
+accounting regression and escalate.
+
 ## Related Documentation
 
 - [DEPLOYMENT.md](DEPLOYMENT.md) — contract deployment order and initialization
