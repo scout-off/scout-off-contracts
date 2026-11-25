@@ -27,6 +27,34 @@ import { buildJwks } from "./jwks";
 
 const app = express();
 
+// Health endpoints are registered before the JSON body parser and any
+// auth/rate-limiting/logging middleware so they stay unauthenticated and
+// generate no logging noise.
+app.get("/healthz", (_req: Request, res: Response) => {
+  res.status(200).json({ status: "ok" });
+});
+
+app.get("/readyz", async (_req: Request, res: Response) => {
+  const timeoutMs = 2000;
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("readiness timeout")), timeoutMs);
+  });
+
+  try {
+    await Promise.race([prisma.$queryRaw`SELECT 1`, timeout]);
+    res.status(200).json({ status: "ok" });
+  } catch (error) {
+    logger.error(
+      { error: error instanceof Error ? error.message : String(error) },
+      "GET /readyz: readiness check failed"
+    );
+    res.status(503).json({ status: "unavailable" });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+});
+
 // Pino HTTP middleware for automatic request/response logging
 const pinoMiddleware = pinoHttp({
   logger,

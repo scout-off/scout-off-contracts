@@ -17,6 +17,7 @@ const VALID_ASYMMETRIC = {
   STELLAR_NETWORK: "testnet",
 };
 
+const LOCAL_PASSPHRASE = "Standalone Network ; February 2017";
 /** Minimal valid env using HS256 migration mode. */
 const VALID_MIGRATION = {
   JWT_SECRET: "x".repeat(32),
@@ -98,6 +99,43 @@ describe("loadConfig", () => {
     expect(() =>
       loadConfig({ ...VALID_ASYMMETRIC, STELLAR_NETWORK: "devnet" })
     ).toThrow(/STELLAR_NETWORK must be one of/);
+  });
+
+  it("accepts STELLAR_NETWORK=local with NETWORK_PASSPHRASE", () => {
+    const config = loadConfig({
+      ...VALID,
+      STELLAR_NETWORK: "local",
+      NETWORK_PASSPHRASE: LOCAL_PASSPHRASE,
+    });
+    expect(config.stellarNetwork).toBe("local");
+    expect(config.networkPassphrase).toBe(LOCAL_PASSPHRASE);
+  });
+
+  it("accepts STELLAR_NETWORK=custom with NETWORK_PASSPHRASE", () => {
+    const config = loadConfig({
+      ...VALID,
+      STELLAR_NETWORK: "custom",
+      NETWORK_PASSPHRASE: LOCAL_PASSPHRASE,
+    });
+    expect(config.stellarNetwork).toBe("custom");
+    expect(config.networkPassphrase).toBe(LOCAL_PASSPHRASE);
+  });
+
+  it("rejects STELLAR_NETWORK=local without NETWORK_PASSPHRASE", () => {
+    expect(() => loadConfig({ ...VALID, STELLAR_NETWORK: "local" })).toThrow(
+      /NETWORK_PASSPHRASE is required/
+    );
+  });
+
+  it("rejects STELLAR_NETWORK=local when NODE_ENV=production", () => {
+    expect(() =>
+      loadConfig({
+        ...VALID,
+        STELLAR_NETWORK: "local",
+        NETWORK_PASSPHRASE: LOCAL_PASSPHRASE,
+        NODE_ENV: "production",
+      })
+    ).toThrow(/STELLAR_NETWORK=local is not allowed when NODE_ENV=production/);
   });
 
   it("requires JWT_SIGNING_KEYS when not in migration mode", () => {

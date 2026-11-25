@@ -1,9 +1,11 @@
-import { StrKey } from "@stellar/stellar-sdk";
+import { Networks, StrKey } from "@stellar/stellar-sdk";
 import { loadSigningKeys, SigningKeys } from "./keys";
 
-export const SUPPORTED_NETWORKS = ["testnet", "mainnet"] as const;
+export const SUPPORTED_NETWORKS = ["testnet", "mainnet", "local", "custom"] as const;
 export type StellarNetwork = (typeof SUPPORTED_NETWORKS)[number];
 
+/** Networks that require an explicit NETWORK_PASSPHRASE. */
+const CUSTOM_PASSPHRASE_NETWORKS: readonly StellarNetwork[] = ["local", "custom"];
 export const DEFAULT_JWT_AUDIENCE = "scoutchain-api";
 
 export interface Config {
@@ -22,6 +24,7 @@ export interface Config {
   homeDomain: string;
   webAuthDomain: string;
   stellarNetwork: StellarNetwork;
+  networkPassphrase: string;
   adminAddress?: string;
   trustProxy: boolean;
   getAuthIpLimit: number;
@@ -114,11 +117,31 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const cleanupIntervalSeconds = parseInt(env.CLEANUP_INTERVAL_SECONDS || "300", 10); // 5 minutes default
 
   const network = env.STELLAR_NETWORK?.trim() || "testnet";
-  if (!(SUPPORTED_NETWORKS as readonly string[]).includes(network)) {
+  const networkIsSupported = (SUPPORTED_NETWORKS as readonly string[]).includes(network);
+  if (!networkIsSupported) {
     errors.push(`STELLAR_NETWORK must be one of: ${SUPPORTED_NETWORKS.join(", ")}`);
   }
 
-  const isTestnet = network === "testnet";
+  let networkPassphrase = "";
+  if (networkIsSupported) {
+    const stellarNetwork = network as StellarNetwork;
+    if (CUSTOM_PASSPHRASE_NETWORKS.includes(stellarNetwork)) {
+      if (stellarNetwork === "local" && env.NODE_ENV?.trim() === "production") {
+        errors.push("STELLAR_NETWORK=local is not allowed when NODE_ENV=production");
+      }
+      networkPassphrase = env.NETWORK_PASSPHRASE?.trim() || "";
+      if (!networkPassphrase) {
+        errors.push(`NETWORK_PASSPHRASE is required when STELLAR_NETWORK=${stellarNetwork}`);
+      }
+    } else {
+      networkPassphrase =
+        env.NETWORK_PASSPHRASE?.trim() ||
+        (stellarNetwork === "mainnet" ? Networks.PUBLIC : Networks.TESTNET);
+    }
+  }
+
+  // localhost / host:port are accepted on the development networks only.
+  const isTestnet = network === "testnet" || network === "local";
 
   /**
    * Validate a value as a bare hostname (optionally with a port).
@@ -206,6 +229,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     homeDomain,
     webAuthDomain,
     stellarNetwork: network as StellarNetwork,
+    networkPassphrase,
     adminAddress,
     trustProxy,
     getAuthIpLimit,
