@@ -79,6 +79,7 @@ function parseArgs(argv) {
     sample: null,
     tables: null,
     json: false,
+    rpcTimeoutMs: 10000,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -87,6 +88,7 @@ function parseArgs(argv) {
     else if (a === "--source") args.source = argv[++i];
     else if (a === "--sample") args.sample = Number(argv[++i]);
     else if (a === "--tables") args.tables = argv[++i].split(",").map((t) => t.trim());
+    else if (a === "--rpc-timeout-ms") args.rpcTimeoutMs = Number(argv[++i]);
     else if (a === "--json") args.json = true;
     else {
       process.stderr.write(`Unknown argument: ${a}\n`);
@@ -118,6 +120,46 @@ function requireEnv(names) {
 }
 
 class ConfigError extends Error {}
+
+// --- HTTP helpers ------------------------------------------------------------
+
+/** Thrown when an RPC endpoint responds with a non-2xx status. */
+class HttpStatusError extends Error {
+  constructor(message, httpStatus) {
+    super(message);
+    this.name = "HttpStatusError";
+    this.httpStatus = httpStatus;
+  }
+}
+
+/** Thrown when an RPC endpoint's body is not valid JSON. */
+class JsonParseError extends Error {
+  constructor(message, cause) {
+    super(message);
+    this.name = "JsonParseError";
+    this.cause = cause;
+  }
+}
+
+/**
+ * POST/GET a URL with a hard timeout and strict status/JSON handling.
+ * Throws HttpStatusError on non-OK responses, JsonParseError on unparseable
+ * bodies, and the underlying AbortError on timeout.
+ */
+async function fetchJsonWithTimeout(url, options, timeoutMs) {
+  const res = await fetch(url, {
+    ...options,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!res.ok) {
+    throw new HttpStatusError(`HTTP ${res.status} from ${url}`, res.status);
+  }
+  try {
+    return await res.json();
+  } catch (err) {
+    throw new JsonParseError(`Invalid JSON from ${url}: ${err.message}`, err);
+  }
+}
 
 // --- Soroban CLI invocation -------------------------------------------------
 
@@ -700,14 +742,39 @@ async function reconcileContactRecords(pg, cfg, report, playerIds) {
 
 async function reconcileIndexerCursor(pg, cfg, report) {
   if (!cfg.rpcUrl) return;
-  const res = await fetch(cfg.rpcUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getLatestLedger", params: {} }),
-  });
-  const body = await res.json();
+  const timeoutMs = cfg.rpcTimeoutMs ?? 10000;
+  let body;
+  try {
+    body = await fetchJsonWithTimeout(
+      cfg.rpcUrl,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getLatestLedger", params: {} }),
+      },
+      timeoutMs,
+    );
+  } catch (err) {
+    if (err && (err.name === "AbortError" || err.name === "TimeoutError")) {
+      report.add("indexer_cursor", "1", "rpc_timeout", null, null, `getLatestLedger timed out after ${timeoutMs}ms`);
+    } else {
+      const httpStatus = err && err.httpStatus !== undefined ? err.httpStatus : null;
+      report.add("indexer_cursor", "1", "rpc_error", httpStatus, null, err && err.message ? err.message : String(err));
+    }
+    return;
+  }
   const latestLedger = body?.result?.sequence;
-  if (typeof latestLedger !== "number") return;
+  if (typeof latestLedger !== "number") {
+    report.add(
+      "indexer_cursor",
+      "1",
+      "rpc_unexpected_response",
+      null,
+      null,
+      `getLatestLedger response missing numeric result.sequence: ${JSON.stringify(body)}`,
+    );
+    return;
+  }
 
   const { rows } = await pg.query("SELECT last_ledger FROM indexer_cursor WHERE id = 1");
   const lastLedger = Number(rows[0]?.last_ledger ?? 0);
@@ -746,6 +813,7 @@ async function main(deps = {}) {
     rpcUrl: args.rpcUrl,
     source: args.source,
     sample: args.sample,
+    rpcTimeoutMs: args.rpcTimeoutMs,
     registrationId: process.env.REGISTRATION_CONTRACT_ID,
     verificationId: process.env.VERIFICATION_CONTRACT_ID,
     progressId: process.env.PROGRESS_CONTRACT_ID,
@@ -845,6 +913,10 @@ module.exports = {
   reconcileContactRecords,
   reconcileEvidenceAccessGrants,
   reconcileDisputeVotes,
+  reconcileIndexerCursor,
+  fetchJsonWithTimeout,
+  HttpStatusError,
+  JsonParseError,
 };
 
 if (require.main === module) {
