@@ -1269,11 +1269,11 @@ impl ProgressContract {
     /// Paged erasure of a player's progress state (admin only).
     ///
     /// Removes `PlayerLevel`, `HistoryRoot`, `HistoryVec`, and up to
-    /// `PAGE_SIZE` `HistoryEntry` / `HistoryPage` records per call, starting at
-    /// `cursor` (0 = start). On the final page it also removes
-    /// `HistoryCounter`, `HistoryFrontier` and `MigrationCursor`.
+    /// `PAGE_SIZE` `HistoryEntry` / `HistoryPage` records per call. Start with
+    /// `cursor=0` and pass the returned cursor to the next call; any other
+    /// cursor is rejected with `InvalidPurgeCursor`. On the final page it also
+    /// removes `HistoryCounter`, `HistoryFrontier` and `MigrationCursor`.
     /// When `more` is `false` in the returned tuple all data has been removed.
-    /// Safe to call repeatedly: already-absent keys are skipped silently.
     /// `HistoryFrontier` is only present for players whose history was written
     /// after #1368, so its absence is tolerated.
     ///
@@ -1295,52 +1295,24 @@ impl ProgressContract {
         const PAGE_SIZE: u32 = 50;
         let mut removed: u32 = 0;
 
-        // On the first page (cursor == 0) remove the non-history keys.
-        if cursor == 0 {
-            if env
-                .storage()
-                .persistent()
-                .has(&DataKey::PlayerLevel(player_id))
-            {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::PlayerLevel(player_id));
-                removed += 1;
-            }
-            if env
-                .storage()
-                .persistent()
-                .has(&DataKey::HistoryRoot(player_id))
-            {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::HistoryRoot(player_id));
-                removed += 1;
-            }
-            // Remove legacy unbounded history vec if present.
-            if env
-                .storage()
-                .persistent()
-                .has(&DataKey::HistoryVec(player_id))
-            {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::HistoryVec(player_id));
-                removed += 1;
-            }
-        }
-
-        // Remove history entries starting at cursor+1 (entries are 1-indexed).
         let total: u32 = env
             .storage()
             .persistent()
             .get(&DataKey::HistoryCounter(player_id))
             .unwrap_or(0u32);
+        let expected_cursor: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PurgeCursor(player_id))
+            .unwrap_or(0u32);
+        if cursor != expected_cursor || cursor > total {
+            return Err(ProgressError::InvalidPurgeCursor);
+        }
 
-        let start = cursor + 1;
-        let end = (start + PAGE_SIZE).min(total + 1);
-
-        for idx in start..end {
+        // Remove history entries starting at cursor+1 (entries are 1-indexed).
+        let next_cursor = cursor.saturating_add(PAGE_SIZE).min(total);
+        for offset in 0..(next_cursor - cursor) {
+            let idx = cursor + offset + 1;
             let key = DataKey::HistoryEntry(player_id, idx);
             if env.storage().persistent().has(&key) {
                 env.storage().persistent().remove(&key);
@@ -1355,20 +1327,29 @@ impl ProgressContract {
             }
         }
 
-        let next_cursor = end - 1;
         let more = next_cursor < total;
 
-        // On final page, remove the counter itself.
-        if !more
-            && env
-                .storage()
-                .persistent()
-                .has(&DataKey::HistoryCounter(player_id))
-        {
+        if more {
+            let key = DataKey::PurgeCursor(player_id);
+            env.storage().persistent().set(&key, &next_cursor);
             env.storage()
                 .persistent()
-                .remove(&DataKey::HistoryCounter(player_id));
-            removed += 1;
+                .extend_ttl(&key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+        } else {
+            for key in [
+                DataKey::PlayerLevel(player_id),
+                DataKey::HistoryRoot(player_id),
+                DataKey::HistoryVec(player_id),
+                DataKey::HistoryCounter(player_id),
+            ] {
+                if env.storage().persistent().has(&key) {
+                    env.storage().persistent().remove(&key);
+                    removed += 1;
+                }
+            }
+            env.storage()
+                .persistent()
+                .remove(&DataKey::PurgeCursor(player_id));
         }
 
         // On the final page, also drop the per-player commitment state: the
