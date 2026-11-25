@@ -36,6 +36,7 @@ describe("token revocation", () => {
     await request(app)
       .get("/api/tokens/me")
       .set("Authorization", `Bearer ${token}`)
+      .send({ token })
       .expect(200)
       .expect(({ body }) => {
         expect(body.jti).toBeDefined();

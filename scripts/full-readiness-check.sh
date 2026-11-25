@@ -10,6 +10,7 @@
 #
 # Usage:
 #   ./scripts/full-readiness-check.sh [testnet|mainnet|local]
+#   RELEASE_TAG=v1.2.3 ./scripts/full-readiness-check.sh mainnet   # also verify deployed WASM hashes
 #
 # Prerequisites:
 #   • .env.contracts must exist (written by deploy.sh)
@@ -219,11 +220,6 @@ def load(ok, key):
 
 reg, ver, prog, sa = load(reg_ok, "REG_STATE"), load(ver_ok, "VER_STATE"), load(prog_ok, "PROG_STATE"), load(sa_ok, "SA_STATE")
 
-def flat_link(state, field):
-    if state is None:
-        return (None, None)
-    return (state.get(f"{field}_contract"), state.get(f"{field}_epoch"))
-
 def nested_link(state, field):
     if state is None:
         return (None, None)
@@ -235,10 +231,10 @@ LINKS = [
     ("registration", reg_ok, *nested_link(reg, "progress"), "progress", prog_id),
     ("scout_access", sa_ok, *nested_link(sa, "progress"), "progress", prog_id),
     ("verification", ver_ok, *nested_link(ver, "registration"), "registration", reg_id),
-    ("progress", prog_ok, *flat_link(prog, "registration"), "registration", reg_id),
+    ("progress", prog_ok, *nested_link(prog, "registration"), "registration", reg_id),
     ("scout_access", sa_ok, *nested_link(sa, "registration"), "registration", reg_id),
-    ("progress", prog_ok, *flat_link(prog, "verification"), "verification", ver_id),
-    ("progress", prog_ok, *flat_link(prog, "scout_access"), "scout_access", sa_id),
+    ("progress", prog_ok, *nested_link(prog, "verification"), "verification", ver_id),
+    ("progress", prog_ok, *nested_link(prog, "scout_access"), "scout_access", sa_id),
 ]
 
 def classify(address, epoch, expected_id):
@@ -312,6 +308,21 @@ for target in progress registration verification scout_access; do
       ;;
   esac
 done
+
+# ===========================================================================
+# SECTION 3 — Deployed WASM hash verification (issue #1614)
+# Opt-in: set RELEASE_TAG to compare the on-chain code of every contract with
+# the hashes published for that release (scripts/verify-deployed-wasm.sh).
+# ===========================================================================
+if [[ -n "${RELEASE_TAG:-}" ]]; then
+    echo ""
+    echo "--- Section 3: Deployed WASM hashes vs release ${RELEASE_TAG} ---"
+    if "$(dirname "$0")/verify-deployed-wasm.sh" "$NETWORK" "$RELEASE_TAG"; then
+        record_pass "wasm:release:${RELEASE_TAG}" "all deployed hashes match"
+    else
+        record_fail "wasm:release:${RELEASE_TAG}" "deployed WASM differs from release — see verify-deployed-wasm.sh output"
+    fi
+fi
 
 # ===========================================================================
 # COMBINED SUMMARY TABLE

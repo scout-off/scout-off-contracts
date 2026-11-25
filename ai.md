@@ -107,6 +107,7 @@ pub fn filter_players(
 // Queries
 pub fn get_player(env: Env, player_id: u64) -> Result<PlayerProfile, ScoutChainError>
 pub fn get_player_by_wallet(env: Env, wallet: Address) -> Result<PlayerProfile, ScoutChainError>
+pub fn get_player_id_by_wallet(env: Env, wallet: Address) -> Result<u64, ScoutChainError>
 pub fn get_scout(env: Env, scout_id: u64) -> Result<ScoutProfile, ScoutChainError>
 pub fn get_player_count(env: Env) -> u64
 pub fn get_scout_count(env: Env) -> u64
@@ -120,11 +121,20 @@ pub fn deregister_player(env: Env, player_id: u64) -> Result<(), ScoutChainError
 pub fn deactivate_player(env: Env, player_id: u64) -> Result<(), ScoutChainError>
 pub fn reactivate_player(env: Env, player_id: u64) -> Result<(), ScoutChainError>
 pub fn verify_scout(env: Env, scout_id: u64) -> Result<(), ScoutChainError>
+// Revokes a scout's verified status. Pro/Elite gating in scout_access re-checks
+// verification, so an unverified scout can no longer subscribe to Pro or Elite.
+pub fn unverify_scout(env: Env, scout_id: u64) -> Result<(), ScoutChainError>
+// GDPR erasure for a scout record (see docs/CONTRACT_REFERENCE.md).
+pub fn deregister_scout(env: Env, scout_id: u64) -> Result<(), ScoutChainError>
 pub fn propose_admin(env: Env, new_admin: Address) -> Result<(), ScoutChainError>
 pub fn accept_admin(env: Env) -> Result<(), ScoutChainError>
 pub fn pause_contract(env: Env) -> Result<(), ScoutChainError>
 pub fn unpause_contract(env: Env) -> Result<(), ScoutChainError>
 pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), ScoutChainError>
+
+// GDPR erasure — page through a player's data. Loop until `more == false`.
+// See docs/PLAYER_ERASURE.md.
+pub fn purge_player_data(env: Env, player_id: u64, cursor: u32) -> Result<(u32, bool), ScoutChainError>
 ```
 
 ---
@@ -207,6 +217,7 @@ pub fn get_validators(env: Env) -> Vec<Address>
 pub fn get_validator_milestone_count(env: Env, wallet: Address) -> u32
 pub fn get_active_validator_count(env: Env) -> u32
 pub fn is_active_validator(env: Env, wallet: Address) -> bool
+pub fn get_limits(env: Env) -> VerificationLimits
 pub fn health(env: Env) -> ContractHealth
 pub fn version(env: Env) -> String
 
@@ -218,7 +229,36 @@ pub fn accept_admin(env: Env) -> Result<(), VerificationError>
 pub fn pause_contract(env: Env) -> Result<(), VerificationError>
 pub fn unpause_contract(env: Env) -> Result<(), VerificationError>
 pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), VerificationError>
+
+// GDPR erasure — page through a player's data. Loop until `more == false`.
+// See docs/PLAYER_ERASURE.md.
+pub fn purge_player_data(env: Env, player_id: u64, cursor: u32) -> Result<(u32, bool), VerificationError>
 ```
+
+### Protocol limits — `get_limits()`
+
+`get_limits()` returns the compile-time protocol constants so clients can
+pre-validate input instead of hard-coding numbers that may change between
+contract versions:
+
+```rust
+pub struct VerificationLimits {
+    pub max_validators: u32,        // 100
+    pub min_credentials_len: u32,   // 1
+    pub max_credentials_len: u32,   // 256
+    pub max_description_len: u32,   // 512
+    pub max_specializations: u32,   // 10
+    pub max_dispute_rounds: u32,    // 3
+}
+```
+
+**Client-side validation:** call `get_limits()` once at startup (and cache it
+per contract ID / version) and validate credentials, descriptions, and
+specialization lists against these values before submitting a transaction.
+Hard-coded constants will drift from the contract and produce avoidable
+`InvalidInput` (code 9) failures.
+
+See `bindings/verification/examples/getLimits.ts` for a worked example.
 
 ---
 
@@ -252,7 +292,21 @@ pub fn get_history_page_with_cursor(
     cursor_next_index: Option<u32>,
     limit: u32,
 ) -> (Vec<ProgressEntry>, u32, u32)
+// ⚠️ Superseded — prefer `get_history_since_v2`. This variant silently truncates
+// at the internal limit (and at the 10-page scan cap) with no signal that entries
+// were dropped. Kept for backwards compatibility only.
 pub fn get_history_since(env: Env, player_id: u64, since_timestamp: u64) -> Vec<ProgressEntry>
+
+// ✅ Preferred history getter. Returns every matching entry up to `limit` plus a
+// `truncated` flag telling you whether more matching entries exist beyond what
+// was returned (because of `limit` or the internal 10-page scan cap).
+pub fn get_history_since_v2(
+    env: Env,
+    player_id: u64,
+    since_timestamp: u64,
+    limit: u32,
+) -> HistorySince
+
 pub fn health(env: Env) -> ContractHealth
 pub fn version(env: Env) -> String
 
@@ -265,7 +319,42 @@ pub fn accept_admin(env: Env) -> Result<(), ProgressError>
 pub fn pause_contract(env: Env) -> Result<(), ProgressError>
 pub fn unpause_contract(env: Env) -> Result<(), ProgressError>
 pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), ProgressError>
+
+// GDPR erasure — page through a player's data. Loop until `more == false`.
+// See docs/PLAYER_ERASURE.md.
+pub fn purge_player_data(env: Env, player_id: u64, cursor: u32) -> Result<(u32, bool), ProgressError>
 ```
+
+### Reading progress history — use `get_history_since_v2`
+
+```rust
+pub struct HistorySince {
+    pub entries: Vec<ProgressEntry>,
+    pub truncated: bool,
+}
+```
+
+`get_history_since_v2(player_id, since_timestamp, limit)` returns a `HistorySince`:
+
+- `entries` — up to `limit` progress entries with `timestamp >= since_timestamp`.
+- `truncated` — `true` when **more matching entries may exist** beyond those
+  returned. This happens when either `limit` was hit or the internal 10-page
+  scan cap was reached before the end of the history.
+
+**Why v2 exists:** `get_history_since` silently drops entries at the same
+limits and gives the caller no way to detect it. Client code that syncs history
+incrementally can therefore miss entries without any error. Use
+`get_history_since_v2` and check `truncated`.
+
+**Paging further when `truncated == true`:** advance `since_timestamp` to the
+timestamp of the last returned entry (or use `get_history_page_with_cursor`
+with the cursor returned by that call) and call again until `truncated` is
+`false`. `get_history_page_with_cursor(player_id, cursor_snapshot,
+cursor_next_index, limit)` returns `(Vec<ProgressEntry>, u32, u32)` — the page,
+the snapshot, and the next index — and is the recommended way to walk the full
+history deterministically.
+
+See `bindings/progress/examples/getPlayerHistory.ts` for a worked example.
 
 ---
 
@@ -302,12 +391,24 @@ pub fn confirm_trial_offer(
     idempotency_nonce: Option<String>,
 ) -> Result<(), ScoutAccessError>
 
-// Queries
+ // Queries
 pub fn get_subscription(env: Env, scout: Address) -> Result<Subscription, ScoutAccessError>
 pub fn get_fee_config(env: Env) -> FeeConfig
 pub fn has_contacted(env: Env, scout: Address, player_id: u64) -> bool
 pub fn get_trial_offer(env: Env, player_id: u64, index: u32) -> Result<TrialOffer, ScoutAccessError>
 pub fn get_trial_count(env: Env, player_id: u64) -> u32
+// Paginated trial-offer listing — prefer this over `get_all_trial_offers`.
+pub fn get_trial_offers_page(
+    env: Env,
+    player_id: u64,
+    offset: u32,
+    limit: u32,
+) -> Vec<TrialOffer>
+// Deprecated: silently returns only the 20 oldest offers for `player_id`.
+pub fn get_all_trial_offers(env: Env, player_id: u64) -> Vec<TrialOffer>
+pub fn has_evidence_access(env: Env, player_id: u64, scout: Address) -> bool
+pub fn get_evidence_access_grant(env: Env, player_id: u64, scout: Address) -> Option<EvidenceAccessGrant>
+pub fn get_player_access_grants(env: Env, player_id: u64, offset: u32, limit: u32) -> Vec<EvidenceAccessGrant>
 pub fn health(env: Env) -> ContractHealth
 pub fn version(env: Env) -> String
 
@@ -316,11 +417,34 @@ pub fn update_fee_config(env: Env, fee_config: FeeConfig) -> Result<(), ScoutAcc
 pub fn withdraw_fees(env: Env, to: Address) -> Result<i128, ScoutAccessError>
 pub fn set_progress_contract(env: Env, addr: Address) -> Result<(), ScoutAccessError>
 pub fn update_progress_contract(env: Env, addr: Address) -> Result<(), ScoutAccessError>
+pub fn set_registration_contract(env: Env, addr: Address) -> Result<(), ScoutAccessError>
+pub fn admin_revoke_evidence_access(env: Env, player_id: u64, scout: Address) -> Result<(), ScoutAccessError>
+// Admin safety valve: releases an outstanding `TrialEscrow` whose `TrialOffer`
+// record no longer exists (e.g. evicted/archived). Use `admin_refund_trial_escrow`
+// when the offer record is still present.
+pub fn admin_rescue_orphan_trial_escrow(
+    env: Env,
+    player_id: u64,
+    offer_index: u32,
+    to: Address,
+) -> Result<(), ScoutAccessError>
 pub fn propose_admin(env: Env, new_admin: Address) -> Result<(), ScoutAccessError>
 pub fn accept_admin(env: Env) -> Result<(), ScoutAccessError>
 pub fn pause_contract(env: Env) -> Result<(), ScoutAccessError>
 pub fn unpause_contract(env: Env) -> Result<(), ScoutAccessError>
 pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), ScoutAccessError>
+
+// GDPR erasure — page through a player's data. Loop until `more == false`.
+// See docs/PLAYER_ERASURE.md.
+pub fn purge_player_data(env: Env, player_id: u64, cursor: u32) -> Result<(u32, bool), ScoutAccessError>
+
+// Player-initiated (issue #1380)
+pub fn revoke_evidence_access(
+    env: Env,
+    player: Address,
+    player_id: u64,
+    scout: Address,
+) -> Result<(), ScoutAccessError>
 ```
 
 ---
@@ -347,6 +471,30 @@ Eight peer-address links must be established after every fresh deployment. `init
 | 8 | `scout_access.set_registration_contract` | Pro-tier scout verification / Sybil gating lookups |
 
 This list matches what `scripts/verify-cross-contract-wiring.sh` checks and the "Full Picture" table in [`docs/WIRING_REGISTRY_DESIGN.md`](docs/WIRING_REGISTRY_DESIGN.md).
+
+### The `contract_kind()` handshake
+
+Every contract exposes a read-only `contract_kind() -> Symbol` query that identifies what kind of contract it is:
+
+| Contract | `contract_kind()` returns |
+|----------|---------------------------|
+| `registration` | `"registration"` |
+| `verification` | `"verification"` |
+| `progress` | `"progress"` |
+| `scout_access` | `"scout_access"` |
+
+Each of the eight wiring setters above performs a **handshake** before storing the peer address: it calls `contract_kind()` on the address it was given and compares the returned symbol against the kind it expects. Only if the kinds match is the address written to storage. This catches the most common deployment mistake — pasting the wrong contract ID into a setter — at wiring time instead of at the first cross-contract call.
+
+### Troubleshooting the handshake
+
+- **Wrong contract ID passed to a setter.** If you pass, for example, the progress contract ID to `registration.set_progress_contract` (or any other setter), the handshake fails and the setter returns `InvalidPeerContract` instead of storing the address. Re-run the setter with the correct contract ID; nothing was written, so no cleanup is needed.
+- **`verification.set_progress_contract` is first-call-only.** It returns `AlreadyConfigured` (code 11) on any subsequent call, even with the same address. Use `verification.update_progress_contract` to re-wire after a redeployment. All other wiring setters can be called repeatedly.
+- **Check the kind directly** if a setter is rejected and you are unsure which contract an ID refers to:
+  ```bash
+  stellar contract invoke --id $SOME_CONTRACT_ID \
+    --source $ADMIN_ADDRESS --network testnet \
+    -- contract_kind
+  ```
 
 ### Manual wiring commands
 
@@ -482,25 +630,28 @@ Error codes are **per-contract**. The same numeric code can mean different thing
 | 21 | `SpecializationMismatch` | Validator not tagged for requested milestone category |
 | 22 | `InvalidAttestation` | ed25519 signature verification failed |
 | 23 | `AttestationKeyNotFound` | No attestation public key registered |
-| 24 | `InvalidNonce` | Nonce not strictly greater than last accepted |
+| 24 | `InvalidNonce` | Attestation nonce already consumed or outside the bounded 256-nonce window |
+| 45 | `AttestationExpired` | Attestation `expires_at` is in the past |
+| 46 | `AttestationWindowTooLarge` | Attestation `expires_at` exceeds the max-future tolerance |
 | 25 | `RegistrationCooldown` | Validator registration before cooldown window elapsed |
 | 26 | `DuplicateAttestation` | Same validator already attested to this claim in current round |
 | 27 | `TooManyPendingVotes` | Validator has MAX_PENDING_VOTES_PER_VALIDATOR outstanding votes |
 | 28 | `ThresholdModeRequiresAttestation` | threshold >= 2, must use attest_milestone bypass |
-| 29 | `MigrationNotActive` | Migration window not currently active |
-| 30 | `MilestoneAlreadyExists` | Milestone already exists at (player_id, milestone_index) with different content |
-| 31 | `DisputeAlreadyExists` | Dispute already exists at (player_id, milestone_index) with different content |
-| 32 | `ValidatorRecordEvicted` | Validator record fully evicted, unrecoverable |
-| 33 | `MilestoneRecordEvicted` | Milestone record fully evicted, unrecoverable |
-| 34 | `NotEligibleToReReview` | Caller is not a currently-active validator |
-| 35 | `MilestoneNotFlagged` | Milestone not currently flagged as pending re-review |
-| 36 | `DisputeRequiresJury` | resolve_dispute called on a dispute requiring jury resolution |
-| 37 | `NotJuryDispute` | cast_dispute_vote/tally_dispute called on non-jury dispute |
-| 38 | `VotingWindowClosed` | cast_dispute_vote called after voting window closed |
-| 39 | `ConflictOfInterest` | cast_dispute_vote called by the validator who approved the disputed milestone |
-| 40 | `AlreadyVoted` | cast_dispute_vote called by a validator who already voted on this dispute |
-| 41 | `VotingWindowOpen` | tally_dispute called before voting window closes, vote count is tied |
-| 42 | `QuorumNotReached` | tally_dispute called before quorum of votes has been reached |
+| 29 | `RegistrationCallFailed` | Cross-contract call to the registration contract failed |
+| 30 | `MigrationNotActive` | Migration window not currently active |
+| 31 | `MilestoneAlreadyExists` | Milestone already exists at (player_id, milestone_index) with different content |
+| 32 | `DisputeAlreadyExists` | Dispute already exists at (player_id, milestone_index) with different content |
+| 33 | `ValidatorRecordEvicted` | Validator record fully evicted, unrecoverable |
+| 34 | `MilestoneRecordEvicted` | Milestone record fully evicted, unrecoverable |
+| 35 | `NotEligibleToReReview` | Caller is not a currently-active validator |
+| 36 | `MilestoneNotFlagged` | Milestone not currently flagged as pending re-review |
+| 37 | `DisputeRequiresJury` | resolve_dispute called on a dispute requiring jury resolution — use tally_dispute instead |
+| 38 | `NotJuryDispute` | cast_dispute_vote/tally_dispute called on non-jury dispute |
+| 39 | `VotingWindowClosed` | cast_dispute_vote called after voting window closed |
+| 40 | `ConflictOfInterest` | cast_dispute_vote called by the validator who approved the disputed milestone |
+| 41 | `AlreadyVoted` | cast_dispute_vote called by a validator who already voted on this dispute |
+| 42 | `VotingWindowOpen` | tally_dispute called before voting window closes, vote count is tied |
+| 43 | `QuorumNotReached` | tally_dispute called before quorum of votes has been reached |
 
 ### `ProgressError` (progress)
 
@@ -563,7 +714,9 @@ Error codes are **per-contract**. The same numeric code can mean different thing
 | 35 | `SubscriptionRecordEvicted` | Subscription record fully evicted, unrecoverable |
 | 36 | `PayToContactPaused` | `pay_to_contact` function is paused independently of whole-contract pause |
 | 37 | `TrialEscrowNotOutstanding` | `admin_refund_trial_escrow` targeted pair with no outstanding `TrialEscrow` entry |
-| 38 | `GrantNotFound` | `admin_revoke_evidence_access` targeted (player_id, scout) pair with no `EvidenceAccessGrant` record |
+| 38 | `GrantNotFound` | `admin_revoke_evidence_access` or `revoke_evidence_access` targeted (player_id, scout) pair with no `EvidenceAccessGrant` record |
+| 42 | `GrantAlreadyRevoked` | `revoke_evidence_access` (player-initiated) targeted a grant that was already revoked |
+| 43 | `PlayerNotVerified` | `revoke_evidence_access` caller's wallet does not own the `player_id` passed, or the registration contract is not wired |
 
 ---
 
@@ -693,11 +846,18 @@ When the progress contract is not wired, a `progress_contract_not_set` event is 
 - **`revoke_validator` now takes an explicit `RevocationSeverity` as the second parameter.** Pass `RevocationSeverity::Routine` for a routine deactivation (no cascade) or `RevocationSeverity::ForCause` for a misconduct revocation that flags all prior milestone approvals as pending re-review. Pass `None` for reason if no reason is needed. The old single-`reason` signature no longer exists — update all callers. For validators with more than 50 prior approvals, call `continue_revocation_cascade(wallet)` (admin only) one or more times until the `revocation_cascade_complete` event is emitted.
 - **`log_trial_offer` does NOT immediately advance the player's level.** It records the offer and escrows a fee. Level advancement happens in `confirm_trial_offer`, which must be called by the player wallet.
 - **Trial offer two-step flow:** `log_trial_offer` (scout) → `confirm_trial_offer` (player). Missing the confirmation step means the player stays at Level 2.
+- **Prefer `get_trial_offers_page(player_id, offset, limit)` over `get_all_trial_offers(player_id)`.** `get_all_trial_offers` silently returns only the 20 oldest offers for a player — it does not error and does not indicate truncation, so clients that rely on it will miss newer offers. `get_trial_offers_page` returns a bounded slice starting at `offset` (page size capped server-side); iterate with increasing `offset` until a short page is returned. Use `get_trial_count` to size the iteration.
+- **Refund vs. rescue for stuck trial escrows.** `admin_refund_trial_escrow(player_id, offer_index, to)` is the normal admin path and requires the `TrialOffer` record to still exist (it returns `TrialEscrowNotOutstanding`, code 37, if no escrow is outstanding). If the `TrialOffer` record has been evicted or is otherwise missing while the escrow remains, use `admin_rescue_orphan_trial_escrow(player_id, offer_index, to)` — the admin safety valve that releases the orphaned escrow to `to` without needing the offer record. Both are admin-only. Follow the procedure in [`docs/TRIAL_ESCROW_IMPACT.md`](docs/TRIAL_ESCROW_IMPACT.md) and [`docs/RUNBOOK.md`](docs/RUNBOOK.md) before invoking either; do not call them speculatively.
 - **Admin rotation is two-step.** Current admin calls `propose_admin`, then the pending address calls `accept_admin`. The old admin remains active until acceptance.
 - **Error codes are per-contract, not global.** Code `4` means `Unauthorized` in verification but also `Unauthorized` (different context) in scout_access. Code `9` means `ContractPaused` in registration but `RegistrationCallFailed` in progress. Always check which contract returned the error.
 - **Subscription tier check is enforced on-chain.** Basic scouts cannot call `pay_to_contact`. Elite is required for `log_trial_offer`.
 - **`filter_players` requires `offset` and `limit`.** The limit is capped at 50 server-side.
+- **A scout's verified status can change.** `registration.unverify_scout` (admin only) revokes verification, and `registration.deregister_scout` (admin only) erases the scout record entirely. `scout_access` re-checks verification for Pro/Elite gating, so a previously verified scout may start receiving `ScoutNotVerified` (code 27) on `subscribe`. Do not cache verification status indefinitely.
+- **`purge_player_data(player_id, cursor) -> (u32, bool)` is paged.** It exists on `scout_access`, `verification` and `progress` (see `docs/PLAYER_ERASURE.md`). Loop until `more == false`, passing the returned `next_cursor` back as `cursor`. Never start from a non-zero cursor — the first call must use `cursor = 0`. Erasure order is scout_access → verification → progress → registration.
+- **Use `progress.get_history_since_v2`, not `get_history_since`.** The old getter silently truncates at its internal limit / 10-page scan cap. v2 returns `HistorySince { entries, truncated }`; when `truncated` is `true`, more matching entries exist — page further with `get_history_page_with_cursor` (or advance `since_timestamp`) until it is `false`.
+- **Don't hard-code verification limits.** Call `verification.get_limits()` and validate credentials length, description length, and specialization count client-side against the returned `VerificationLimits` before submitting.
 - **`set_progress_contract` on verification is first-call-only.** Returns `AlreadyConfigured` (code 11) if called again. Use `update_progress_contract` to re-wire.
+- **Wiring setters reject the wrong contract kind.** Each of the eight wiring setters calls `contract_kind()` on the supplied address and returns `InvalidPeerContract` if it does not match the expected kind (e.g. passing the progress contract ID to `set_registration_contract`). The address is not stored, so simply retry with the correct ID. Call `contract_kind()` on an ID to confirm what it is before wiring.
 - **`approve_milestone` stops working once k-of-n threshold mode is enabled.** Once an admin calls `set_milestone_threshold(n)` with `n >= 2`, both `approve_milestone` and `submit_attested_milestone` return `ThresholdModeRequiresAttestation` (code 28) for every subsequent call — all milestone submissions must go through `attest_milestone` instead. Call `get_milestone_threshold()` to check the current mode before integrating; a return value of `1` (the default) means single-signature mode is still active and `approve_milestone` works as normal. A return value of `2` or higher means every validator must call `attest_milestone` independently, and the milestone commits automatically once the threshold number of distinct active validators have voted for the same `(player_id, evidence_hash)` claim within the configured voting window.
 
 > **⚠️ Verify `log_trial_offer` behavior against the live contract before integrating.**

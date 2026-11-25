@@ -1,13 +1,17 @@
 {
-  "name": "scoutchain-contracts-tooling",
+  "name": "scoutchain-backend",
   "private": true,
   "version": "1.0.0",
   "description": "Node backend and tooling for ScoutChain contracts.",
   "license": "MIT",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
+  "main": "dist/server.js",
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
+    "dev": "ts-node src/server.ts",
     "reconcile-indexer": "node scripts/reconcile-indexer.js",
     "start": "tsx src/server.ts",
     "dev": "tsx watch src/server.ts",

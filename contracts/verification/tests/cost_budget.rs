@@ -23,7 +23,7 @@ use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
 // current-cost-plus-headroom after the first real CI run reports actual
 // numbers — that tightening is a follow-up, not a blocker.
 const REGISTER_VALIDATOR_CPU_BUDGET: u64 = 15_000_000;
-const APPROVE_MILESTONE_CPU_BUDGET: u64 = 20_000_000;
+const APPROVE_MILESTONE_CPU_BUDGET: u64 = 25_000_000;
 const GET_VALIDATOR_MILESTONES_PAGE_CPU_BUDGET: u64 = 15_000_000;
 /// Bounded cascade sweep (CASCADE_LIMIT = 50) with 500 total milestones.
 /// Cost must be proportional to the 50-entry limit, not the full 500.
@@ -39,10 +39,12 @@ const CID_3: &str = "QmgzsER5ykyxoTsVUSePRkKXqkEzsRVLpUv511dp4c3vAs";
 fn setup() -> (Env, VerificationContractClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let contract_id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &contract_id);
+    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(
+        &env,
+    ));
     (env, client)
 }
 

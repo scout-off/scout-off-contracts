@@ -1,8 +1,86 @@
 # ScoutChain Runbook
 
+> **See also:** [Glossary](GLOSSARY.md)
+
 Operational procedures for the ScoutChain platform.
 
 ---
+
+## JWT Key Rotation (EdDSA Asymmetric Signing)
+
+ScoutChain access tokens are signed with **Ed25519 (EdDSA)**. The active
+private key is identified by a `kid` header; verifiers fetch public keys from
+`GET /.well-known/jwks.json`.
+
+### How rotation works (overlap-safe)
+
+Tokens have a maximum lifetime of **15 minutes** (`MAX_ACCESS_TOKEN_TTL_SECONDS`).
+To rotate without invalidating existing sessions, the old public key must remain
+in `JWT_SIGNING_KEYS` until all tokens issued under it have expired.
+
+#### Step-by-step
+
+1. **Generate a new key pair**
+
+   ```bash
+   node -e "
+   const { generateKeyPairSync } = require('crypto');
+   const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+   console.log('PRIVATE:', privateKey.export({ type:'pkcs8', format:'pem' }).toString().replace(/\n/g,'\\n'));
+   console.log('PUBLIC:',  publicKey.export({ type:'spki',  format:'pem' }).toString().replace(/\n/g,'\\n'));
+   "
+   ```
+
+2. **Add the new key to `JWT_SIGNING_KEYS`** (keep the old key)
+
+   ```
+   JWT_SIGNING_KEYS=new-kid-1,<new-private-PEM>;old-kid,<old-public-PEM>
+   JWT_SIGNING_ACTIVE_KID=new-kid-1
+   ```
+
+   The server now **signs** new tokens with `new-kid-1` and can still
+   **verify** tokens signed with `old-kid`.
+
+3. **Deploy** the updated environment and restart the backend.
+
+4. **Wait** at least 15 minutes (or the value of `ACCESS_TOKEN_TTL_SECONDS`)
+   for all old-signed tokens to expire naturally.
+
+5. **Remove the old public key** from `JWT_SIGNING_KEYS`:
+
+   ```
+   JWT_SIGNING_KEYS=new-kid-1,<new-private-PEM>
+   JWT_SIGNING_ACTIVE_KID=new-kid-1
+   ```
+
+6. **Deploy** again. Rotation is complete.
+
+### JWKS endpoint cache
+
+The endpoint sends `Cache-Control: public, max-age=900` (15 min). External
+verifiers should respect this; during rotation keep the old key in the JWKS
+response for the same 15-minute overlap window so cached responses remain valid.
+
+### Emergency revocation (compromise)
+
+If a signing key is compromised:
+
+1. Remove the compromised private key from `JWT_SIGNING_KEYS` immediately.
+2. Deploy; the server will refuse to sign new tokens with the old key.
+3. All existing tokens signed by that key will be rejected (unknown `kid`).
+4. Users must re-authenticate via SEP-10.
+
+### Migration from HS256
+
+To migrate an existing HS256 deployment:
+
+1. Set `JWT_ALLOW_HS256_MIGRATION=true` and add `JWT_SIGNING_KEYS` with the new asymmetric key.
+2. The server will sign **new** tokens asymmetrically and verify both HS256 (old) and EdDSA (new).
+3. After `MAX_ACCESS_TOKEN_TTL_SECONDS` (15 min), all old HS256 tokens expire.
+4. Set `JWT_ALLOW_HS256_MIGRATION=false` (or remove it) and redeploy.
+
+---
+
 
 ## Emergency: Pause All Contracts
 
@@ -515,6 +593,71 @@ a shared testnet or mainnet contract other people rely on.
 
 ---
 
+## Emergency: Bulk Validator Revocation
+
+Use when several validators (for example a colluding ring) must be deactivated at once.
+
+1. Split the wallet list into batches of at most **10** (`MAX_BATCH_REVOKE`). Larger batches fail with `BatchTooLarge` before any state change.
+2. Call `batch_revoke_validators(wallets, ForCause, reason)` for each batch. Every wallet is deactivated, removed from open dispute votes and excluded from attestations immediately. A `batch_revoked` summary event is emitted.
+3. The cascade sweep is **not** run inline. For each revoked wallet call `continue_revocation_cascade(wallet)` repeatedly (admin only) until it emits `revocation_cascade_complete` (each call flags at most 50 milestones).
+4. Verify with `is_milestone_flagged` / `get_active_validator_count`.
+
+## Contract Upgrades
+
+Every `upgrade(new_wasm_hash)` call in all four contracts emits a
+`contract_upgraded` event **before** `update_current_contract_wasm` executes,
+so the event is attributed to the old code version and is always present in the
+committed ledger state.
+
+### Event schema
+
+| Field   | Value |
+|---------|-------|
+| Topics  | `("contract_upgraded", admin_address)` |
+| Data    | `new_wasm_hash` (BytesN\<32\>) |
+
+### Verifying an upgrade on-chain
+
+After running `scripts/upgrade.sh`, confirm the event was emitted:
+
+```bash
+source .env && source .env.contracts
+# Fetch the latest transaction for the contract and check for the event
+stellar contract events \
+  --id "$REGISTRATION_CONTRACT_ID" \
+  --network "$STELLAR_NETWORK" \
+  --start-ledger <ledger_before_upgrade>
+```
+
+Look for a record with topic `["contract_upgraded", "<admin_address>"]` and
+data equal to the new WASM hash. Repeat for all four contract IDs. If no such
+event appears, the upgrade transaction may not have been confirmed — do not
+proceed until it is verified.
+
+### What to check after every upgrade
+
+1. Confirm the `contract_upgraded` event appears in the ledger for each contract.
+2. Re-wire instance-storage links per the [DEPLOYMENT.md post-upgrade checklist](DEPLOYMENT.md).
+3. Run `scripts/verify-cross-contract-wiring.sh` and `scripts/health-check.sh`.
+4. Run the upgrade rehearsal tests locally: `cargo test --workspace --test upgrade_rehearsal`.
+
+---
+
+## Verify Deployed WASM Against a Release (issue #1614)
+
+After any deploy or upgrade, or when an auditor asks what code is running, run:
+
+```bash
+./scripts/verify-deployed-wasm.sh <network> <release-tag>
+```
+
+It fetches the installed code for each contract ID in `.env.contracts`, hashes
+it and compares it with the release's `wasm-hashes.json`, printing `MATCH` or
+`MISMATCH` per contract and exiting non-zero on any mismatch. A `MISMATCH` means
+the on-chain code is not the tagged build: treat it as an incident (consider the
+pause procedure above) until explained. Set `WASM_HASHES_FILE` to verify against
+a local manifest. See [DEPLOYMENT.md](DEPLOYMENT.md#reproducible-builds-and-deployed-wasm-verification-issue-1614).
+
 ## Related Documentation
 
 - [DEPLOYMENT.md](DEPLOYMENT.md) — contract deployment order and initialization
@@ -522,3 +665,71 @@ a shared testnet or mainnet contract other people rely on.
 - [GLOSSARY.md](GLOSSARY.md) — domain term definitions
 - [Issue #609](https://github.com/scout-off/scout-off-contracts/issues/609) — multisig/timelock admin authorization (the preventive fix for this section)
 - [Issue #617](https://github.com/scout-off/scout-off-contracts/issues/617) — tooling for the address-migration procedure this section relies on
+
+## Migration window sequence and `scripts/upgrade.sh`
+
+Migration state replay must run in order: `open_migration_window` → `admin_seed_*` → `close_migration_window`. Closing is **irreversible** (it seals the window), so it is rejected with `MigrationNotActive` unless the window is currently open.
+
+`scripts/upgrade.sh` uploads the WASM once and signs every call with `--source <identity>` (or `UPGRADE_SOURCE`). Contracts without `schema_version`/`migrate` (registration, verification, scout_access) are upgraded and the migration phase is skipped with exit code 0:
+
+```bash
+UPGRADE_SOURCE=admin ./scripts/upgrade.sh --contract <id> --wasm <path> [--network testnet]
+```
+
+---
+
+## Re-index from Archive
+
+Use this procedure when the indexer must be bootstrapped from genesis (e.g.
+after a prolonged outage, a fresh deployment, or a full audit of historical
+state).
+
+### Prerequisites
+
+- A running Galexie / data-lake archive reachable via HTTP(S).  The archive
+  must expose an `index.json` manifest and JSONL partition files as described
+  in [INDEXER.md — Archival Event Source](INDEXER.md#archival-event-source).
+- `GALEXIE_ARCHIVE_URL` set to the archive base URL.
+- `RPC_URL`, `REGISTRATION_CONTRACT_ID`, `VERIFICATION_CONTRACT_ID`,
+  `PROGRESS_CONTRACT_ID`, and `SCOUT_ACCESS_CONTRACT_ID` set (or present in
+  `.env.contracts`).
+- Optional: `GALEXIE_API_KEY` for authenticated buckets.
+
+### Steps
+
+```bash
+# 1. Load environment
+source .env
+source .env.contracts
+
+# 2. Verify gap detection is working (should exit 0 with archive configured)
+GALEXIE_ARCHIVE_URL=https://your-archive.example.com/stellar-events \
+  node scripts/audit-event-history.js --player-id 1 --from-ledger 1
+
+# 3. Full from-genesis audit of all players
+GALEXIE_ARCHIVE_URL=https://your-archive.example.com/stellar-events \
+  node scripts/audit-event-history.js all --from-ledger 1
+
+# 4. Run the reconciler to sync the indexer DB
+node scripts/reconcile-indexer.js
+```
+
+### Without an archive (RPC-only)
+
+If no archive is available, omit `GALEXIE_ARCHIVE_URL`.  The audit tool will
+detect and refuse any range that starts before the RPC retention window:
+
+```
+Incomplete event range: Requested range starts at ledger 1 but the RPC node
+only retains events from ledger 95000. Configure an archival event source
+(GALEXIE_ARCHIVE_URL) to cover the full range, or start from ledger 95000.
+```
+
+Start from the reported ledger to audit only the retained window:
+
+```bash
+node scripts/audit-event-history.js all --from-ledger 95000
+```
+
+**Note:** An RPC-only audit of a partial range cannot guarantee tamper-proof
+progress claims for history outside the window.

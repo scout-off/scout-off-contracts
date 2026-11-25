@@ -4,6 +4,8 @@
 //! the same error code (`ProContactLimitReached` = 20) when the Pro-tier
 //! monthly contact limit is exceeded.
 
+mod common;
+
 use scoutchain_scout_access::{FeeConfig, ScoutAccessContractClient, SubscriptionTier};
 use scoutchain_verification::VerificationContractClient;
 use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env};
@@ -34,14 +36,6 @@ fn setup() -> (
     let env = Env::default();
     env.mock_all_auths();
 
-    let verification_id = env.register(scoutchain_verification::VerificationContract, ());
-    let verification_client =
-        scoutchain_verification::VerificationContractClient::new(&env, &verification_id);
-
-    let scout_access_id = env.register(scoutchain_scout_access::ScoutAccessContract, ());
-    let scout_access_client =
-        scoutchain_scout_access::ScoutAccessContractClient::new(&env, &scout_access_id);
-
     let admin = Address::generate(&env);
     let scout = Address::generate(&env);
     let player = Address::generate(&env);
@@ -52,8 +46,21 @@ fn setup() -> (
     StellarAssetClient::new(&env, &xlm_token).mint(&scout, &1_000_000_000i128);
     let fee_config = default_fees();
 
-    scout_access_client.initialize(&admin, &xlm_token, &fee_config);
-    verification_client.initialize(&admin);
+    let verification_id = env.register(
+        scoutchain_verification::VerificationContract,
+        (admin.clone(),),
+    );
+    let verification_client =
+        scoutchain_verification::VerificationContractClient::new(&env, &verification_id);
+
+    let scout_access_id = env.register(
+        scoutchain_scout_access::ScoutAccessContract,
+        (admin.clone(), xlm_token.clone(), fee_config.clone()),
+    );
+    let scout_access_client =
+        scoutchain_scout_access::ScoutAccessContractClient::new(&env, &scout_access_id);
+    common::wire_registration(&env, Some(&scout_access_client), None);
+    common::wire_progress_level_stub(&env, &scout_access_client);
 
     (env, scout_access_client, verification_client, scout, player)
 }

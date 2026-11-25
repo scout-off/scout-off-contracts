@@ -20,10 +20,9 @@ fn setup() -> (Env, RegistrationContractClient<'static>) {
     // ledger entries) would reject that much state, so disable them. The CPU
     // cost budget is asserted separately per test below.
     env.host().set_invocation_resource_limits(None).unwrap();
-    let contract_id = env.register(RegistrationContract, ());
-    let client = RegistrationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let contract_id = env.register(RegistrationContract, (admin.clone(),));
+    let client = RegistrationContractClient::new(&env, &contract_id);
     (env, client)
 }
 
@@ -32,7 +31,7 @@ fn dummy_vitals(env: &Env, position: &str, region: &str) -> PlayerVitals {
         age: 20,
         position: String::from_str(env, position),
         region: String::from_str(env, region),
-        nationality: String::from_str(env, "Test"),
+        nationality: String::from_str(env, "TT"),
     }
 }
 
@@ -61,15 +60,15 @@ fn test_filter_players_page_limit_enforced() {
         let wallet = Address::generate(&env);
         client.register_player(
             &wallet,
-            &dummy_vitals(&env, "Forward", "WestAfrica"),
+            &dummy_vitals(&env, "ST", "NG"),
             &dummy_hashes(&env),
         );
     }
 
     // Request up to 100 results — must be capped at 50 internally.
     let result = client.filter_players(
-        &String::from_str(&env, "WestAfrica"),
-        &String::from_str(&env, "Forward"),
+        &String::from_str(&env, "NG"),
+        &String::from_str(&env, "ST"),
         &ProgressLevel::Unverified,
         &0u32,
         &100u32,
@@ -84,6 +83,10 @@ fn test_filter_players_page_limit_enforced() {
         result.profiles.len(),
         50,
         "with 60 matching players and limit=100, exactly 50 should be returned"
+    );
+    assert!(
+        result.has_more,
+        "page with 50 results out of 60 must have has_more=true"
     );
 }
 
@@ -102,14 +105,14 @@ fn test_filter_players_pagination_retrieves_all() {
         let wallet = Address::generate(&env);
         client.register_player(
             &wallet,
-            &dummy_vitals(&env, "Midfielder", "EastAfrica"),
+            &dummy_vitals(&env, "CM", "KE"),
             &dummy_hashes(&env),
         );
     }
 
     let page1 = client.filter_players(
-        &String::from_str(&env, "EastAfrica"),
-        &String::from_str(&env, "Midfielder"),
+        &String::from_str(&env, "KE"),
+        &String::from_str(&env, "CM"),
         &ProgressLevel::Unverified,
         &0u32,
         &50u32,
@@ -118,8 +121,8 @@ fn test_filter_players_pagination_retrieves_all() {
     assert!(page1.next_cursor > 0, "page 1 must indicate more results");
 
     let page2 = client.filter_players(
-        &String::from_str(&env, "EastAfrica"),
-        &String::from_str(&env, "Midfielder"),
+        &String::from_str(&env, "KE"),
+        &String::from_str(&env, "CM"),
         &ProgressLevel::Unverified,
         &(page1.next_cursor as u32),
         &50u32,
@@ -130,10 +133,85 @@ fn test_filter_players_pagination_retrieves_all() {
         "page 2 must return the remaining 10 results"
     );
     assert_eq!(page2.next_cursor, 0, "page 2 must indicate no more results");
+    assert!(!page2.has_more, "page 2 must have has_more=false");
 
     // Total across both pages = 60.
     let total = page1.profiles.len() + page2.profiles.len();
     assert_eq!(total, 60, "total players across both pages must be 60");
+}
+
+// ---------------------------------------------------------------------------
+// Test 4: limit=0 is clamped to 1 (no infinite paging)
+// ---------------------------------------------------------------------------
+
+/// Regression test for Issues #1407 / #1720: `limit=0` is clamped to 1, so
+/// the cursor always advances and paging cannot loop forever.
+#[test]
+fn test_filter_players_limit_zero_clamped_to_one() {
+    let (env, client) = setup();
+
+    for _ in 0..5 {
+        let wallet = Address::generate(&env);
+        client.register_player(
+            &wallet,
+            &dummy_vitals(&env, "ST", "NG"),
+            &dummy_hashes(&env),
+        );
+    }
+
+    let result = client.filter_players(
+        &String::from_str(&env, "NG"),
+        &String::from_str(&env, "ST"),
+        &ProgressLevel::Unverified,
+        &0u32,
+        &0u32,
+    );
+
+    assert_eq!(result.profiles.len(), 1, "limit=0 must be clamped to 1");
+    assert!(result.has_more);
+}
+
+// ---------------------------------------------------------------------------
+// Test 5: has_more is true when more results exist
+// ---------------------------------------------------------------------------
+
+/// Regression test for Issue #1407: `has_more` must be `true` when
+/// additional pages exist after the current one.
+#[test]
+fn test_filter_players_has_more_flag() {
+    let (env, client) = setup();
+
+    for _ in 0..60 {
+        let wallet = Address::generate(&env);
+        client.register_player(
+            &wallet,
+            &dummy_vitals(&env, "CM", "KE"),
+            &dummy_hashes(&env),
+        );
+    }
+
+    let page1 = client.filter_players(
+        &String::from_str(&env, "KE"),
+        &String::from_str(&env, "CM"),
+        &ProgressLevel::Unverified,
+        &0u32,
+        &50u32,
+    );
+    assert_eq!(page1.profiles.len(), 50);
+    assert!(
+        page1.has_more,
+        "page 1 must have has_more=true when more results exist"
+    );
+
+    let page2 = client.filter_players(
+        &String::from_str(&env, "KE"),
+        &String::from_str(&env, "CM"),
+        &ProgressLevel::Unverified,
+        &(page1.next_cursor as u32),
+        &50u32,
+    );
+    assert_eq!(page2.profiles.len(), 10);
+    assert!(!page2.has_more, "last page must have has_more=false");
 }
 
 // ---------------------------------------------------------------------------
@@ -151,15 +229,15 @@ fn test_filter_players_cpu_cost_at_50_results() {
         let wallet = Address::generate(&env);
         client.register_player(
             &wallet,
-            &dummy_vitals(&env, "Goalkeeper", "SouthAfrica"),
+            &dummy_vitals(&env, "GK", "ZA"),
             &dummy_hashes(&env),
         );
     }
 
     env.cost_estimate().budget().reset_default();
     let result = client.filter_players(
-        &String::from_str(&env, "SouthAfrica"),
-        &String::from_str(&env, "Goalkeeper"),
+        &String::from_str(&env, "ZA"),
+        &String::from_str(&env, "GK"),
         &ProgressLevel::Unverified,
         &0u32,
         &50u32,

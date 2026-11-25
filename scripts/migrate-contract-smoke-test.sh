@@ -3,7 +3,7 @@
 # a local Soroban sandbox, with a before/after state comparison.
 #
 # This mirrors the sandbox setup used by the `bindings-smoke-test` job in
-# .github/workflows/contract-ci.yml (stellar/quickstart:testing docker
+# .github/workflows/contract-ci.yml (stellar/quickstart:testing (digest-pinned) docker
 # container, a local network registration, and a funded CI identity) and then
 # exercises the migration path this issue adds:
 #
@@ -61,7 +61,7 @@ echo "==> Starting Soroban local sandbox ($CONTAINER)..."
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 # --limits unlimited: the stellar-core default Soroban resource ceilings are
 # extremely low and reject the upload of verification's ~134 KB optimized WASM.
-docker run -d --name "$CONTAINER" -p 8000:8000 stellar/quickstart:testing --local --limits unlimited >/dev/null
+docker run -d --name "$CONTAINER" -p 8000:8000 stellar/quickstart:testing@sha256:66a19476f2ce2ed09c4dccf3f1af4d438209eee9ee05eb113a02dd926e2b03f5 --local --limits unlimited >/dev/null
 
 echo "==> Waiting for Soroban RPC to be ready..."
 LEDGER=0
@@ -123,7 +123,7 @@ PLAYER_ADDRESS="$(stellar keys address smoke-player)"
 # 3. Build WASM + deploy the OLD contract set via the real scripts.
 # ---------------------------------------------------------------------------
 echo "==> Building WASM contracts..."
-cargo build --workspace --target wasm32v1-none --release
+cargo build --workspace --target wasm32v1-none --release --locked
 
 echo "==> Deploying OLD contract set (scripts/deploy.sh)..."
 bash scripts/deploy.sh "$NETWORK"

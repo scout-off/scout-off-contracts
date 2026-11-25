@@ -7,6 +7,8 @@
 /// These tests would silently pass (incorrectly) with the old hand-rolled
 /// mock client in scout_access — they require the real #[contractclient]
 /// implementation that makes genuine cross-contract calls.
+mod common;
+
 use scoutchain_progress::{ProgressContract, ProgressContractClient};
 use scoutchain_scout_access::{
     FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
@@ -53,14 +55,16 @@ fn setup() -> Harness {
 
     // Deploy and initialize the verification contract (the primary
     // whitelisted caller of advance_level).
-    let ver_id = env.register(VerificationContract, ());
+    let ver_id = env.register(VerificationContract, (admin.clone(),));
     let verification = VerificationContractClient::new(&env, &ver_id);
-    verification.initialize(&admin);
+    verification.set_registration_contract(
+        &scoutchain_shared_types::testutils::active_registry_stub(&env),
+    );
 
     // Deploy and initialize the progress contract.
-    let progress_id = env.register(ProgressContract, ());
+    let progress_id = env.register(ProgressContract, (admin.clone(),));
     let progress = ProgressContractClient::new(&env, &progress_id);
-    progress.initialize(&admin);
+    common::wire_registration(&env, None, Some(&progress));
     progress.set_verification_contract(&ver_id);
 
     // Create the XLM token used by scout_access.
@@ -69,9 +73,12 @@ fn setup() -> Harness {
         .address();
 
     // Deploy and initialize the scout_access contract.
-    let sa_id = env.register(ScoutAccessContract, ());
+    let sa_id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
     let scout_access = ScoutAccessContractClient::new(&env, &sa_id);
-    scout_access.initialize(&admin, &xlm, &default_fees());
+    common::wire_registration(&env, Some(&scout_access), None);
 
     // Wire scout_access → progress so log_trial_offer can call advance_level.
     scout_access.set_progress_contract(&progress_id);
@@ -172,6 +179,13 @@ fn test_log_trial_offer_advances_player_to_elite_tier() {
 
     // The cross-contract call must have advanced the player to EliteTier.
     assert_eq!(h.progress.get_level(&player_id), ProgressLevel::EliteTier);
+
+    // #1640: the EliteTier history entry is attributed to the scout who made
+    // the offer, not the scout_access contract address.
+    let count = h.progress.get_history_count(&player_id);
+    let entry = h.progress.get_history_entry(&player_id, &count);
+    assert_eq!(entry.new_level, ProgressLevel::EliteTier);
+    assert_eq!(entry.updated_by, scout);
 }
 
 /// Edge case: when the player is already at EliteTier, log_trial_offer must
