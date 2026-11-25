@@ -47,7 +47,6 @@ export async function isTokenRevoked(jti: string): Promise<boolean> {
 const BEARER_JWT_PATTERN =
   /^Bearer\s+([A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]*)$/i;
 
-
 /**
  * Verify a JWT using the active signing configuration.
  *

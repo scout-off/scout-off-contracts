@@ -185,7 +185,6 @@ Each tier controls which player progress levels a scout can view and what action
 - `set_milestone_threshold(threshold)` — Set the k-of-n distinct-validator threshold required to commit an attested milestone claim (admin only)
 - `set_voting_window_secs(window_secs)` — Set how long an attestation claim stays open for k-of-n voting before it expires (admin only)
 - `admin_rescue_orphan_trial_escrow(player_id, offer_index, to)` — Admin safety valve that releases an escrowed trial fee to `to` when the escrow's `TrialOffer` record no longer exists (admin only). Use this **instead of** `admin_refund_trial_escrow` when the offer record itself is gone: `admin_refund_trial_escrow` refunds a specific, still-identified stuck entry that retains its offer record, whereas `admin_rescue_orphan_trial_escrow` targets an orphaned escrow with no surviving `TrialOffer`. See [docs/TRIAL_ESCROW_IMPACT.md](docs/TRIAL_ESCROW_IMPACT.md) and [docs/RUNBOOK.md](docs/RUNBOOK.md) for the rescue procedure.
-=======
 
 ### Query Functions
 
@@ -543,7 +542,6 @@ Both session-issuing endpoints — `POST /auth` (SEP-10 login) and `POST /auth/r
 Clients should use `refreshExpiresIn` to proactively re-authenticate before the refresh token lapses, rather than discovering expiry through a `401 invalid_refresh_token` response.
 
 ## Database Schema
-=======
 
 The `migrations/` directory contains the PostgreSQL migration files the backend event indexer needs. **Run every file in numeric order** — skipping any migration leaves tables, columns, or indexes missing and causes silent indexer errors at runtime.
 

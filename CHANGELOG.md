@@ -52,7 +52,7 @@ The initial v0.1.0 entry below retains the year-only date because no exact histo
   `docs/RUNBOOK.md` has a new section documenting how to respond to a deficit or surplus.
 
 - Contracts affected: `registration`, `scout_access`, `progress`, `verification`, `shared-types`
-- Summary: Added erasure tombstone mechanism (issue #1622). `registration.deregister_player` now cross-calls each wired contract's `mark_player_erased(player_id)` to write a local `Erased(player_id)` tombstone flag. All player-scoped write entrypoints in `progress`, `verification`, and `scout_access` check this flag and return `PlayerErased` error if set. New error codes: `PlayerErased` (registration: 22, progress: 29, verification: 65, scout_access: 59). Updated `docs/PLAYER_ERASURE.md` with the tombstone invariant.
+- Summary: Added erasure tombstone mechanism (issue #1622). `registration.deregister_player` now cross-calls each wired contract's `mark_player_erased(player_id)` to write a local `Erased(player_id)` tombstone flag. All player-scoped write entrypoints in `progress`, `verification`, and `scout_access` check this flag and return `PlayerErased` error if set. New error codes: `PlayerErased` (registration: 22, progress: 30, verification: 66, scout_access: 61). Updated `docs/PLAYER_ERASURE.md` with the tombstone invariant.
 - Classification: `Non-breaking (MINOR)` — additive behavior with new error codes; existing entrypoints gain a pre-check but no signature changes.
 
 - Contracts affected: `registration`, `scout_access`, `progress`, `verification`, `shared-types`
