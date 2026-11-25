@@ -18,6 +18,21 @@ The initial v0.1.0 entry below retains the year-only date because no exact histo
 
 ## Unreleased
 
+### New features (#1782)
+
+- **scout_access** (#1782): Added `get_xlm_token() -> Option<Address>` and
+  `get_outstanding_escrows_page(offset: u32, limit: u32) -> (Vec<(u64, u32, i128)>, bool)`
+  read-only view functions. The escrow page getter lets off-chain tools sum outstanding
+  trial-escrow amounts without an external index.
+
+- **operations** (#1782): Added `scripts/solvency-monitor.js` — an off-chain monitor that
+  reads `get_accumulated_fees`, the XLM token balance, and all outstanding escrow entries,
+  then reports a JSON solvency snapshot and exits non-zero on any deficit or unexplained
+  surplus. Webhook alerts (Slack/Discord) are sent on non-ok status when `WEBHOOK_URL` is
+  set. A scheduled GitHub Actions workflow (`.github/workflows/solvency-monitor.yml`) runs
+  the monitor against testnet every 6 hours and uploads the report as an artifact.
+  `docs/RUNBOOK.md` has a new section documenting how to respond to a deficit or surplus.
+
 - Contracts affected: `registration`, `scout_access`, `progress`, `verification`, `shared-types`
 - Summary: Added erasure tombstone mechanism (issue #1622). `registration.deregister_player` now cross-calls each wired contract's `mark_player_erased(player_id)` to write a local `Erased(player_id)` tombstone flag. All player-scoped write entrypoints in `progress`, `verification`, and `scout_access` check this flag and return `PlayerErased` error if set. New error codes: `PlayerErased` (registration: 22, progress: 29, verification: 65, scout_access: 59). Updated `docs/PLAYER_ERASURE.md` with the tombstone invariant.
 - Classification: `Non-breaking (MINOR)` — additive behavior with new error codes; existing entrypoints gain a pre-check but no signature changes.

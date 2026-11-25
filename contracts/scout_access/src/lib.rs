@@ -2098,6 +2098,65 @@ impl ScoutAccessContract {
             .unwrap_or(0i128)
     }
 
+    /// Return the native XLM token contract address configured at
+    /// initialization. The solvency monitor calls this to look up the SAC
+    /// address so it can query `balance(contract)` without hard-coding it.
+    ///
+    /// Returns `None` before the contract has been initialized.
+    pub fn get_xlm_token(env: Env) -> Option<Address> {
+        Self::bump_instance_ttl(&env);
+        env.storage().instance().get(&DataKey::XlmToken)
+    }
+
+    /// Return a bounded page of `(player_id, trial_index, amount)` tuples from
+    /// the `OutstandingTrialEscrows` global index.
+    ///
+    /// `offset` is a 0-based item offset; `limit` is clamped to 1..=50. The
+    /// returned tuple has a third `bool` field: `true` when more entries follow
+    /// (i.e. `offset + limit < total`).
+    ///
+    /// The solvency monitor uses this to sum outstanding escrow balances
+    /// without an off-chain index — paginate until `more == false`.
+    ///
+    /// **Footprint note**: each call reads one `OutstandingTrialEscrows` list
+    /// and up to `limit` individual `TrialEscrow` records. For the monitor's
+    /// read-only simulation mode this is free; on-chain callers should keep
+    /// `limit <= 50`.
+    pub fn get_outstanding_escrows_page(
+        env: Env,
+        offset: u32,
+        limit: u32,
+    ) -> (soroban_sdk::Vec<(u64, u32, i128)>, bool) {
+        Self::bump_instance_ttl(&env);
+        let clamped_limit = limit.clamp(1, 50);
+        let index_key = DataKey::OutstandingTrialEscrows;
+        let outstanding: soroban_sdk::Vec<(u64, u32)> = env
+            .storage()
+            .persistent()
+            .get(&index_key)
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
+
+        let total = outstanding.len();
+        let mut result: soroban_sdk::Vec<(u64, u32, i128)> = soroban_sdk::Vec::new(&env);
+
+        let start = offset.min(total);
+        let end = (start + clamped_limit).min(total);
+        for i in start..end {
+            let (player_id, index) = outstanding.get(i).unwrap();
+            let escrow_key = DataKey::TrialEscrow(player_id, index);
+            let amount: i128 = env
+                .storage()
+                .persistent()
+                .get::<DataKey, TrialEscrow>(&escrow_key)
+                .map(|e| e.amount)
+                .unwrap_or(0);
+            result.push_back((player_id, index, amount));
+        }
+
+        let more = end < total;
+        (result, more)
+    }
+
     pub fn get_subscribers_by_tier(env: Env, tier: SubscriptionTier) -> soroban_sdk::Vec<Address> {
         env.storage()
             .persistent()
