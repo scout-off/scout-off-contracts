@@ -63,6 +63,8 @@ describe("Token revocation through real SEP-10 flow", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({ token });
 
+    // Revocation is enforced by requireAuth (isTokenRevoked), not by the
+    // /api/tokens/me handler, which no longer performs its own lookup.
     const response = await request(app)
       .get("/api/tokens/me")
       .set("Authorization", `Bearer ${token}`)
