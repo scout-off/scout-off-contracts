@@ -214,7 +214,7 @@ app.post(
       .status(400)
       .json({ error: "transaction and account are required" });
   }
-  if (typeof transaction !== "string") {
+  if (typeof transaction !== "string" || transaction === "") {
     logger.warn({ requestId }, "POST /auth: invalid transaction");
     return res.status(400).json({ error: "invalid transaction" });
   }

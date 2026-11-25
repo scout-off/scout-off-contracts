@@ -39,7 +39,7 @@ export function accessTokenTtlSeconds(): number {
   return Math.min(Math.floor(configured), MAX_ACCESS_TOKEN_TTL_SECONDS);
 }
 
-function refreshTokenTtlSeconds(): number {
+export function refreshTokenTtlSeconds(): number {
   const configured = Number(process.env.REFRESH_TOKEN_TTL_SECONDS);
   return Number.isFinite(configured) && configured > 0
     ? Math.floor(configured)
