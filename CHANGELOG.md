@@ -18,6 +18,24 @@ The initial v0.1.0 entry below retains the year-only date because no exact histo
 
 ## Unreleased
 
+### Bug fixes (#1784, #1785)
+
+- **scout_access** (#1784): `purge_player_data` now preserves `TrialCounter` until the final
+  page (`more == false`). Previously the counter was deleted on the first call (`cursor == 0`),
+  causing all subsequent calls to read a count of 0 and silently return `(0, false)` — leaving
+  `TrialOffer` and `TrialEscrow` keys for indices 51+ on-chain forever. The cursor is now
+  guaranteed to be monotonically non-decreasing across calls.
+
+- **scout_access** (#1785): `purge_player_data` now erases `EvidenceAccessGrant(player_id, scout)`,
+  `EvidenceAccessGrantPage(player_id, page)`, and `EvidenceAccessGrantCount(player_id)` during the
+  second pagination phase (after all trial offers are removed). Previously only the count was
+  deleted on the first page while the individual grant records survived, leaving scouts with
+  permanent on-chain access proofs for erased players. `EvidenceAccessGrantCount` is removed
+  only on the final page. `ScoutTrialOffers(scout)` back-references pointing at the purged player
+  are cleaned up during the trial-offer removal loop. `ContactRecord(player_id, scout)` entries
+  are intentionally **retained** for billing audit, matching `docs/PLAYER_ERASURE.md`. The
+  `purge_player_data` doc comment is corrected to reflect this.
+
 ### New features (#1782)
 
 - **scout_access** (#1782): Added `get_xlm_token() -> Option<Address>` and
