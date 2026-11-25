@@ -1,126 +1,116 @@
-# Player Erasure Design (GDPR Right-to-Erasure)
+# Player erasure procedure (GDPR right-to-erasure)
 
-## Overview
+This document is the **single source of truth** for how a player's on-chain
+data is erased across the four ScoutChain contracts, and for the keys that are
+intentionally **retained**. The property-based completeness test in
+`contracts/chaos-tests/tests/erasure_completeness.rs` mirrors the "Retained"
+table here verbatim as its allow-list: if a key is listed as retained below it
+is permitted to survive erasure, and nothing else keyed by the player is.
 
-`registration.deregister_player(player_id)` implements the GDPR right-to-erasure
-for ScoutChain platform users. Because the platform runs on a public, immutable
-blockchain, **erasure has hard limits** that must be disclosed to players before
-they request it.
+## Contracts in scope
 
----
+| Contract        | Erasure entrypoint                          |
+|-----------------|---------------------------------------------|
+| `registration`  | `purge_player_data(env, player_id, cursor)`  |
+| `progress`      | `purge_player_data(env, player_id, cursor)`  |
+| `verification`  | `purge_player_data(env, player_id, cursor)`  |
+| `scout_access`  | `purge_player_data(env, player_id, cursor)`  |
 
-## What can and cannot be erased
+Every entrypoint is **admin-only** and returns `PurgePage { next_cursor, more }`
+(`scoutchain_shared_types::PurgePage`). The erasure driver loops, feeding
+`next_cursor` back into the next call, until `more` is `false`.
 
-### Immutable — cannot be erased
+## Procedure
 
-| Data | Location | Why |
-|------|----------|-----|
-| Transaction history (all past calls) | Stellar ledger history (full archive) | Blockchain history is append-only and cannot be modified by anyone, including validators or admin. |
-| Emitted events in transaction receipts | Horizon / event stream | Events are part of the transaction XDR; once the ledger closes they are permanent. |
-| Stellar account address used to sign transactions | Stellar ledger | An account address is public by design; it cannot be removed from history. |
-
-### Erasable — current-state ledger entries
-
-| Data | Contract | Key(s) | Treatment |
-|------|----------|--------|-----------|
-| Player profile (wallet, vitals, IPFS hashes) | `registration` | `Player(id)`, `PlayerByWallet(wallet)`, `PlayerLevel(id)`, `PlayerDeactivated(id)` | **Deleted** by `deregister_player` |
-| Player index membership | `registration` | `PlayerIndex`, `PlayersByLevel(level)`, `PlayersByLevelRegion(level, region)` | **Removed** by `deregister_player` |
-| Progress level | `progress` | `PlayerLevel(id)` | **Deleted** by `purge_player_data` (cursor=0) |
-| Progress history entries | `progress` | `HistoryEntry(id, idx)`, `HistoryPage(id, page)` | **Deleted** paged by `purge_player_data` |
-| History counter & Merkle root | `progress` | `HistoryCounter(id)`, `HistoryRoot(id)`, `HistoryVec(id)` | **Deleted** by `purge_player_data` |
-| Milestones (description, evidence CID) | `verification` | `Milestone(id, idx)` | **Deleted** paged by `purge_player_data` |
-| Milestone disputes | `verification` | `MilestoneDispute(id, idx)`, `PlayerDisputes(id)` | **Deleted** by `purge_player_data` |
-| Milestone counter, player affiliations | `verification` | `MilestoneCounter(id)`, `PlayerAffiliations(id)` | **Deleted** by `purge_player_data` |
-| Scout contact records (keyed by player) | `scout_access` | `PlayerContacts(id)` | **Deleted** by `purge_player_data` |
-| Trial offers and escrows | `scout_access` | `TrialOffer(id, idx)`, `TrialEscrow(id, idx)`, `TrialCounter(id)` | **Deleted** by `purge_player_data` (only after escrows are expired/refunded) |
-| Evidence access grants | `scout_access` | `EvidenceAccessGrant(id, scout)`, `EvidenceAccessGrantPage(id, page)`, `EvidenceAccessGrantCount(id)` | **Deleted** by `purge_player_data` |
-
-### Retained by design (tombstones)
-
-| Data | Reason |
-|------|--------|
-| Player ID counter monotonic value | IDs must never be reused after erasure to prevent `ContactRecord` collisions (see issue #234). The counter itself is not erased. |
-| Validator `MilestoneRef` entries in `ValidatorMilestones(validator)` | Keeps the validator's per-player milestone count intact for audit; the underlying `Milestone` record itself is erased so no PII is accessible via this index. |
-| Scout `ContactRecord(player_id, scout)` individual entries | Retains the scout's paid-for contact event for billing audit. The `PlayerContacts(player_id)` reverse index is erased. |
-
----
-
-## Recommended erasure procedure
-
-Run the following steps **in order**. Each cross-contract purge must complete
-(`more == false`) before moving to the next step.
+Run the four purges **to completion** for the target `player_id`. Order does
+not matter for completeness — each contract only touches its own storage —
+but the recommended order below keeps token conservation easy to reason about
+(scout_access refunds outstanding trial escrows first).
 
 ```
-1. Expire or refund all outstanding trial escrows for the player.
-   Call:  scout_access.expire_trial_offers(limit)
-   Until: no escrow remains for this player.
-
-2. Purge scout_access data (paged).
-   Call:  scout_access.purge_player_data(player_id, cursor=0)
-   Until: more == false.
-
-3. Purge verification data (paged).
-   Call:  verification.purge_player_data(player_id, cursor=0)
-   Until: more == false.
-
-4. Purge progress data (paged).
-   Call:  progress.purge_player_data(player_id, cursor=0)
-   Until: more == false.
-
-5. Deregister the player from registration (removes profile + indexes).
-   Call:  registration.deregister_player(player_id)
+let mut cursor = 0u32;
+loop {
+    let page = scout_access.purge_player_data(&player_id, &cursor)?;
+    cursor = page.next_cursor;
+    if !page.more { break; }
+}
+// repeat the same cursor loop for verification, progress, and registration
 ```
 
-Each `purge_player_data` call removes at most 50 entries to stay within
-per-transaction CPU/memory budgets. For a player with a long history, multiple
-calls with the returned cursor value are needed.
+### Token-balance conservation
 
----
+Before / during erasure no tokens are minted or burned:
 
-## Outstanding escrow guard
+* `scout_access.purge_player_data` **refunds** any outstanding (unconfirmed,
+  unexpired) trial escrow for the player back to the originating scout before
+  dropping the `TrialEscrow` record, so escrowed XLM is never orphaned in the
+  contract.
+* Already-collected contact and subscription fees stay in
+  `AccumulatedFees` untouched (they are platform revenue, not player funds).
+* `withdraw_fees` is not part of the procedure.
 
-`scout_access.purge_player_data` refuses to proceed if any unexpired, non-zero
-trial escrow exists for the player. This protects scouts whose escrowed funds
-would otherwise be silently destroyed. The operator must call
-`expire_trial_offers` or wait for the escrow window to elapse before erasure
-can proceed.
+The test asserts the total XLM supply across all participants and contract
+accounts is invariant across the procedure.
 
----
+## Retained keys (the allow-list)
 
-## Legal / product notes
+These keys **may** remain after a complete erasure. They are keyed by the
+player and are kept for the stated reason. Everything else keyed by the
+player is removed.
 
-1. **Inform players before erasure** that their on-chain transaction history
-   (Stellar ledger) is permanently public and cannot be deleted.
-2. **Erasure is irreversible.** Once a player ID's current-state entries are
-   deleted, the profile cannot be reconstructed from on-chain data.
-3. **Player IDs are tombstoned.** After `deregister_player` the ID is never
-   reassigned, preventing stale data collisions.
-4. **This doc requires legal sign-off** before being presented to users as a
-   GDPR compliance statement. The platform's legal team should verify it meets
-   the applicable regulation's "right to be forgotten" requirements given the
-   immutability constraints above.
+| Contract        | DataKey                                              | Reason                                                          |
+|-----------------|------------------------------------------------------|-----------------------------------------------------------------|
+| `scout_access`  | `ContactRecord(player_id, scout)`                    | Billing / contact audit trail (who contacted the player).       |
+| `scout_access`  | `PlayerContacts(player_id)`                          | Inbound scout index for the retained contact records.           |
+| `scout_access`  | `EvidenceAccessGrant(player_id, scout)`              | Append-only evidence-access audit trail (see EVIDENCE_PRIVACY). |
+| `scout_access`  | `EvidenceAccessGrantCount(player_id)`               | Pagination counter for the retained grants.                    |
+| `scout_access`  | `EvidenceAccessGrantPage(player_id, page)`           | Pagination index for the retained grants.                      |
 
----
+### Retained-by-design (not keyed by the player)
 
-## Database / indexer handling
+These structures are global / per-validator audit structures that are **not**
+keyed by `player_id`, so the completeness oracle (which decodes each `DataKey`
+and checks whether it embeds the erased `player_id`) never flags them. The
+purge still removes the player's *references* from them where feasible:
 
-The PostgreSQL indexer must also scrub the erased player's rows:
+* `verification` `GlobalMilestoneSlot(slot)` — bounded ring buffer; a player's
+  milestone entries are overwritten as new milestones are approved globally.
+* `verification` `OpenDisputeIndex` — global list of open disputes; the purge
+  removes the player's tuples.
+* `verification` `ValidatorMilestones(validator)`, `ValidatorPlayers(validator)`,
+  `ValidatorMilestoneCount(validator)`, `ValidatorPlayerMilestoneCount(validator, player_id)` —
+  per-validator indexes; the purge removes the player's references.
+* `verification` `EvidenceUsed(evidence_hash)` — global evidence-uniqueness
+  map; the purge drops the player's milestone entries.
+* `scout_access` `ScoutContacts(scout)`, `ScoutTrialOffers(scout)`,
+  `OutstandingTrialEscrows` — scout-centric / global indexes; the purge removes
+  the player's references.
 
-```sql
--- After receiving a player_deregistered event:
-DELETE FROM players WHERE player_id = $1;
-DELETE FROM player_level_history WHERE player_id = $1;
-DELETE FROM milestones WHERE player_id = $1;
-DELETE FROM milestone_disputes WHERE player_id = $1;
-DELETE FROM contact_records WHERE player_id = $1;
-DELETE FROM trial_offers WHERE player_id = $1;
-DELETE FROM evidence_access_grants WHERE player_id = $1;
--- Retain scout_subscriptions (scout data, not player data).
-```
+### Out of scope (not player-keyed, wallet-scoped)
 
-The reconciliation script (`scripts/reconcile-indexer.js`) should treat a
-`player_deregistered` event as a hard delete signal, not a diff — it must
-remove the player row even if the on-chain state no longer has a matching
-record (because the key was erased).
+These keys are keyed by a **wallet address**, not a `player_id`, so they are
+neither purged nor flagged by the oracle. A full wallet-scoped erasure (e.g.
+for an account-closure workflow) would address them separately:
 
-See `docs/INDEXER.md` for the indexer cursor model.
+* `registration` `PlayerRegLastSent(wallet)`, `MigrationNonce(wallet, nonce)`
+* `scout_access` `Subscription(scout)`, `ScoutRegLastSent(wallet)`,
+  `ContactCount(scout, month)`, `ProContactCount(scout)`, `AutoRenew(scout)`,
+  `ExpiryBucket(day)`, `TierSubscribers(tier)`, `ConfirmationNonce(nonce)`
+
+## Known pre-fix bugs this procedure closes
+
+These are the gaps a hand-written per-contract purge left on `main` and that
+the completeness test would have caught. Each is closed by the
+`purge_player_data` implementation above.
+
+* **scout_access** removed `TrialCounter` on the first page and stopped, so
+  later pages purged nothing — outstanding escrows orphaned XLM and trial
+  offers / cooldown markers lingered.
+* **progress** left `HistoryRoot`, `HistoryPage` shards and `PlayerLevel`
+  behind after deleting history entries.
+* **verification** left `DisputeVote`, `DisputeVoteCount`, `MilestoneDispute`,
+  `PlayerDisputes`, `PendingMilestoneVote`, `PendingMilestoneClaim`,
+  `MilestoneCounter`, `Milestone`, `PlayerAffiliations`, and the player's
+  entries in the per-validator and global indexes.
+* **registration** `deregister_player` left `PlayerDeactivated` and the
+  per-level `PlayersByLevel` index entry behind.

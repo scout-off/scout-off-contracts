@@ -9,16 +9,18 @@ mod events;
 mod types;
 
 use types::{
-    ContractHealth, DataKey, FilterResult, PlayerProfile, PlayerSummary, ProgressLevel,
-    RegistrationWiringState, ScoutProfile, ScoutVerificationRecord, StoredPlayerProfile,
+    ContractHealth, FilterResult, PlayerProfile, PlayerStatus, PlayerSummary, ProgressLevel,
+    RegistrationWiringState, ScoutProfile, ScoutStatus, ScoutVerificationRecord,
+    StoredPlayerProfile,
 };
 
 pub use errors::ScoutChainError;
-pub use types::{MigrationAuthorization, MigrationRole, PlayerStatus, ScoutStatus};
+pub use types::{DataKey, MigrationAuthorization, MigrationRole};
 // `PlayerVitals` is an *input* type of the public `register_player` function, so
 // it must be nameable by external callers (integration tests, generated
 // clients). Re-export it at the crate root; this also brings it into local
 // scope for the rest of this module.
+pub use scoutchain_shared_types::PurgePage;
 pub use types::PlayerVitals;
 
 use scoutchain_shared_types::{
@@ -759,6 +761,73 @@ impl RegistrationContract {
 
         events::scout_deregistered(&env, scout_id, &profile.wallet, &admin);
         Ok(())
+    }
+
+    // -------------------------------------------------------------------------
+    // Erasure (GDPR right-to-erasure)
+    // -------------------------------------------------------------------------
+
+    /// Remove every player-keyed ledger entry this contract owns, except the
+    /// "Retained" allow-list entries documented in `docs/PLAYER_ERASURE.md`.
+    ///
+    /// The registration contract retains nothing for a purged player. Unlike
+    /// [`deregister_player`](Self::deregister_player) this also clears the
+    /// `PlayerDeactivated(player_id)` flag and the per-level index
+    /// (`PlayersByLevel`) that `deregister_player` leaves behind, and it is
+    /// idempotent — calling it on an already-purged player is a no-op.
+    ///
+    /// The registration contract's per-player footprint is bounded (no
+    /// ever-growing vec keyed by the player), so erasure completes in a single
+    /// page: `more` is always `false`.
+    pub fn purge_player_data(
+        env: Env,
+        player_id: u64,
+        _cursor: u32,
+    ) -> Result<PurgePage, ScoutChainError> {
+        let _admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        Self::require_initialized(&env)?;
+
+        if let Some(profile) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, StoredPlayerProfile>(&DataKey::Player(player_id))
+        {
+            let level = Self::resolve_level(&env, player_id);
+            env.storage()
+                .persistent()
+                .remove(&DataKey::Player(player_id));
+            env.storage()
+                .persistent()
+                .remove(&DataKey::PlayerByWallet(profile.wallet));
+            Self::composite_index_remove(&env, &level, &profile.vitals.region, player_id);
+            Self::level_index_remove(&env, &level, player_id);
+        }
+
+        // Scalar per-player keys — removed unconditionally (idempotent no-ops
+        // when already absent). Covers the post-deregister path too.
+        env.storage()
+            .persistent()
+            .remove(&DataKey::PlayerLevel(player_id));
+        env.storage()
+            .persistent()
+            .remove(&DataKey::PlayerDeactivated(player_id));
+
+        let mut player_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PlayerIndex)
+            .unwrap_or_else(|| Vec::new(&env));
+        if let Some(pos) = player_ids.iter().position(|id| id == player_id) {
+            player_ids.remove(pos as u32);
+            env.storage()
+                .persistent()
+                .set(&DataKey::PlayerIndex, &player_ids);
+        }
+
+        Ok(PurgePage {
+            next_cursor: 0,
+            more: false,
+        })
     }
 
     /// Deactivate a player (admin only).
