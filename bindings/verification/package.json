@@ -17,9 +17,9 @@
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
-      "require": "./dist/index.cjs",
-      "types": "./dist/index.d.ts"
+      "default": "./dist/index.js"
     }
   },
   "files": [
@@ -29,13 +29,14 @@
   "scripts": {
     "build": "tsc --build tsconfig.json",
     "prepublishOnly": "npm run build",
-    "test": "echo \"Info: No tests yet for @scoutchain/bindings-verification — placeholder pending real binding tests\" && exit 0"
-  },
-  "dependencies": {
-    "@stellar/stellar-sdk": "^13.0.0"
+    "test": "tsc --noEmit -p tsconfig.json",
+    "test:integration": "vitest run examples",
+    "check:package": "publint && attw --pack . --profile esm-only"
   },
   "devDependencies": {
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^2.1.0",
+    "@stellar/stellar-sdk": "^13.0.0"
   },
   "peerDependencies": {
     "@stellar/stellar-sdk": "^13.0.0"

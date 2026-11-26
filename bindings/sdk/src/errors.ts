@@ -21,7 +21,7 @@ export class ScoutChainContractError extends Error {
   }
 }
 
-// ─── Progress contract errors (28 variants) ────────────
+// ─── Progress contract errors (30 variants) ────────────
 
 export class ProgressContractError extends ScoutChainContractError {
   constructor(code: number, variant: string) {
@@ -60,6 +60,8 @@ export namespace ProgressError {
   export const SeedTimestampRegression = 26;
   export const InvalidPeerContract = 27;
   export const HistoryRootMissing = 28;
+  export const InvalidPurgeCursor = 29;
+  export const PlayerErased = 30;
 
   const _codeToName: Record<number, string> = {
     1: "AlreadyInitialized",
@@ -90,6 +92,8 @@ export namespace ProgressError {
     26: "SeedTimestampRegression",
     27: "InvalidPeerContract",
     28: "HistoryRootMissing",
+    29: "InvalidPurgeCursor",
+    30: "PlayerErased",
   };
 
   export function fromCode(code: number): ProgressContractError {
@@ -97,7 +101,7 @@ export namespace ProgressError {
   }
 }
 
-// ─── Registration contract errors (21 variants) ────────────
+// ─── Registration contract errors (22 variants) ────────────
 
 export class RegistrationContractError extends ScoutChainContractError {
   constructor(code: number, variant: string) {
@@ -129,6 +133,7 @@ export namespace RegistrationError {
   export const InvalidCooldown = 19;
   export const ScoutCapReached = 20;
   export const InvalidPeerContract = 21;
+  export const PlayerErased = 22;
 
   const _codeToName: Record<number, string> = {
     1: "AlreadyInitialized",
@@ -152,6 +157,7 @@ export namespace RegistrationError {
     19: "InvalidCooldown",
     20: "ScoutCapReached",
     21: "InvalidPeerContract",
+    22: "PlayerErased",
   };
 
   export function fromCode(code: number): RegistrationContractError {
@@ -159,7 +165,7 @@ export namespace RegistrationError {
   }
 }
 
-// ─── ScoutAccess contract errors (57 variants) ────────────
+// ─── ScoutAccess contract errors (60 variants) ────────────
 
 export class ScoutAccessContractError extends ScoutChainContractError {
   constructor(code: number, variant: string) {
@@ -227,6 +233,9 @@ export namespace ScoutAccessError {
   export const GrantAdminRevoked = 56;
   export const ContactNotFound = 57;
   export const InvalidTrialIndex = 58;
+  export const TrialEscrowOutstanding = 59;
+  export const InvalidPurgeCursor = 60;
+  export const PlayerErased = 61;
 
   const _codeToName: Record<number, string> = {
     1: "AlreadyInitialized",
@@ -286,6 +295,9 @@ export namespace ScoutAccessError {
     56: "GrantAdminRevoked",
     57: "ContactNotFound",
     58: "InvalidTrialIndex",
+    59: "TrialEscrowOutstanding",
+    60: "InvalidPurgeCursor",
+    61: "PlayerErased",
   };
 
   export function fromCode(code: number): ScoutAccessContractError {
@@ -293,7 +305,7 @@ export namespace ScoutAccessError {
   }
 }
 
-// ─── Verification contract errors (64 variants) ────────────
+// ─── Verification contract errors (66 variants) ────────────
 
 export class VerificationContractError extends ScoutChainContractError {
   constructor(code: number, variant: string) {
@@ -368,6 +380,8 @@ export namespace VerificationError {
   export const RegistrationNotConfigured = 62;
   export const InvalidPeerContract = 63;
   export const BatchTooLarge = 64;
+  export const InvalidPurgeCursor = 65;
+  export const PlayerErased = 66;
 
   const _codeToName: Record<number, string> = {
     1: "AlreadyInitialized",
@@ -434,6 +448,8 @@ export namespace VerificationError {
     62: "RegistrationNotConfigured",
     63: "InvalidPeerContract",
     64: "BatchTooLarge",
+    65: "InvalidPurgeCursor",
+    66: "PlayerErased",
   };
 
   export function fromCode(code: number): VerificationContractError {

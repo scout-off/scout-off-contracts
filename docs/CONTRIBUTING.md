@@ -51,6 +51,22 @@ git config core.hooksPath scripts/git-hooks
 
 Reminder: `core.hooksPath` is a per-clone git config setting, so re-apply it after every fresh clone or when working from a new machine.
 
+### Local quick start (no testnet)
+
+```bash
+./scripts/setup-local.sh      # start/reuse stellar/quickstart, fund identity, deploy, seed
+./scripts/teardown-local.sh   # remove the sandbox container
+```
+
+The script is idempotent and is also used by CI (`--sandbox-only`).
+
+### README / ai.md entrypoint check
+
+`scripts/check-readme-ai-docs.sh` verifies README.md and ai.md mention every
+public contract entrypoint. Intentional omissions go in
+`docs/.undocumented-allowlist` with a reason. It is warn-only for now; pass
+`--strict` to make it blocking once the tracked documentation gaps are closed.
+
 ## Before opening a PR
 
 ```bash
@@ -183,6 +199,41 @@ Repository administrators must enable **Require review from Code Owners** in the
 branch-protection rule for this mapping to block merges. Before enabling that rule, confirm
 that the listed owner has the required write access and update the mapping if the authorized
 reviewer group changes.
+
+## Mutation Testing
+
+Mutation testing uses `cargo-mutants` to verify that the test suite would catch bugs in the highest-risk code (payment/escrow functions and safe-math helpers). See `docs/MUTATION_TESTING.md` for the full documentation.
+
+### Running mutation testing locally
+
+Install `cargo-mutants`:
+
+```bash
+cargo install cargo-mutants
+```
+
+Run mutation testing on the configured scope (scout_access payment/escrow functions and shared-types safe-math helpers):
+
+```bash
+# Basic run
+cargo mutants --config mutants.toml
+
+# Sharded run (faster on multi-core machines)
+cargo mutants --config mutants.toml --shard 1/4
+cargo mutants --config mutants.toml --shard 2/4
+cargo mutants --config mutants.toml --shard 3/4
+cargo mutants --config mutants.toml --shard 4/4
+```
+
+The workspace tests must pass before mutation testing runs:
+
+```bash
+cargo test --workspace --locked
+```
+
+### CI integration
+
+A scheduled GitHub Actions workflow (`.github/workflows/mutation-testing.yml`) runs mutation testing weekly and uploads the report. The workflow fails if the missed mutant count exceeds the documented baseline in `docs/MUTATION_TESTING.md`.
 
 ## Glossary
 

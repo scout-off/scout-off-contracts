@@ -17,6 +17,8 @@
 //   --player-id <id>     Player ID to audit (default: from arg 1)
 //   --sample <n>         For 'all' mode, audit only first N players
 //   --json               Emit as JSON instead of text
+//   --start-ledger <n>   Start fetching events from this ledger (default:
+//                        oldest retained ledger based on RPC health info)
 //
 // Exit codes: 0 = clean, 1 = inconsistencies found, 2 = configuration error.
 
@@ -26,6 +28,12 @@ const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const { Client: PgClient } = require("pg");
+
+// Maximum page size accepted by the Soroban RPC getEvents endpoint.
+const EVENTS_PAGE_SIZE = 200;
+
+// Default timeout for RPC requests (milliseconds)
+const RPC_TIMEOUT_MS = 30000;
 
 // --- Configuration & Setup ---------------------------------------------------
 
@@ -567,3 +575,14 @@ main().catch((err) => {
   process.stderr.write(`Audit failed: ${err.stack || err.message}\n`);
   process.exit(2);
 });
+
+// Export for testing
+module.exports = {
+  fetchEvents,
+  parseArgs,
+  requireEnv,
+  PlayerHistoryReconstructor,
+  EVENTS_PAGE_SIZE,
+  getRpcInfo,
+  main,
+};

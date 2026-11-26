@@ -165,7 +165,6 @@ relies on that single build — it does not build the workspace separately. To
 skip building entirely, point `deploy.sh` at prebuilt release WASMs with
 `PREBUILT_WASM_DIR` (see [Reproducible builds and deployed-WASM
 verification](#reproducible-builds-and-deployed-wasm-verification-issue-1614)).
-=======
 
 ### 3. Initialize and wire contracts
 
@@ -233,14 +232,13 @@ numeric order. **Run every file** — skipping any migration leaves tables, colu
 or indexes missing and will cause silent indexer errors at runtime.
 
 ```bash
-psql $DATABASE_URL -f migrations/001_initial_schema.sql
-psql $DATABASE_URL -f migrations/002_cursor_upsert_helper.sql
-psql $DATABASE_URL -f migrations/003_diagnostic_events.sql
-psql $DATABASE_URL -f migrations/004_scout_subscriptions_auto_renew.sql
-psql $DATABASE_URL -f migrations/005_evidence_access_grants.sql
-psql $DATABASE_URL -f migrations/006_dispute_jury.sql
-psql $DATABASE_URL -f migrations/007_milestone_flags.sql
+DATABASE_URL=postgres://... ./scripts/migrate-db.sh
 ```
+
+`scripts/migrate-db.sh` applies `migrations/NNN_*.sql` in order, each inside a
+transaction, and records it in `schema_migrations(version, checksum, applied_at)`.
+Re-running only applies pending files, and it refuses to run if an applied file's
+checksum changed.
 
 All migration files are idempotent (`CREATE TABLE IF NOT EXISTS`,
 `ALTER TABLE … ADD COLUMN IF NOT EXISTS`): re-running against an already-migrated
@@ -691,6 +689,25 @@ every deploy and always reflects the **latest** snapshot. The
 `.env.contracts.snapshots/` directory is **git-ignored** — snapshots are local
 operator state and must never be committed.
 
+### Two rollback modes (#1812)
+
+| Situation | Command |
+|-----------|---------|
+| A fresh deployment produced bad contract IDs | `./scripts/rollback.sh --deployment <network>` (default; backs up the replaced file to `.env.contracts.pre-rollback`) |
+| An in-place `upgrade()` installed a faulty WASM on existing contracts | `./scripts/rollback.sh --upgrade <contract\|all> --network <net> --source <identity> [--tag <release>]` |
+
+`scripts/upgrade.sh` records each contract's current on-chain WASM hash as
+`<NAME>_PREVIOUS_WASM_HASH` in `.env.contracts` (and `.env.contracts.json` if
+present) before upgrading. `--upgrade` calls `upgrade(previous_hash)` (the old
+code is still installed on the network), then checks the on-chain hash matches;
+with `--tag` it also runs `scripts/verify-deployed-wasm.sh`.
+
+**Caveat:** storage migrations performed by the new WASM (`migrate()`) are not
+reverted. A WASM rollback is unsafe once `schema_version` was bumped and data
+was rewritten, because the old code may not understand the new layout. In that
+case pause the contracts and use a forward-fix upgrade. Sandbox check:
+`scripts/test-rollback-upgrade.sh` (upgrade, rollback, verify hash).
+
 ### Automatic rollback (CI)
 
 If the CI deploy pipeline fails, it prints rollback instructions. Run:
@@ -812,3 +829,23 @@ See [`docs/TTL_POLICY.md`](TTL_POLICY.md) for:
 - Rationale for 30-day choice
 - Cost analysis (CPU and storage)
 - Adding new persistent keys with proper TTL handling
+
+## Backend service
+
+The Node/Express SEP-10 backend ships as `Dockerfile.backend` (multi-stage, `node:20-slim`, non-root `node` user, `NODE_ENV=production`, production dependencies only, Prisma client and engines generated for the image platform). The build uses `tsconfig.docker.json`, which emits `dist/server.js`.
+
+```bash
+docker build -f Dockerfile.backend -t scoutchain-backend .
+docker run --rm -p 3000:3000 --env-file .env.production scoutchain-backend
+```
+
+Required environment variables: `JWT_SECRET`, `SEP10_SIGNING_SECRET`, `HOME_DOMAIN`, `WEB_AUTH_DOMAIN`, `DATABASE_URL`; optional `STELLAR_NETWORK` (`testnet`|`mainnet`) and `PORT` (default 3000). Pass secrets at runtime; they are never baked into the image (`.dockerignore` excludes `.env*`).
+
+Run database migrations before starting a new version:
+
+```bash
+docker build -f Dockerfile.backend --target build -t scoutchain-backend:migrate .
+docker run --rm --env-file .env.production scoutchain-backend:migrate npx prisma migrate deploy
+```
+
+The image `HEALTHCHECK` requests `GET /auth` and treats any HTTP response as alive. CI (`.github/workflows/backend-docker.yml`) builds the image on PRs touching `src/`, `prisma/` or `package*.json` without pushing.

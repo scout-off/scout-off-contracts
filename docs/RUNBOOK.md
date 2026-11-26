@@ -108,12 +108,84 @@ Run the emergency pause script:
 ./scripts/emergency-pause.sh
 ```
 
-> **Note**: This requires `ADMIN_SECRET` and the contract IDs in `.env.contracts`
-> to be available first (see the prerequisites above).
-> Each `pause_contract` call is a separate Stellar transaction.
-> If the script exits mid-way (e.g. network error), run it again — the already-
-> paused contracts will return `ContractPaused` but will not change state.
-> Continue from the failed contract manually if needed.
+#### Best-effort behavior
+
+The script implements best-effort across all contracts:
+
+- **scout_access is paused first** — since it holds funds, its safety takes priority
+- **Retries transient failures** — up to 5 attempts with exponential backoff (500ms → 1s → 2s → 4s → 8s max with jitter)
+- **Continues regardless of failures** — a failure on one contract does not prevent attempts on the others
+- **Verifies final state** — calls `health()` on each contract after pausing to confirm `paused: true`
+- **Reports clear summary** — prints a table showing pause result and health check per contract; exits non-zero if any contract is not in the desired state
+
+#### Optional filtering
+
+To pause only specific contracts, use the `--contracts` flag:
+
+```bash
+# Pause only registration and progress
+./scripts/emergency-pause.sh --contracts registration,progress
+
+# Pause only scout_access (funds at risk)
+./scripts/emergency-pause.sh --contracts scout_access
+```
+
+Valid contract names: `registration`, `verification`, `progress`, `scout_access`
+
+#### Example output
+
+```bash
+========================================
+  Emergency Pause - Starting
+========================================
+
+Target network: testnet
+Contracts to pause: registration verification progress scout_access
+
+--- Priority: scout_access (funds at risk) ---
+  [attempt 1/5] Pausing scout_access...
+  ✓ scout_access paused successfully
+
+--- Priority: registration, verification, progress ---
+  [attempt 1/5] Pausing registration...
+  ✓ registration paused successfully
+  [attempt 1/5] Pausing verification...
+  ✓ verification paused successfully
+  [attempt 1/5] Pausing progress...
+  ✓ progress paused successfully
+
+--- Verifying final state via health() ---
+{"initialized":true,"paused":true}
+{"initialized":true,"paused":true}
+{"initialized":true,"paused":true}
+{"initialized":true,"paused":true}
+
+========================================
+  Emergency Pause - Summary
+========================================
+
+Contract              Pause Result    Health Check
+--------              ------------    ------------
+scout_access          success         paused:true
+registration          success         paused:true
+verification          success         paused:true
+progress              success         paused:true
+
+✓ All targeted contracts are in PAUSED state
+```
+
+If any contract fails to pause or health check fails, the summary shows the failure and the script exits with code 1.
+
+### Player erasure while paused
+
+`purge_player_data` on **all three** contracts (`scout_access`,
+`progress`, `verification`) is an intentional exception to the pause: it
+remains callable while a contract is paused, because erasure is a compliance
+operation (it deletes state and moves no funds) and operators may be required
+to honour erasure requests precisely during an incident. The guard set is
+identical on all three contracts — `require_admin` → `require_initialized` —
+so erasure is still admin-only and still fails on an uninitialised contract.
+See [PLAYER_ERASURE.md](PLAYER_ERASURE.md) for the full procedure.
 
 ## Function-Scoped Circuit Breakers
 
@@ -487,23 +559,73 @@ Run the emergency unpause script:
 ./scripts/emergency-unpause.sh
 ```
 
-### Verify each contract is unpaused
+#### Best-effort behavior
+
+The script implements best-effort across all contracts:
+
+- **scout_access is unpaused first** — since it holds funds, its safety takes priority
+- **Retries transient failures** — up to 5 attempts with exponential backoff (500ms → 1s → 2s → 4s → 8s max with jitter)
+- **Continues regardless of failures** — a failure on one contract does not prevent attempts on the others
+- **Verifies final state** — calls `health()` on each contract after unpause to confirm `paused: false`
+- **Reports clear summary** — prints a table showing unpause result and health check per contract; exits non-zero if any contract is not in the desired state
+
+#### Optional filtering
+
+To unpause only specific contracts, use the `--contracts` flag:
 
 ```bash
-source .env && source .env.contracts
-NETWORK_ARGS="--network $STELLAR_NETWORK --source $ADMIN_SECRET"
+# Unpause only registration and progress
+./scripts/emergency-unpause.sh --contracts registration,progress
 
-echo "registration:" && stellar contract invoke --id "$REGISTRATION_CONTRACT_ID" $NETWORK_ARGS -- health
-echo "verification:" && stellar contract invoke --id "$VERIFICATION_CONTRACT_ID" $NETWORK_ARGS -- health
-echo "progress:"     && stellar contract invoke --id "$PROGRESS_CONTRACT_ID"     $NETWORK_ARGS -- health
-echo "scout_access:" && stellar contract invoke --id "$SCOUT_ACCESS_CONTRACT_ID" $NETWORK_ARGS -- health
+# Unpause only scout_access (funds at risk)
+./scripts/emergency-unpause.sh --contracts scout_access
 ```
 
-Expected output for each contract after a successful unpause:
+Valid contract names: `registration`, `verification`, `progress`, `scout_access`
 
-```json
+#### Example output
+
+```bash
+========================================
+  Emergency Unpause - Starting
+========================================
+
+Target network: testnet
+Contracts to unpause: registration verification progress scout_access
+
+--- Priority: scout_access (funds at risk) ---
+  [attempt 1/5] Unpausing scout_access...
+  ✓ scout_access unpaused successfully
+
+--- Priority: registration, verification, progress ---
+  [attempt 1/5] Unpausing registration...
+  ✓ registration unpaused successfully
+  [attempt 1/5] Unpausing verification...
+  ✓ verification unpaused successfully
+  [attempt 1/5] Unpausing progress...
+  ✓ progress unpaused successfully
+
+--- Verifying final state via health() ---
 {"initialized":true,"paused":false}
+{"initialized":true,"paused":false}
+{"initialized":true,"paused":false}
+{"initialized":true,"paused":false}
+
+========================================
+  Emergency Unpause - Summary
+========================================
+
+Contract              Unpause Result  Health Check
+--------              --------------  ------------
+scout_access          success         paused:false
+registration          success         paused:false
+verification          success         paused:false
+progress              success         paused:false
+
+✓ All targeted contracts are in UNPAUSED state
 ```
+
+If any contract fails to unpause or health check fails, the summary shows the failure and the script exits with code 1.
 
 ---
 
@@ -658,6 +780,73 @@ the on-chain code is not the tagged build: treat it as an incident (consider the
 pause procedure above) until explained. Set `WASM_HASHES_FILE` to verify against
 a local manifest. See [DEPLOYMENT.md](DEPLOYMENT.md#reproducible-builds-and-deployed-wasm-verification-issue-1614).
 
+## Solvency Monitor
+
+The `scripts/solvency-monitor.js` script reads on-chain state from the
+`scout_access` contract and verifies the invariant:
+
+```
+token.balance(contract) >= AccumulatedFees + Σ outstanding TrialEscrow.amount
+```
+
+A **deficit** means the contract cannot pay all its obligations (fees owed to
+admin plus escrowed trial-offer funds owed to scouts). A **surplus** beyond the
+configured tolerance may indicate a bookkeeping regression.
+
+### Automated checks
+
+The GitHub Actions workflow `.github/workflows/solvency-monitor.yml` runs every
+6 hours against testnet. It uploads a JSON report artifact named
+`solvency-report-<run_id>` with 30 days' retention. The workflow requires two
+repository secrets:
+
+| Secret | Description |
+|---|---|
+| `TESTNET_SCOUT_ACCESS_CONTRACT_ID` | Contract ID of `scout_access` on testnet |
+| `SOLVENCY_ALERT_WEBHOOK_URL` | Slack/Discord/generic webhook URL (optional) |
+
+### Manual run
+
+```bash
+# Against testnet (requires stellar CLI configured for testnet)
+SCOUT_ACCESS_CONTRACT_ID=CXXXXXXXX \
+  node scripts/solvency-monitor.js --network testnet --json
+
+# With a surplus tolerance of 1 XLM (10_000_000 stroops)
+SCOUT_ACCESS_CONTRACT_ID=CXXXXXXXX \
+  node scripts/solvency-monitor.js --network testnet \
+  --tolerance 10000000
+```
+
+### Responding to a deficit
+
+A deficit means `balance < AccumulatedFees + Σ escrow`. Possible causes:
+
+1. **Escrow bug**: a purge or refund call destroyed an escrow without returning
+   the funds. Check for recent `purge_player_data` calls, then compare the
+   `player_data_purged` events against `trial_offer_refunded` events.
+2. **Accounting regression**: `AccumulatedFees` was incremented without a
+   corresponding token transfer. Check recent fee-collection transactions.
+3. **Direct token withdrawal**: `withdraw_fees` was called beyond the actual
+   contract balance. This is a contract bug — pause immediately.
+
+**Immediate response**:
+1. Pause the contract (`./scripts/emergency-pause.sh`).
+2. Run the solvency monitor manually with `--json` and save the report.
+3. Cross-check with `scripts/audit-event-history.js` for the affected player IDs.
+4. File an incident and notify the admin multi-sig before any further action.
+
+### Responding to a surplus
+
+An unexplained surplus may mean:
+
+- Someone sent XLM directly to the contract address (donation / mistake).
+- An escrow was cleaned up without decrementing the outstanding index.
+
+A surplus alone does not require pausing. Investigate via `audit-event-history.js`
+and document the finding. If it cannot be explained, treat it as a potential
+accounting regression and escalate.
+
 ## Related Documentation
 
 - [DEPLOYMENT.md](DEPLOYMENT.md) — contract deployment order and initialization
@@ -675,6 +864,27 @@ Migration state replay must run in order: `open_migration_window` → `admin_see
 ```bash
 UPGRADE_SOURCE=admin ./scripts/upgrade.sh --contract <id> --wasm <path> [--network testnet]
 ```
+
+### Monitoring migration windows
+
+An **open migration window is security-relevant**: while it is open, the
+`admin_seed_*` entrypoints accept writes that bypass normal validation, so an
+unexpectedly open window is an incident signal.
+
+- **Alert on `migration_window_opened` in production (mainnet).** Page the
+  on-call operator on any occurrence that was not scheduled as part of a
+  planned upgrade. `migration_window_closed` should follow within the planned
+  maintenance window; a window left open past its expected close time is also
+  worth alerting on.
+- `migration_window_opened` / `migration_window_closed` are emitted by
+  `progress`, `verification` and `scout_access`; `progress` additionally emits
+  `schema_migrated` from `migrate()`. See the
+  [EVENT_REFERENCE.md entries](EVENT_REFERENCE.md#migration-window-events)
+  for the exact topics/data per contract.
+- **Registration is different.** It has no migration window and does not emit
+  these events — it uses a separate migration-ticket mechanism instead. Do not
+  expect `migration_window_*` events from the registration contract, and do not
+  treat their absence there as a problem.
 
 ---
 

@@ -2098,7 +2098,7 @@ Internally aggregates exactly:
 1. `get_validator(wallet)` → `credentials`, `registered_at`, `active`
 2. `get_validator_status(wallet)` → `status`
 3. `get_validator_milestone_count(wallet)` → `milestone_count`
-4. `get_validator_players(wallet)` → `distinct_players` (and `distinct_player_count`)
+4. `ValidatorPlayerCount(wallet)` → `distinct_player_count` (the player list is no longer embedded; page through `get_validator_players_page`)
 
 This is a **pure read-only aggregation** — no new storage, no new business logic.
 The returned values are byte-for-byte identical to calling the four individual
@@ -5456,8 +5456,7 @@ Bundles the fields from four individual queries into one response:
 | `active` | `get_validator` | Whether the validator is currently active |
 | `status` | `get_validator_status` | Richer status (Active / Revoked / RevokedForCause / NotRegistered) |
 | `milestone_count` | `get_validator_milestone_count` | Total milestones approved across all players |
-| `distinct_player_count` | `get_validator_players` | Number of distinct players with at least one milestone |
-| `distinct_players` | `get_validator_players` | List of distinct player IDs |
+| `distinct_player_count` | `ValidatorPlayerCount` | Number of distinct players with at least one milestone (O(1) read) |
 
 ```rust
 pub struct ValidatorActivityReport {
@@ -5468,7 +5467,6 @@ pub struct ValidatorActivityReport {
     pub status: ValidatorStatus,
     pub milestone_count: u32,
     pub distinct_player_count: u32,
-    pub distinct_players: Vec<u64>,
 }
 ```
 
@@ -6177,9 +6175,12 @@ with `InvalidPeerContract` (#1610).
 #### `purge_player_data(player_id, cursor) -> Result<(u32, bool), Error>` — verification, progress, scout_access
 
 Admin-only, paged GDPR erasure of a player's current-state ledger entries.
-Call with `cursor = 0`, then pass the returned cursor back while the returned
-flag is `true`. scout_access refuses (`TrialOfferNotFound`) while any of the
-player's trial escrows is still outstanding.
+Call with `cursor = 0`, then pass that contract's returned cursor back while
+the returned flag is `true`. Wrong, stale, and out-of-range cursors are
+rejected with `InvalidPurgeCursor`; scalar keys are removed on the final page.
+scout_access refuses (`TrialEscrowOutstanding`, code 59) while any of the
+player's trial escrows is still outstanding — refund or expire the escrow first
+(see `admin_refund_trial_escrow` and `expire_trial_offers`).
 
 Full per-contract reference sections (signature, guards, keys removed per page,
 errors and the `player_data_purged` event) are documented under

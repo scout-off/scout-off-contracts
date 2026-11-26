@@ -101,6 +101,10 @@ else
   fi
 fi
 
+if [[ -f .env.contracts ]]; then
+  cp .env.contracts .env.contracts.pre-rollback
+  echo "    Backed up current .env.contracts to .env.contracts.pre-rollback"
+fi
 echo "==> Rolling back .env.contracts to snapshot..."
 cp "$SNAPSHOT" .env.contracts
 echo "    Restored from $SNAPSHOT"

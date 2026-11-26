@@ -1,12 +1,18 @@
-import { StrKey } from "@stellar/stellar-sdk";
+import { Networks, StrKey } from "@stellar/stellar-sdk";
 import { loadSigningKeys, SigningKeys } from "./keys";
 
-export const SUPPORTED_NETWORKS = ["testnet", "mainnet"] as const;
+export const SUPPORTED_NETWORKS = ["testnet", "mainnet", "local", "custom"] as const;
 export type StellarNetwork = (typeof SUPPORTED_NETWORKS)[number];
+
+/** Networks that require an explicit NETWORK_PASSPHRASE. */
+const CUSTOM_PASSPHRASE_NETWORKS: readonly StellarNetwork[] = ["local", "custom"];
+export const DEFAULT_JWT_AUDIENCE = "scoutchain-api";
 
 export interface Config {
   /** Legacy HS256 secret – retained only when JWT_ALLOW_HS256_MIGRATION=true. */
   jwtSecret: string;
+  jwtIssuer: string;
+  jwtAudience: string;
   /** Asymmetric signing keys (required unless migration flag is set). */
   signingKeys: SigningKeys | null;
   /**
@@ -18,10 +24,39 @@ export interface Config {
   homeDomain: string;
   webAuthDomain: string;
   stellarNetwork: StellarNetwork;
+  networkPassphrase: string;
   adminAddress?: string;
+  /**
+   * Refresh-token lifetime (in seconds) for wallets whose role is `unknown`,
+   * i.e. wallets that have not registered as admin/validator/scout/player.
+   * Kept short so unregistered wallets can only hold a session long enough to
+   * complete onboarding.
+   */
+  unknownRefreshTokenTtlSeconds: number;
+  trustProxy: boolean;
+  getAuthIpLimit: number;
+  getAuthAccountLimit: number;
+  postAuthIpLimit: number;
+  postAuthRefreshIpLimit: number;
+  adminIpLimit: number;
+  maxUnconsumedChallengesPerAccount: number;
+  cleanupIntervalSeconds: number;
+}
+
+export interface JwtPayload {
+  sub: string;
+  role: string;
+  iat?: number;
+  exp?: number;
+  jti?: string;
+  iss?: string;
+  aud?: string | string[];
 }
 
 const MIN_JWT_SECRET_BYTES = 32;
+
+const DEFAULT_UNKNOWN_REFRESH_TOKEN_TTL_SECONDS = 60 * 60; // 1 hour
+const MAX_UNKNOWN_REFRESH_TOKEN_TTL_SECONDS = 24 * 60 * 60; // 24 hours
 
 /**
  * Validate and parse the backend's environment variables.
@@ -81,12 +116,61 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const homeDomain = required("HOME_DOMAIN");
   const webAuthDomain = required("WEB_AUTH_DOMAIN");
 
+  const trustProxy = env.TRUST_PROXY?.trim()?.toLowerCase() === "true";
+  
+  const getAuthIpLimit = parseInt(env.GET_AUTH_IP_LIMIT || "10", 10);
+  const getAuthAccountLimit = parseInt(env.GET_AUTH_ACCOUNT_LIMIT || "5", 10);
+  const postAuthIpLimit = parseInt(env.POST_AUTH_IP_LIMIT || "20", 10);
+  const postAuthRefreshIpLimit = parseInt(env.POST_AUTH_REFRESH_IP_LIMIT || "10", 10);
+  const adminIpLimit = parseInt(env.ADMIN_IP_LIMIT || "10", 10);
+  const maxUnconsumedChallengesPerAccount = parseInt(env.MAX_UNCONSUMED_CHALLENGES_PER_ACCOUNT || "5", 10);
+  const cleanupIntervalSeconds = parseInt(env.CLEANUP_INTERVAL_SECONDS || "300", 10); // 5 minutes default
+
   const network = env.STELLAR_NETWORK?.trim() || "testnet";
-  if (!(SUPPORTED_NETWORKS as readonly string[]).includes(network)) {
+  const networkIsSupported = (SUPPORTED_NETWORKS as readonly string[]).includes(network);
+  if (!networkIsSupported) {
     errors.push(`STELLAR_NETWORK must be one of: ${SUPPORTED_NETWORKS.join(", ")}`);
   }
 
-  const isTestnet = network === "testnet";
+  const unknownTtlRaw = env.UNKNOWN_REFRESH_TOKEN_TTL_SECONDS?.trim();
+  let unknownRefreshTokenTtlSeconds = DEFAULT_UNKNOWN_REFRESH_TOKEN_TTL_SECONDS;
+  if (unknownTtlRaw) {
+    if (!/^\d+$/.test(unknownTtlRaw)) {
+      errors.push("UNKNOWN_REFRESH_TOKEN_TTL_SECONDS must be a positive integer");
+    } else {
+      const parsed = Number(unknownTtlRaw);
+      if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+        errors.push("UNKNOWN_REFRESH_TOKEN_TTL_SECONDS must be a positive integer");
+      } else if (parsed > MAX_UNKNOWN_REFRESH_TOKEN_TTL_SECONDS) {
+        errors.push(
+          `UNKNOWN_REFRESH_TOKEN_TTL_SECONDS must be at most ${MAX_UNKNOWN_REFRESH_TOKEN_TTL_SECONDS} (24 hours)`,
+        );
+      } else {
+        unknownRefreshTokenTtlSeconds = parsed;
+      }
+    }
+  }
+
+  let networkPassphrase = "";
+  if (networkIsSupported) {
+    const stellarNetwork = network as StellarNetwork;
+    if (CUSTOM_PASSPHRASE_NETWORKS.includes(stellarNetwork)) {
+      if (stellarNetwork === "local" && env.NODE_ENV?.trim() === "production") {
+        errors.push("STELLAR_NETWORK=local is not allowed when NODE_ENV=production");
+      }
+      networkPassphrase = env.NETWORK_PASSPHRASE?.trim() || "";
+      if (!networkPassphrase) {
+        errors.push(`NETWORK_PASSPHRASE is required when STELLAR_NETWORK=${stellarNetwork}`);
+      }
+    } else {
+      networkPassphrase =
+        env.NETWORK_PASSPHRASE?.trim() ||
+        (stellarNetwork === "mainnet" ? Networks.PUBLIC : Networks.TESTNET);
+    }
+  }
+
+  // localhost / host:port are accepted on the development networks only.
+  const isTestnet = network === "testnet" || network === "local";
 
   /**
    * Validate a value as a bare hostname (optionally with a port).
@@ -161,15 +245,30 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`Invalid environment configuration:\n  - ${errors.join("\n  - ")}`);
   }
 
+  const jwtIssuer = env.JWT_ISSUER?.trim() || (homeDomain ? `https://${homeDomain}` : "");
+  const jwtAudience = env.JWT_AUDIENCE?.trim() || DEFAULT_JWT_AUDIENCE;
+
   return {
     jwtSecret: jwtSecretRaw,
     signingKeys,
     allowHs256Migration,
+    jwtIssuer,
+    jwtAudience,
     sep10SigningSecret,
     homeDomain,
     webAuthDomain,
     stellarNetwork: network as StellarNetwork,
+    networkPassphrase,
     adminAddress,
+    trustProxy,
+    getAuthIpLimit,
+    getAuthAccountLimit,
+    postAuthIpLimit,
+    postAuthRefreshIpLimit,
+    adminIpLimit,
+    maxUnconsumedChallengesPerAccount,
+    cleanupIntervalSeconds,
+    unknownRefreshTokenTtlSeconds,
   };
 }
 

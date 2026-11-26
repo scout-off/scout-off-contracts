@@ -1,38 +1,67 @@
 import request from "supertest";
+import jwt from "jsonwebtoken";
+import { logOutput, mockLogger } from "./setupEnv";
 
 jest.mock("../src/db", () => ({ prisma: {} }));
 jest.mock("../src/services/sep10", () => ({
   buildChallengeTx: jest.fn(),
   verifyChallengeTx: jest.fn(),
-  deriveRole: jest.fn(),
-  issueSep10Token: jest.fn(),
+  deriveRole: jest.fn(() => "player"),
+  issueSep10Token: jest.fn(() => "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0Iiwicm9sZSI6InBsYXllciIsImp0aSI6InRlc3QifQ.test"),
+}));
+
+// Mock the logger module BEFORE importing app.ts
+jest.mock("../src/logger", () => ({
+  logger: mockLogger,
+  generateRequestId: () => "test-request-id",
+  attachRequestIdToResponse: jest.fn((req, res) => {
+    const requestId = (req as Request & { requestId?: string }).requestId;
+    if (requestId) {
+      res.setHeader("x-request-id", requestId);
+    }
+  }),
 }));
 
 import { app } from "../src/app";
-import { buildChallengeTx, verifyChallengeTx } from "../src/services/sep10";
+import {
+  buildChallengeTx,
+  verifyChallengeTx,
+  deriveRole,
+  issueSep10Token,
+} from "../src/services/sep10";
+import { config } from "../src/config";
+import { verifyToken } from "../src/middleware/auth";
 
 const VALID_ACCOUNT = "GD2DO5BIZZDWS5URPBXFHFZJR3VFXGGAFSRSAGNJA5AWVKXE53LRZM5N";
 
 describe("GET /auth", () => {
-  beforeEach(() => jest.spyOn(console, "error").mockImplementation(() => {}));
-  afterEach(() => jest.restoreAllMocks());
+  beforeEach(() => {
+    logOutput.length = 0;
+  });
 
   it("returns 400 when account is missing", async () => {
     const res = await request(app).get("/auth");
     expect(res.status).toBe(400);
+    // Check warning log was generated
+    const warningLog = logOutput.find((l) => l.level === "warn");
+    expect(warningLog).toBeDefined();
+    expect(warningLog?.args[1]).toContain("missing account parameter");
   });
 
   it("returns 400 invalid account for a malformed account", async () => {
     const res = await request(app).get("/auth").query({ account: "not-a-key" });
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: "invalid account" });
+    expect(res.body.error).toBe("invalid_request");
     expect(buildChallengeTx).not.toHaveBeenCalled();
+    // Check warning log was generated
+    const warningLog = logOutput.find((l) => l.level === "warn");
+    expect(warningLog).toBeDefined();
   });
 
   it("returns 400 invalid account when account is an array", async () => {
     const res = await request(app).get(`/auth?account=${VALID_ACCOUNT}&account=${VALID_ACCOUNT}`);
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: "invalid account" });
+    expect(res.body.error).toBe("invalid_request");
   });
 
   it("returns a generic 500 body without the exception message", async () => {
@@ -43,15 +72,18 @@ describe("GET /auth", () => {
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: "Internal server error" });
     expect(JSON.stringify(res.body)).not.toContain("secret internal detail");
+    // Check error log was generated but without raw error object
+    const errorLog = logOutput.find((l) => l.level === "error");
+    expect(errorLog).toBeDefined();
+    // The error message should be stringified, not the raw object
+    expect(JSON.stringify(errorLog?.args)).not.toContain("secret internal detail");
   });
 });
 
 describe("POST /auth", () => {
   beforeEach(() => {
-    jest.spyOn(console, "error").mockImplementation(() => {});
-    jest.spyOn(console, "warn").mockImplementation(() => {});
+    logOutput.length = 0;
   });
-  afterEach(() => jest.restoreAllMocks());
 
   it("rejects a non-string transaction with 'invalid transaction'", async () => {
     for (const transaction of [{ foo: "bar" }, 123, ["tx"]]) {
@@ -80,6 +112,10 @@ describe("POST /auth", () => {
       .send({ transaction: "tx", account: VALID_ACCOUNT });
     expect(res.status).toBe(401);
     expect(res.body).toEqual({ error: "challenge_expired" });
+    // Check warning log was generated
+    const warningLog = logOutput.find((l) => l.level === "warn");
+    expect(warningLog).toBeDefined();
+    expect(warningLog?.args[1]).toContain("verification failed");
   });
 
   it("does not echo unexpected error messages", async () => {
@@ -89,5 +125,154 @@ describe("POST /auth", () => {
       .send({ transaction: "tx", account: VALID_ACCOUNT });
     expect(res.status).toBe(500);
     expect(JSON.stringify(res.body)).not.toContain("db connection refused");
+    // Check error log was generated with stringified error
+    const errorLog = logOutput.find((l) => l.level === "error");
+    expect(errorLog).toBeDefined();
+    expect(JSON.stringify(errorLog?.args)).not.toContain("db connection refused");
+  });
+});
+
+describe("x-request-id header", () => {
+  it("returns x-request-id in response header", async () => {
+    const res = await request(app).get("/auth").query({ account: VALID_ACCOUNT });
+    expect(res.headers["x-request-id"]).toBeDefined();
+    expect(typeof res.headers["x-request-id"]).toBe("string");
+  });
+});
+
+describe("JWT iss/aud enforcement", () => {
+  const sign = (payload: object, options: jwt.SignOptions = {}) =>
+    jwt.sign(payload, config.jwtSecret, {
+      algorithm: "HS256",
+      issuer: config.jwtIssuer,
+      audience: config.jwtAudience,
+      ...options,
+    });
+
+  it("accepts a token with the correct iss and aud", async () => {
+    const token = sign({ sub: VALID_ACCOUNT, role: "user" });
+    const decoded = await verifyToken(token);
+    expect(decoded.sub).toBe(VALID_ACCOUNT);
+  });
+
+  it("rejects a token with the wrong audience", async () => {
+    const token = sign({ sub: VALID_ACCOUNT, role: "user" }, { audience: "other-service" });
+    await expect(verifyToken(token)).rejects.toThrow();
+  });
+
+  it("rejects a token with the wrong issuer", async () => {
+    const token = sign({ sub: VALID_ACCOUNT, role: "user" }, { issuer: "https://evil.example" });
+    await expect(verifyToken(token)).rejects.toThrow();
+  });
+
+  it("rejects a token with no iss or aud", async () => {
+    const token = jwt.sign({ sub: VALID_ACCOUNT, role: "user" }, config.jwtSecret, {
+      algorithm: "HS256",
+    });
+    await expect(verifyToken(token)).rejects.toThrow();
+  });
+
+  it("returns 401 on a protected route for a token with the wrong audience", async () => {
+    const token = sign({ sub: VALID_ACCOUNT, role: "admin" }, { audience: "other-service" });
+    const res = await request(app)
+      .post("/admin/revoke")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ jti: "some-jti" });
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 401 on a protected route for a token with the wrong issuer", async () => {
+    const token = sign({ sub: VALID_ACCOUNT, role: "admin" }, { issuer: "https://evil.example" });
+    const res = await request(app)
+      .post("/admin/revoke")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ jti: "some-jti" });
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 400 invalid transaction when transaction is an object", async () => {
+    const res = await request(app)
+      .post("/auth")
+      .send({ transaction: { foo: "bar" }, account: VALID_ACCOUNT });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "invalid transaction" });
+    expect(verifyChallengeTx).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 invalid transaction when transaction is a number", async () => {
+    const res = await request(app)
+      .post("/auth")
+      .send({ transaction: 12345, account: VALID_ACCOUNT });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "invalid transaction" });
+    expect(verifyChallengeTx).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 invalid account when account is invalid", async () => {
+    const res = await request(app)
+      .post("/auth")
+      .send({ transaction: "tx", account: "not-a-key" });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "invalid account" });
+    expect(verifyChallengeTx).not.toHaveBeenCalled();
+  });
+});
+
+describe("unknown-role policy", () => {
+  beforeEach(() => {
+    jest.spyOn(console, "error").mockImplementation(() => {});
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it("issues an onboarding-scoped token with the short refresh TTL for an unknown wallet", async () => {
+    (verifyChallengeTx as jest.Mock).mockResolvedValue({ account: VALID_ACCOUNT });
+    (deriveRole as jest.Mock).mockResolvedValue("unknown");
+    (issueSep10Token as jest.Mock).mockResolvedValue({
+      accessToken: "access-unknown",
+      refreshToken: "refresh-unknown",
+      role: "unknown",
+      scope: "onboarding",
+      refreshExpiresIn: 3600,
+    });
+
+    const res = await request(app)
+      .post("/auth")
+      .send({ transaction: "tx", account: VALID_ACCOUNT });
+
+    expect(res.status).toBe(200);
+    expect(res.body.role).toBe("unknown");
+    expect(res.body.scope).toBe("onboarding");
+    expect(res.body.refreshExpiresIn).toBe(3600);
+    expect(issueSep10Token).toHaveBeenCalledWith(
+      expect.objectContaining({ role: "unknown" })
+    );
+  });
+
+  it("rejects an unknown-role token on a protected route by default", async () => {
+    const res = await request(app)
+      .get("/api/validators")
+      .set("Authorization", "Bearer unknown-role-token");
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: "not_registered" });
+  });
+
+  it("accepts an unknown-role token on the opt-in /api/tokens/me route", async () => {
+    const res = await request(app)
+      .get("/api/tokens/me")
+      .set("Authorization", "Bearer unknown-role-token");
+    expect(res.status).toBe(200);
+    expect(res.body.role).toBe("unknown");
+    expect(res.body.scope).toBe("onboarding");
+  });
+
+  it("returns the real role after the wallet registers and refreshes", async () => {
+    (deriveRole as jest.Mock).mockResolvedValue("player");
+    const res = await request(app)
+      .post("/api/tokens/refresh")
+      .send({ refreshToken: "refresh-unknown" });
+    expect(res.status).toBe(200);
+    expect(res.body.role).toBe("player");
+    expect(res.body.scope).not.toBe("onboarding");
   });
 });

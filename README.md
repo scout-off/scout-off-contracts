@@ -147,11 +147,45 @@ Progress levels are configured per player and enforced on-chain by authorized va
 ### Scout Functions
 
 - `subscribe(scout_wallet, tier)` — Purchase a scout subscription to access filtered talent pool
-- `pay_to_contact(player_id, scout_wallet)` — Pay micro-fee to unlock premium data or initiate direct contact
-- `log_trial_offer(player_id, scout_wallet, details_hash)` — Record a trial offer on-chain and escrow the trial fee (step 1 of 2; does not advance the player's level)
-- `confirm_trial_offer(player_wallet, player_id, index, idempotency_nonce)` — Player confirms a pending trial offer before it expires, releasing the escrow and advancing the player to Level 3 (step 2 of 2)
+- `pay_to_contact(scout_wallet, player_id)` — Pay micro-fee to unlock player contact information (scout auth required)
+- `log_trial_offer(scout_wallet, player_id, details_hash)` — Log a trial offer for Elite Tier advancement (Elite scout auth required)
 
-### Subscription Tier Access
+### Backend API Endpoints
+
+The backend service provides REST endpoints for player discovery and authentication:
+
+#### Authentication (SEP-10)
+
+- `GET /auth?account=...` — Request a SEP-10 challenge transaction
+- `POST /auth` — Submit signed challenge to receive access token
+- `POST /auth/refresh` — Refresh access token using refresh token
+
+#### Player Discovery (Scout-Only)
+
+- `GET /api/players?region=NG&position=FW&minLevel=2&cursor=...&limit=...` — Search players with filters and keyset pagination
+  - Requires valid JWT with `scout` or `admin` role
+  - Filters: `region` (ISO 3166-1 alpha-2), `position` (e.g., ST, FW, GK), `minLevel` (0-3)
+  - Pagination: opaque `cursor` for keyset pagination, `limit` (1-50, default 20)
+  - Tier visibility: wallet and IPFS hashes omitted for under-tier scouts
+  - Deactivated/erased players are excluded
+- `GET /api/players/:playerId` — Get single player profile
+  - Accessible to the player themselves (full data), scouts (tier-gated), or admins (full data)
+  - Returns 404 for deactivated or non-existent players
+
+#### Subscription Tier Access
+
+Player visibility is gated by subscription tier per the cross-doc consistency check:
+
+| ProgressLevel | Minimum Tier | Description |
+|---------------|--------------|-------------|
+| Unverified (0) | None | Public profile metadata only (no contact) |
+| VerifiedIdentity (1) | Basic | Basic scouts can view full profile |
+| PerformanceMilestones (2) | Pro | Pro scouts can view full profile |
+| EliteTier (3) | Elite | Elite scouts can view full profile |
+
+See `scripts/check-cross-doc-consistency.sh` for the automated consistency check between README.md and CONTRACT_REFERENCE.md.
+
+### Subscription Tier Access (On-Chain)
 
 Each tier controls which player progress levels a scout can view and what actions they can perform. These rules are enforced on-chain by the `scout_access` contract.
 
@@ -185,7 +219,6 @@ Each tier controls which player progress levels a scout can view and what action
 - `set_milestone_threshold(threshold)` — Set the k-of-n distinct-validator threshold required to commit an attested milestone claim (admin only)
 - `set_voting_window_secs(window_secs)` — Set how long an attestation claim stays open for k-of-n voting before it expires (admin only)
 - `admin_rescue_orphan_trial_escrow(player_id, offer_index, to)` — Admin safety valve that releases an escrowed trial fee to `to` when the escrow's `TrialOffer` record no longer exists (admin only). Use this **instead of** `admin_refund_trial_escrow` when the offer record itself is gone: `admin_refund_trial_escrow` refunds a specific, still-identified stuck entry that retains its offer record, whereas `admin_rescue_orphan_trial_escrow` targets an orphaned escrow with no surviving `TrialOffer`. See [docs/TRIAL_ESCROW_IMPACT.md](docs/TRIAL_ESCROW_IMPACT.md) and [docs/RUNBOOK.md](docs/RUNBOOK.md) for the rescue procedure.
-=======
 
 ### Query Functions
 
@@ -543,7 +576,6 @@ Both session-issuing endpoints — `POST /auth` (SEP-10 login) and `POST /auth/r
 Clients should use `refreshExpiresIn` to proactively re-authenticate before the refresh token lapses, rather than discovering expiry through a `401 invalid_refresh_token` response.
 
 ## Database Schema
-=======
 
 The `migrations/` directory contains the PostgreSQL migration files the backend event indexer needs. **Run every file in numeric order** — skipping any migration leaves tables, columns, or indexes missing and causes silent indexer errors at runtime.
 
@@ -576,6 +608,7 @@ Subsequent migrations add additional tables and columns:
 | `005_evidence_access_grants.sql` | `evidence_access_grants` table |
 | `006_dispute_jury.sql` | Jury columns on `milestone_disputes`; `dispute_votes` table |
 | `007_milestone_flags.sql` | `milestone_flags` and `revocation_records` tables |
+| `008_session_management.sql` | Session families, refresh-token rotation, and access-token revocation tables |
 
 Run all migrations against your backend PostgreSQL instance:
 
@@ -587,9 +620,11 @@ psql $DATABASE_URL -f migrations/004_scout_subscriptions_auto_renew.sql
 psql $DATABASE_URL -f migrations/005_evidence_access_grants.sql
 psql $DATABASE_URL -f migrations/006_dispute_jury.sql
 psql $DATABASE_URL -f migrations/007_milestone_flags.sql
+psql $DATABASE_URL -f migrations/008_session_management.sql
 ```
 
 All migrations are idempotent and safe to re-run against an already-migrated database. See `migrations/README.md` for apply-order notes and file reference.
+See [docs/AUTH_SESSIONS.md](docs/AUTH_SESSIONS.md) for auth session behavior and endpoint details.
 
 To verify this database's copy of on-chain state hasn't drifted from the
 contracts, see [`scripts/reconcile-indexer.js`](scripts/reconcile-indexer.js)

@@ -7,7 +7,7 @@ use soroban_sdk::{contracttype, Address, BytesN, String, Vec};
 /// - `get_validator`               → credentials, registered_at, active
 /// - `get_validator_status`        → status
 /// - `get_validator_milestone_count` → milestone_count
-/// - `get_validator_players`       → distinct_players (and distinct_player_count)
+/// - `ValidatorPlayerCount`        → distinct_player_count (list: `get_validator_players_page`)
 ///
 /// This is a pure read-only aggregate — no new storage or business logic.
 #[contracttype]
@@ -27,8 +27,6 @@ pub struct ValidatorActivityReport {
     pub milestone_count: u32,
     /// Number of distinct players for whom this validator has approved at least one milestone.
     pub distinct_player_count: u32,
-    /// List of distinct player IDs (same data as `get_validator_players`).
-    pub distinct_players: Vec<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -600,6 +598,16 @@ pub enum DataKey {
     /// Start timestamp of the current per-(validator, player) cap window
     /// (issue #1615). Absent for counts written before windows existed.
     ValidatorPlayerWindowStart(Address, u64),
+    /// The next accepted cursor for a player's paged erasure. Absent before
+    /// erasure starts and after it completes.
+    PurgeCursor(u64),
+
+    /// Tombstone flag set by `registration.deregister_player` via
+    /// `mark_player_erased`. Once set, all player-scoped writes are permanently
+    /// blocked for this player_id. This is the push-model erasure guard —
+    /// registration pushes the tombstone to each contract rather than each
+    /// contract pulling from registration on every write (issue #1622).
+    Erased(u64),
 }
 
 /// Snapshot of both cross-contract peer address pointers held by the

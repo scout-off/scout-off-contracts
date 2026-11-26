@@ -1,5 +1,6 @@
 import { loadConfig } from "../src/config";
 import { generateKeyPairSync } from "crypto";
+import { accessTokenTtlSeconds, refreshTokenTtlSeconds } from "../src/services/sep10";
 
 const { privateKey } = generateKeyPairSync("ed25519");
 const PRIVATE_PEM = privateKey
@@ -17,6 +18,7 @@ const VALID_ASYMMETRIC = {
   STELLAR_NETWORK: "testnet",
 };
 
+const LOCAL_PASSPHRASE = "Standalone Network ; February 2017";
 /** Minimal valid env using HS256 migration mode. */
 const VALID_MIGRATION = {
   JWT_SECRET: "x".repeat(32),
@@ -50,6 +52,26 @@ describe("loadConfig", () => {
     expect(loadConfig(env).stellarNetwork).toBe("testnet");
   });
 
+  it("defaults JWT_ISSUER to https://<HOME_DOMAIN>", () => {
+    const config = loadConfig(VALID);
+    expect(config.jwtIssuer).toBe(`https://${VALID.HOME_DOMAIN}`);
+  });
+
+  it("defaults JWT_AUDIENCE to scoutchain-api", () => {
+    const config = loadConfig(VALID);
+    expect(config.jwtAudience).toBe("scoutchain-api");
+  });
+
+  it("honours explicit JWT_ISSUER and JWT_AUDIENCE overrides", () => {
+    const config = loadConfig({
+      ...VALID,
+      JWT_ISSUER: "https://issuer.example.com",
+      JWT_AUDIENCE: "custom-audience",
+    });
+    expect(config.jwtIssuer).toBe("https://issuer.example.com");
+    expect(config.jwtAudience).toBe("custom-audience");
+  });
+
   it("lists missing required variables when both keys and migration are absent", () => {
     expect(() => loadConfig({})).toThrow(
       /SEP10_SIGNING_SECRET is required[\s\S]*HOME_DOMAIN is required[\s\S]*WEB_AUTH_DOMAIN is required/
@@ -78,6 +100,43 @@ describe("loadConfig", () => {
     expect(() =>
       loadConfig({ ...VALID_ASYMMETRIC, STELLAR_NETWORK: "devnet" })
     ).toThrow(/STELLAR_NETWORK must be one of/);
+  });
+
+  it("accepts STELLAR_NETWORK=local with NETWORK_PASSPHRASE", () => {
+    const config = loadConfig({
+      ...VALID,
+      STELLAR_NETWORK: "local",
+      NETWORK_PASSPHRASE: LOCAL_PASSPHRASE,
+    });
+    expect(config.stellarNetwork).toBe("local");
+    expect(config.networkPassphrase).toBe(LOCAL_PASSPHRASE);
+  });
+
+  it("accepts STELLAR_NETWORK=custom with NETWORK_PASSPHRASE", () => {
+    const config = loadConfig({
+      ...VALID,
+      STELLAR_NETWORK: "custom",
+      NETWORK_PASSPHRASE: LOCAL_PASSPHRASE,
+    });
+    expect(config.stellarNetwork).toBe("custom");
+    expect(config.networkPassphrase).toBe(LOCAL_PASSPHRASE);
+  });
+
+  it("rejects STELLAR_NETWORK=local without NETWORK_PASSPHRASE", () => {
+    expect(() => loadConfig({ ...VALID, STELLAR_NETWORK: "local" })).toThrow(
+      /NETWORK_PASSPHRASE is required/
+    );
+  });
+
+  it("rejects STELLAR_NETWORK=local when NODE_ENV=production", () => {
+    expect(() =>
+      loadConfig({
+        ...VALID,
+        STELLAR_NETWORK: "local",
+        NETWORK_PASSPHRASE: LOCAL_PASSPHRASE,
+        NODE_ENV: "production",
+      })
+    ).toThrow(/STELLAR_NETWORK=local is not allowed when NODE_ENV=production/);
   });
 
   it("requires JWT_SIGNING_KEYS when not in migration mode", () => {
@@ -177,5 +236,94 @@ describe("loadConfig", () => {
         })
       ).toThrow(/must be a hostname/);
     });
+  });
+});
+
+describe("accessTokenTtlSeconds", () => {
+  const ORIGINAL_ENV = process.env;
+
+  beforeEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    delete process.env.ACCESS_TOKEN_TTL_SECONDS;
+  });
+
+  afterEach(() => {
+    process.env = ORIGINAL_ENV;
+  });
+
+  it("defaults to 900 when unset", () => {
+    expect(accessTokenTtlSeconds()).toBe(900);
+  });
+
+  it("parses a valid value", () => {
+    process.env.ACCESS_TOKEN_TTL_SECONDS = "60";
+    expect(accessTokenTtlSeconds()).toBe(60);
+  });
+
+  it("clamps values above the 15-minute ceiling to 900", () => {
+    process.env.ACCESS_TOKEN_TTL_SECONDS = "3600";
+    expect(accessTokenTtlSeconds()).toBe(900);
+  });
+
+  it("falls back to the default for non-numeric values", () => {
+    process.env.ACCESS_TOKEN_TTL_SECONDS = "abc";
+    expect(accessTokenTtlSeconds()).toBe(900);
+  });
+
+  it("falls back to the default for zero", () => {
+    process.env.ACCESS_TOKEN_TTL_SECONDS = "0";
+    expect(accessTokenTtlSeconds()).toBe(900);
+  });
+
+  it("falls back to the default for negative values", () => {
+    process.env.ACCESS_TOKEN_TTL_SECONDS = "-5";
+    expect(accessTokenTtlSeconds()).toBe(900);
+  });
+
+  it("floors fractional values", () => {
+    process.env.ACCESS_TOKEN_TTL_SECONDS = "90.7";
+    expect(accessTokenTtlSeconds()).toBe(90);
+  });
+});
+
+describe("refreshTokenTtlSeconds", () => {
+  const ORIGINAL_ENV = process.env;
+
+  beforeEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    delete process.env.REFRESH_TOKEN_TTL_SECONDS;
+  });
+
+  afterEach(() => {
+    process.env = ORIGINAL_ENV;
+  });
+
+  it("defaults to 604800 when unset", () => {
+    expect(refreshTokenTtlSeconds()).toBe(604800);
+  });
+
+  it("parses a valid value", () => {
+    process.env.REFRESH_TOKEN_TTL_SECONDS = "60";
+    expect(refreshTokenTtlSeconds()).toBe(60);
+  });
+
+  it("falls back to the default for non-numeric values", () => {
+    process.env.REFRESH_TOKEN_TTL_SECONDS = "abc";
+    expect(refreshTokenTtlSeconds()).toBe(604800);
+  });
+
+  it("falls back to the default for zero", () => {
+    process.env.REFRESH_TOKEN_TTL_SECONDS = "0";
+    expect(refreshTokenTtlSeconds()).toBe(604800);
+  });
+
+  it("falls back to the default for negative values", () => {
+    process.env.REFRESH_TOKEN_TTL_SECONDS = "-5";
+    expect(refreshTokenTtlSeconds()).toBe(604800);
+  });
+
+  it("floors fractional values", () => {
+    process.env.REFRESH_TOKEN_TTL_SECONDS = "90.7";
+    expect(refreshTokenTtlSeconds()).toBe(90);
   });
 });
