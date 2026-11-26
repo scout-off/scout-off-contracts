@@ -83,7 +83,14 @@ describe('scripts/reconcile-indexer.js main()', () => {
     pg.__setRows('dispute_votes', [{ dispute_id: '1', voter: 'GABC' }]);
     const invoke = jest.fn(async () => ({ ok: true, value: [] }));
 
-    const report = mod.createReport ? mod.createReport() : { entries: [], add(e) { this.entries.push(e); } };
+    const report = mod.createReport
+      ? mod.createReport()
+      : {
+          entries: [],
+          add(e) {
+            this.entries.push(e);
+          },
+        };
 
     await mod.main({ pg: pg.client, invoke, tables: ['dispute_votes'], report });
 

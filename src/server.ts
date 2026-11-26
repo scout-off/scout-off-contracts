@@ -3,7 +3,7 @@ import { prisma } from "./db";
 import { startCleanupJob } from "./jobs/cleanup";
 import { logger } from "./logger";
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const PORT = config.port;
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 
