@@ -194,6 +194,9 @@ jobs:
           shellcheck scripts/check-prisma-drift.sh
       - name: Docs completeness check
         run: bash scripts/check-docs.sh
+
+      - name: README/ai.md entrypoint check (warn-only)
+        run: bash scripts/check-readme-ai-docs.sh
       - name: Event-topic consistency check
         run: bash scripts/check-event-topic-consistency.sh
       - name: Guard-ordering audit
@@ -255,72 +258,8 @@ jobs:
       - name: Build WASM contracts
         run: cargo build --workspace --target wasm32v1-none --release --locked
 
-      - name: Start Soroban local sandbox
-        run: |
-          docker run -d \
-            --name stellar-local \
-            -p 8000:8000 \
-            stellar/quickstart:testing@sha256:66a19476f2ce2ed09c4dccf3f1af4d438209eee9ee05eb113a02dd926e2b03f5 \
-            --local \
-            --limits unlimited
-          # The image digest is pinned to the build (core/RPC v29, XDR v28) that
-          # matches the stellar-cli in ci/stellar-cli-version. Newer `testing`
-          # builds ship RPC/XDR v30, and CLI 28's upload simulation against
-          # them fails with Error(Context, InternalError). Bump the two together.
-          # `--limits unlimited` raises the local network's Soroban resource
-          # ceilings. The stellar-core default limits are extremely low and
-          # reject the upload of `verification`'s ~134 KB optimized WASM with
-          # `HostError: Error(Budget, ExceededLimit)` at simulation time.
-          # Poll getLatestLedger until the DB is initialised and returns
-          # a real ledger sequence (not just an open TCP port).
-          echo "Waiting for Soroban RPC to be ready..."
-          for i in $(seq 1 60); do
-            LEDGER=$(curl -sf http://localhost:8000/soroban/rpc \
-              -X POST \
-              -H 'Content-Type: application/json' \
-              -d '{"jsonrpc":"2.0","id":1,"method":"getLatestLedger"}' \
-              2>/dev/null \
-              | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('result',{}).get('sequence',0))" \
-              2>/dev/null || echo 0)
-            if [ "${LEDGER:-0}" -gt 0 ] 2>/dev/null; then
-              echo "RPC ready — ledger ${LEDGER} after ${i}s"
-              break
-            fi
-            sleep 2
-          done
-          if [ "${LEDGER:-0}" -eq 0 ] 2>/dev/null; then
-            echo "ERROR: Soroban RPC never became ready"
-            docker logs stellar-local
-            exit 1
-          fi
-
-      - name: Register local network with Stellar CLI
-        run: |
-          stellar network add local \
-            --rpc-url http://localhost:8000/soroban/rpc \
-            --network-passphrase "Standalone Network ; February 2017"
-
-      - name: Generate a local sandbox identity
-        run: |
-          stellar keys generate ci-deployer --network local
-          echo "ADMIN_ADDRESS=$(stellar keys address ci-deployer)" >> "$GITHUB_ENV"
-
-      - name: Fund the sandbox identity
-        run: |
-          set -euo pipefail
-          # `keys generate --fund` swallows funding errors (logs a warning and
-          # still exits 0), so fund separately with `keys fund`, which
-          # propagates failures, and retry since friendbot/Horizon can lag
-          # behind the RPC endpoint becoming ready.
-          for i in $(seq 1 30); do
-            if stellar keys fund ci-deployer --network local; then
-              exit 0
-            fi
-            echo "Friendbot not ready yet, retrying (${i}/30)..."
-            sleep 2
-          done
-          echo "ERROR: unable to fund ci-deployer after retries"
-          exit 1
+      - name: Start local sandbox, register network and fund identity
+        run: bash scripts/setup-local.sh --sandbox-only
 
       - name: Deploy all contracts to local sandbox
         run: |
