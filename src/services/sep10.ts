@@ -1,14 +1,16 @@
 import { v4 as uuidv4 } from "uuid";
 import { createHash, randomBytes } from "crypto";
-import jwt from "jsonwebtoken";
-import { WebAuth, Keypair, Networks, TransactionBuilder } from "@stellar/stellar-sdk";
+import { SignJWT, decodeJwt } from "jose";
+import { WebAuth, Keypair, TransactionBuilder } from "@stellar/stellar-sdk";
 import { prisma } from "../db";
 import { config } from "../config";
-import { AuthError, wrapSdkAuth } from "./errors";
+import type { SigningKeys } from "../keys";
 
 interface Sep10TokenPayload {
   sub: string;
   role: string;
+  /** Optional OAuth-style scope, e.g. `onboarding` for unknown-role wallets. */
+  scope?: string;
 }
 
 /** Challenge validity window; also used as the WebAuth `timeout`. */
@@ -16,6 +18,14 @@ const CHALLENGE_TTL_SECONDS = 300;
 /** Hard ceiling on access-token lifetime (#1606). */
 const MAX_ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const DEFAULT_REFRESH_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
+/**
+ * Refresh lifetime for unregistered wallets (#1821). Short-lived so an
+ * `unknown` session cannot be kept alive indefinitely; the wallet must
+ * register (or re-authenticate) to obtain a normal session.
+ */
+const DEFAULT_UNKNOWN_REFRESH_TOKEN_TTL_SECONDS = 60 * 60;
+/** Scope claim carried by tokens issued to unregistered wallets. */
+export const ONBOARDING_SCOPE = "onboarding";
 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -26,10 +36,8 @@ function sha256Hex(value: string): string {
  * stays the same when the client adds its signature. 64 hex chars, so it
  * fits the `VARCHAR(64)` key (the full base64 XDR would not).
  */
-function challengeHash(challengeTx: string, networkPassphrase: string): string {
-  return TransactionBuilder.fromXDR(challengeTx, networkPassphrase)
-    .hash()
-    .toString("hex");
+function challengeHash(tx: { hash(): Buffer }): string {
+  return tx.hash().toString("hex");
 }
 
 /** Access-token lifetime in seconds: ACCESS_TOKEN_TTL_SECONDS, capped at 15 minutes. */
@@ -41,31 +49,98 @@ export function accessTokenTtlSeconds(): number {
   return Math.min(Math.floor(configured), MAX_ACCESS_TOKEN_TTL_SECONDS);
 }
 
-function refreshTokenTtlSeconds(): number {
+export function refreshTokenTtlSeconds(role?: string): number {
+  if (role === "unknown") {
+    const configured = Number(process.env.UNKNOWN_REFRESH_TOKEN_TTL_SECONDS);
+    return Number.isFinite(configured) && configured > 0
+      ? Math.floor(configured)
+      : DEFAULT_UNKNOWN_REFRESH_TOKEN_TTL_SECONDS;
+  }
   const configured = Number(process.env.REFRESH_TOKEN_TTL_SECONDS);
   return Number.isFinite(configured) && configured > 0
     ? Math.floor(configured)
     : DEFAULT_REFRESH_TOKEN_TTL_SECONDS;
 }
 
-export function issueSep10Token(payload: Sep10TokenPayload, secret: string) {
-  return jwt.sign(payload, secret, {
-    algorithm: "HS256",
-    expiresIn: accessTokenTtlSeconds(),
-    jwtid: uuidv4(),
-  });
+export async function issueSep10Token(
+  payload: Sep10TokenPayload,
+  cfg: {
+    signingKeys: SigningKeys | null;
+    allowHs256Migration: boolean;
+    jwtSecret: string;
+  }
+): Promise<string> {
+  const jti = uuidv4();
+  const { signingKeys, allowHs256Migration, jwtSecret } = cfg;
+  const claims: { sub: string; role: string; scope?: string } = {
+    sub: payload.sub,
+    role: payload.role,
+    ...(payload.scope ? { scope: payload.scope } : {}),
+  };
+
+  if (signingKeys) {
+    return new SignJWT(claims)
+      .setProtectedHeader({ alg: "EdDSA", kid: signingKeys.activeKid })
+      .setJti(jti)
+      .setIssuedAt()
+      .setIssuer(config.jwtIssuer)
+      .setAudience(config.jwtAudience)
+      .setExpirationTime(Math.floor(Date.now() / 1000) + accessTokenTtlSeconds())
+      .sign(signingKeys.activePrivateKey);
+  }
+
+  if (allowHs256Migration) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const jwt = require("jsonwebtoken") as typeof import("jsonwebtoken");
+    return jwt.sign(claims, jwtSecret, {
+      algorithm: "HS256",
+      expiresIn: accessTokenTtlSeconds(),
+      jwtid: jti,
+      issuer: config.jwtIssuer,
+      audience: config.jwtAudience,
+    });
+  }
+
+  throw new Error("No signing key available: set JWT_SIGNING_KEYS");
 }
 
-function sep10Config() {
-  return {
-    serverKeypair: Keypair.fromSecret(config.sep10SigningSecret),
-    homeDomain: config.homeDomain,
-    webAuthDomain: config.webAuthDomain,
-    networkPassphrase:
-      config.stellarNetwork === "mainnet"
-        ? Networks.PUBLIC
-        : Networks.TESTNET,
-  };
+interface Sep10Config {
+  serverKeypair: Keypair;
+  homeDomain: string;
+  webAuthDomain: string;
+  networkPassphrase: string;
+}
+
+let cachedSep10Config: Sep10Config | undefined;
+
+/**
+ * Lazily memoised SEP-10 configuration. Config is immutable after startup,
+ * so the signing Keypair is derived once per process on first use (lazy so
+ * tests that mutate env before import still work).
+ */
+function sep10Config(): Sep10Config {
+  if (!cachedSep10Config) {
+    cachedSep10Config = {
+      serverKeypair: Keypair.fromSecret(config.sep10SigningSecret),
+      homeDomain: config.homeDomain,
+      webAuthDomain: config.webAuthDomain,
+      networkPassphrase: config.networkPassphrase,
+    };
+  }
+  return cachedSep10Config;
+}
+
+/**
+ * Decode the exp claim from a SEP-10 token without verifying it.
+ * Used to store the expiry time in revoked_tokens.
+ */
+export function decodeTokenExpiry(token: string): number | null {
+  try {
+    const payload = decodeJwt(token);
+    return typeof payload.exp === "number" ? payload.exp : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -88,9 +163,11 @@ export async function buildChallengeTx(account: string): Promise<string> {
     webAuthDomain
   );
 
+  const challengeTx = TransactionBuilder.fromXDR(challenge, networkPassphrase);
+
   await prisma.sep10Challenge.create({
     data: {
-      hash: challengeHash(challenge, networkPassphrase),
+      hash: challengeHash(challengeTx),
       account,
       expiresAt: new Date(Date.now() + CHALLENGE_TTL_SECONDS * 1000),
     },
@@ -118,14 +195,12 @@ export async function verifyChallengeTx(
 
   // readChallengeTx validates the structure, time bounds, sequence, home
   // domain, web auth domain and network passphrase.
-  const { clientAccountID } = wrapSdkAuth(() =>
-    WebAuth.readChallengeTx(
-      challengeTx,
-      serverAccount,
-      networkPassphrase,
-      homeDomain,
-      webAuthDomain
-    )
+  const { tx, clientAccountID } = WebAuth.readChallengeTx(
+    challengeTx,
+    serverAccount,
+    networkPassphrase,
+    homeDomain,
+    webAuthDomain
   );
 
   if (clientAccountID !== clientAccount) {
@@ -150,7 +225,7 @@ export async function verifyChallengeTx(
   const now = new Date();
   const { count } = await prisma.sep10Challenge.updateMany({
     where: {
-      hash: challengeHash(challengeTx, networkPassphrase),
+      hash: challengeHash(tx),
       account: clientAccount,
       consumedAt: null,
       expiresAt: { gt: now },
@@ -167,27 +242,43 @@ export async function verifyChallengeTx(
 /**
  * Issue an access token plus a rotating refresh token for `account`, with
  * the role freshly derived from indexer state.
+ *
+ * Unregistered wallets (`unknown`) still receive a session so they can
+ * complete backend-assisted onboarding, but the token carries an explicit
+ * `onboarding` scope and the refresh token uses the shorter unknown-role
+ * TTL. Middleware rejects `unknown` tokens unless a route opts in.
  */
 export async function issueSession(account: string) {
   const role = await deriveRole(account);
-  const token = issueSep10Token({ sub: account, role }, config.jwtSecret);
+  const payload: Sep10TokenPayload & { scope?: string } =
+    role === "unknown"
+      ? { sub: account, role, scope: ONBOARDING_SCOPE }
+      : { sub: account, role };
+  const token = await issueSep10Token(payload, config);
 
   const refreshToken = randomBytes(32).toString("base64url");
   await prisma.refreshToken.create({
     data: {
       tokenHash: sha256Hex(refreshToken),
       account,
-      expiresAt: new Date(Date.now() + refreshTokenTtlSeconds() * 1000),
+      expiresAt: new Date(Date.now() + refreshTokenTtlSeconds(role) * 1000),
     },
   });
 
-  return { token, refreshToken, expiresIn: accessTokenTtlSeconds() };
+  return {
+    token,
+    refreshToken,
+    expiresIn: accessTokenTtlSeconds(),
+    refreshExpiresIn: refreshTokenTtlSeconds(role),
+  };
 }
 
 /**
  * Exchange a refresh token for a new session. The presented token is
  * revoked atomically (rotation), and the role is re-derived, so a validator
- * revoked since the last login is downgraded here.
+ * revoked since the last login is downgraded here — and a wallet that has
+ * registered since its `unknown` session is upgraded to its real role with
+ * the normal refresh TTL.
  */
 export async function refreshSession(refreshToken: string) {
   const tokenHash = sha256Hex(refreshToken);
@@ -205,6 +296,8 @@ export async function refreshSession(refreshToken: string) {
     throw new Error("Invalid refresh token");
   }
 
+  // issueSession re-derives the role, so the new token carries the current
+  // role (and the matching refresh TTL) rather than the old one.
   return issueSession(row.account);
 }
 

@@ -14,8 +14,10 @@ datasource db {
 model RevokedToken {
   jti       String   @id @db.VarChar(128)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz(6)
 
   @@index([createdAt], map: "idx_revoked_tokens_created_at")
+  @@index([expiresAt], map: "idx_revoked_tokens_expires_at")
   @@map("revoked_tokens")
 }
 
@@ -70,8 +72,22 @@ model Scout {
   registeredAt BigInt   @map("registered_at")
   createdAt    DateTime @default(now()) @map("created_db_at") @db.Timestamptz(6)
 
+  subscription ScoutSubscription?
+
   @@index([wallet], map: "idx_scouts_wallet")
   @@map("scouts")
+}
+
+model ScoutSubscription {
+  scout         String   @id @map("scout") @db.VarChar(56)
+  tier          String   @db.VarChar(16)
+  subscribedAt  BigInt   @map("subscribed_at")
+  expiresAt     BigInt   @map("expires_at")
+  updatedAt     DateTime @default(now()) @map("updated_db_at") @db.Timestamptz(6)
+
+  scoutRel Scout @relation(fields: [scout], references: [wallet])
+
+  @@map("scout_subscriptions")
 }
 
 model Validator {

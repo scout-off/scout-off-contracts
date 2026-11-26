@@ -361,3 +361,160 @@ fn test_players_deduplication() {
     assert_eq!(page.entries.get(0).unwrap(), 1u64);
     assert_eq!(page.entries.get(1).unwrap(), 2u64);
 }
+
+// ── list_disputes_page tests ─────────────────────────────────────────────────
+
+/// Open a dispute on `player_id`'s milestone `milestone_index` by `validator`.
+fn dispute(
+    env: &Env,
+    client: &VerificationContractClient<'static>,
+    validator: &Address,
+    player_id: u64,
+    milestone_index: u32,
+    seed: u64,
+) {
+    client.dispute_milestone(
+        validator,
+        &player_id,
+        &milestone_index,
+        &String::from_str(env, "evidence mismatch"),
+        &cid_for(env, seed),
+    );
+}
+
+/// No disputes → empty page.
+#[test]
+fn test_disputes_no_disputes_returns_empty() {
+    let (env, client) = setup();
+
+    let page = client.list_disputes_page(&0u32, &10u32);
+    assert_eq!(page.total, 0);
+    assert_eq!(page.entries.len(), 0);
+    assert_eq!(client.get_active_disputes_count(), 0);
+}
+
+/// 7 open disputes with limit=3 → pages of 3, 3, 1 in insertion order;
+/// offset >= total → empty.
+#[test]
+fn test_disputes_pages_of_three_three_one() {
+    let (env, client) = setup();
+    let validator = register_validator(&env, &client);
+
+    // One dispute per player keeps each (validator, player) pair distinct.
+    for seed in 0u64..7 {
+        approve(&env, &client, &validator, seed + 1, seed);
+        dispute(&env, &client, &validator, seed + 1, 0, seed);
+    }
+    assert_eq!(client.get_active_disputes_count(), 7);
+
+    let p0 = client.list_disputes_page(&0u32, &3u32);
+    assert_eq!(p0.total, 7);
+    assert_eq!(p0.entries.len(), 3);
+
+    let p1 = client.list_disputes_page(&3u32, &3u32);
+    assert_eq!(p1.total, 7);
+    assert_eq!(p1.entries.len(), 3);
+
+    let p2 = client.list_disputes_page(&6u32, &3u32);
+    assert_eq!(p2.total, 7);
+    assert_eq!(p2.entries.len(), 1);
+
+    // Insertion order: player IDs 1..=7 across the three pages.
+    let mut seen: soroban_sdk::Vec<u64> = soroban_sdk::Vec::new(&env);
+    for page in [&p0, &p1, &p2] {
+        for i in 0..page.entries.len() {
+            seen.push_back(page.entries.get(i).unwrap().player_id);
+        }
+    }
+    assert_eq!(seen.len(), 7);
+    for i in 0..seen.len() {
+        assert_eq!(
+            seen.get(i).unwrap(),
+            (i + 1) as u64,
+            "disputes must appear in insertion order"
+        );
+    }
+
+    // offset == total and offset > total → empty.
+    let at_end = client.list_disputes_page(&7u32, &3u32);
+    assert_eq!(at_end.total, 7);
+    assert_eq!(at_end.entries.len(), 0);
+
+    let past_end = client.list_disputes_page(&100u32, &3u32);
+    assert_eq!(past_end.total, 7);
+    assert_eq!(past_end.entries.len(), 0);
+}
+
+/// limit=0 follows the shared 1..=50 pagination convention (#1378): treated
+/// as limit=1, and the total is unaffected.
+#[test]
+fn test_disputes_zero_limit_is_clamped_to_one() {
+    let (env, client) = setup();
+    let validator = register_validator(&env, &client);
+
+    for seed in 0u64..3 {
+        approve(&env, &client, &validator, seed + 1, seed);
+        dispute(&env, &client, &validator, seed + 1, 0, seed);
+    }
+
+    let page = client.list_disputes_page(&0u32, &0u32);
+    assert_eq!(page.total, 3, "total still reflects 3 open disputes");
+    assert_eq!(page.entries.len(), 1, "limit=0 is treated as limit=1");
+}
+
+/// Resolving a dispute removes it from pages and decreases the active count.
+#[test]
+fn test_disputes_resolved_dispute_disappears() {
+    let (env, client) = setup();
+    let validator = register_validator(&env, &client);
+
+    for seed in 0u64..3 {
+        approve(&env, &client, &validator, seed + 1, seed);
+        dispute(&env, &client, &validator, seed + 1, 0, seed);
+    }
+    assert_eq!(client.get_active_disputes_count(), 3);
+
+    // Resolve the dispute for player 2 (the middle one).
+    client.resolve_dispute(&validator, &2u64, &0u32, &true);
+
+    assert_eq!(client.get_active_disputes_count(), 2);
+
+    let page = client.list_disputes_page(&0u32, &10u32);
+    assert_eq!(page.total, 2);
+    assert_eq!(page.entries.len(), 2);
+    for i in 0..page.entries.len() {
+        assert_ne!(
+            page.entries.get(i).unwrap().player_id,
+            2u64,
+            "resolved dispute must not appear in pages"
+        );
+    }
+}
+
+/// Sum of entries across all pages equals get_active_disputes_count().
+#[test]
+fn test_disputes_total_matches_active_count() {
+    let (env, client) = setup();
+    let validator = register_validator(&env, &client);
+    const TOTAL: u64 = 7;
+
+    for seed in 0u64..TOTAL {
+        approve(&env, &client, &validator, seed + 1, seed);
+        dispute(&env, &client, &validator, seed + 1, 0, seed);
+    }
+
+    let mut count = 0u32;
+    let mut offset = 0u32;
+    let limit = 3u32;
+    loop {
+        let page = client.list_disputes_page(&offset, &limit);
+        if page.entries.is_empty() {
+            break;
+        }
+        count += page.entries.len();
+        offset += limit;
+    }
+
+    assert_eq!(count, TOTAL as u32);
+    assert_eq!(count, client.get_active_disputes_count());
+}
