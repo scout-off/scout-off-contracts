@@ -79,6 +79,7 @@ function parseArgs(argv) {
     sample: null,
     tables: null,
     json: false,
+    rpcTimeoutMs: 10000,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -87,6 +88,7 @@ function parseArgs(argv) {
     else if (a === "--source") args.source = argv[++i];
     else if (a === "--sample") args.sample = Number(argv[++i]);
     else if (a === "--tables") args.tables = argv[++i].split(",").map((t) => t.trim());
+    else if (a === "--rpc-timeout-ms") args.rpcTimeoutMs = Number(argv[++i]);
     else if (a === "--json") args.json = true;
     else {
       process.stderr.write(`Unknown argument: ${a}\n`);
@@ -118,6 +120,46 @@ function requireEnv(names) {
 }
 
 class ConfigError extends Error {}
+
+// --- HTTP helpers ------------------------------------------------------------
+
+/** Thrown when an RPC endpoint responds with a non-2xx status. */
+class HttpStatusError extends Error {
+  constructor(message, httpStatus) {
+    super(message);
+    this.name = "HttpStatusError";
+    this.httpStatus = httpStatus;
+  }
+}
+
+/** Thrown when an RPC endpoint's body is not valid JSON. */
+class JsonParseError extends Error {
+  constructor(message, cause) {
+    super(message);
+    this.name = "JsonParseError";
+    this.cause = cause;
+  }
+}
+
+/**
+ * POST/GET a URL with a hard timeout and strict status/JSON handling.
+ * Throws HttpStatusError on non-OK responses, JsonParseError on unparseable
+ * bodies, and the underlying AbortError on timeout.
+ */
+async function fetchJsonWithTimeout(url, options, timeoutMs) {
+  const res = await fetch(url, {
+    ...options,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!res.ok) {
+    throw new HttpStatusError(`HTTP ${res.status} from ${url}`, res.status);
+  }
+  try {
+    return await res.json();
+  } catch (err) {
+    throw new JsonParseError(`Invalid JSON from ${url}: ${err.message}`, err);
+  }
+}
 
 // --- Soroban CLI invocation -------------------------------------------------
 
@@ -544,88 +586,94 @@ async function reconcileContactRecords(pg, cfg, report, playerIds) {
       if (!dbScouts.has(scout)) {
         report.add("contact_records", `${key}:${scout}`, "existence", "present", "missing");
       }
-      }
-      for (const scout of dbScouts) {
-        if (!result.value.includes(scout)) {
-          report.add("contact_records", `${key}:${scout}`, "existence", "missing", "present");
-        }
+    }
+    for (const scout of dbScouts) {
+      if (!result.value.includes(scout)) {
+        report.add("contact_records", `${key}:${scout}`, "existence", "missing", "present");
       }
     }
   }
+}
 
-  async function reconcileEvidenceAccessGrants(pg, cfg, report, playerIds) {
-    // Walk every (player_id, scout) grant pair that the indexer recorded in
-    // the evidence_access_grants table, and diff it against on-chain state
-    // returned by get_player_access_grants.  Because the on-chain getter
-    // paginates at 50 entries per call, we page through until the returned
-    // page is empty (or smaller than the page size), collecting every grant
-    // the contract knows about for that player.
+async function reconcileEvidenceAccessGrants(pg, cfg, report, playerIds) {
+  // Walk every (player_id, scout) grant pair that the indexer recorded in
+  // the evidence_access_grants table, and diff it against on-chain state
+  // returned by get_player_access_grants.  Because the on-chain getter
+  // paginates at 50 entries per call, we page through until the returned
+  // page is empty (or smaller than the page size), collecting every grant
+  // the contract knows about for that player.
 
-    for (const id of playerIds) {
-      const key = String(id);
+  for (const id of playerIds) {
+    const key = String(id);
 
-      // --- Collect on-chain grants for this player across all pages ---
-      const chainGrants = [];
-      let offset = 0;
-      while (true) {
-        const page = await invoke(cfg.network, cfg.source, cfg.scoutAccessId,
-          "get_player_access_grants",
-          ["--player_id", key, "--offset", String(offset), "--limit", "50"]);
-        if (!page.ok) break;
-        if (!Array.isArray(page.value)) break;
-        for (const g of page.value) chainGrants.push(g);
-        if (page.value.length < 50) break;
-        offset += 50;
-      }
+    // --- Collect on-chain grants for this player across all pages ---
+    const chainGrants = [];
+    let offset = 0;
+    while (true) {
+      const page = await invoke(cfg.network, cfg.source, cfg.scoutAccessId, "get_player_access_grants", [
+        "--player_id",
+        key,
+        "--offset",
+        String(offset),
+        "--limit",
+        "50",
+      ]);
+      if (!page.ok) break;
+      if (!Array.isArray(page.value)) break;
+      for (const g of page.value) chainGrants.push(g);
+      if (page.value.length < 50) break;
+      offset += 50;
+    }
 
-      // --- Query DB rows for this player ---
-      const { rows: dbRows } = await pg.query(
-        "SELECT player_id, scout, granted_at, expires_at, tier_at_grant, revoked, revoked_at " +
+    // --- Query DB rows for this player ---
+    const { rows: dbRows } = await pg.query(
+      "SELECT player_id, scout, granted_at, expires_at, tier_at_grant, revoked, revoked_at " +
         "FROM evidence_access_grants WHERE player_id = $1",
-        [id]);
+      [id],
+    );
 
-      // --- Build lookup sets ---
-      const chainByKey = new Map(); // "scout" -> grant object
-      for (const g of chainGrants) {
-        if (g && g.scout) chainByKey.set(String(g.scout), g);
+    // --- Build lookup sets ---
+    const chainByKey = new Map(); // "scout" -> grant object
+    for (const g of chainGrants) {
+      if (g && g.scout) chainByKey.set(String(g.scout), g);
+    }
+    const dbByKey = new Map(); // "scout" -> db row
+    for (const r of dbRows) {
+      dbByKey.set(String(r.scout), r);
+    }
+
+    // --- Field-level comparison ---
+    const fields = [
+      { name: "granted_at", convert: (v) => String(v ?? "") },
+      { name: "expires_at", convert: (v) => String(v ?? "") },
+      { name: "tier_at_grant", convert: (v) => String(v ?? "") },
+      { name: "revoked", convert: (v) => Boolean(v) },
+      { name: "revoked_at", convert: (v) => String(v ?? "") },
+    ];
+
+    for (const [scoutKey, chainGrant] of chainByKey) {
+      const dbRow = dbByKey.get(scoutKey);
+      if (!dbRow) {
+        report.add("evidence_access_grants", `${key}:${scoutKey}`, "existence", "present", "missing");
+        continue;
       }
-      const dbByKey = new Map();    // "scout" -> db row
-      for (const r of dbRows) {
-        dbByKey.set(String(r.scout), r);
+      for (const f of fields) {
+        const chainVal = f.convert(chainGrant[f.name]);
+        const dbVal = f.convert(dbRow[f.name]);
+        report.check("evidence_access_grants", `${key}:${scoutKey}`, f.name, chainVal, dbVal);
       }
+    }
 
-      // --- Field-level comparison ---
-      const fields = [
-        { name: "granted_at", convert: (v) => String(v ?? "") },
-        { name: "expires_at", convert: (v) => String(v ?? "") },
-        { name: "tier_at_grant", convert: (v) => String(v ?? "") },
-        { name: "revoked", convert: (v) => Boolean(v) },
-        { name: "revoked_at", convert: (v) => String(v ?? "") },
-      ];
-
-      for (const [scoutKey, chainGrant] of chainByKey) {
-        const dbRow = dbByKey.get(scoutKey);
-        if (!dbRow) {
-          report.add("evidence_access_grants", `${key}:${scoutKey}`, "existence", "present", "missing");
-          continue;
-        }
-        for (const f of fields) {
-          const chainVal = f.convert(chainGrant[f.name]);
-          const dbVal = f.convert(dbRow[f.name]);
-          report.check("evidence_access_grants", `${key}:${scoutKey}`, f.name, chainVal, dbVal);
-        }
-      }
-
-      // --- DB-only rows (grant in DB, not on chain) ---
-      for (const [scoutKey, dbRow] of dbByKey) {
-        if (!chainByKey.has(scoutKey)) {
-          report.add("evidence_access_grants", `${key}:${scoutKey}`, "existence", "missing", "present");
-        }
+    // --- DB-only rows (grant in DB, not on chain) ---
+    for (const [scoutKey, dbRow] of dbByKey) {
+      if (!chainByKey.has(scoutKey)) {
+        report.add("evidence_access_grants", `${key}:${scoutKey}`, "existence", "missing", "present");
       }
     }
   }
+}
 
-  async function reconcileDisputeVotes(pg, cfg, report, playerIds) {
+async function reconcileDisputeVotes(pg, cfg, report, playerIds) {
   // Walk every jury-required dispute and cross-check the per-validator vote
   // rows in the dispute_votes table against on-chain state.
   //
@@ -641,21 +689,28 @@ async function reconcileContactRecords(pg, cfg, report, playerIds) {
   const onChainJuryDisputes = new Set();
   for (const id of playerIds) {
     const key = String(id);
-    const countResult = await invoke(cfg.network, cfg.source, cfg.verificationId, "get_milestone_count", ["--player_id", key]);
+    const countResult = await invoke(cfg.network, cfg.source, cfg.verificationId, "get_milestone_count", [
+      "--player_id",
+      key,
+    ]);
     if (!countResult.ok) continue;
     const count = Number(countResult.value);
 
     for (let index = 1; index <= count; index++) {
       const mKey = `${key}:${index}`;
       const hasDispute = await invoke(cfg.network, cfg.source, cfg.verificationId, "has_dispute", [
-        "--player_id", key,
-        "--milestone_index", String(index),
+        "--player_id",
+        key,
+        "--milestone_index",
+        String(index),
       ]);
       if (!hasDispute.ok || !hasDispute.value) continue;
 
       const dChain = await invoke(cfg.network, cfg.source, cfg.verificationId, "get_dispute", [
-        "--player_id", key,
-        "--milestone_index", String(index),
+        "--player_id",
+        key,
+        "--milestone_index",
+        String(index),
       ]);
       if (!dChain.ok || !dChain.value.jury_required) continue;
 
@@ -686,28 +741,57 @@ async function reconcileContactRecords(pg, cfg, report, playerIds) {
   // dispute on-chain. Only meaningful on a full sweep — with --sample, rows for
   // players outside the sample were never checked.
   if (cfg.sample) return;
-  const { rows: votedDisputes } = await pg.query(
-    "SELECT DISTINCT player_id, milestone_index FROM dispute_votes",
-  );
+  const { rows: votedDisputes } = await pg.query("SELECT DISTINCT player_id, milestone_index FROM dispute_votes");
   for (const r of votedDisputes) {
     const mKey = `${r.player_id}:${r.milestone_index}`;
     if (!onChainJuryDisputes.has(mKey)) {
-      report.add("dispute_votes", mKey, "existence", "missing", "present",
-        "vote rows exist for a dispute that is not jury-required on-chain");
+      report.add(
+        "dispute_votes",
+        mKey,
+        "existence",
+        "missing",
+        "present",
+        "vote rows exist for a dispute that is not jury-required on-chain",
+      );
     }
   }
 }
 
 async function reconcileIndexerCursor(pg, cfg, report) {
   if (!cfg.rpcUrl) return;
-  const res = await fetch(cfg.rpcUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getLatestLedger", params: {} }),
-  });
-  const body = await res.json();
+  const timeoutMs = cfg.rpcTimeoutMs ?? 10000;
+  let body;
+  try {
+    body = await fetchJsonWithTimeout(
+      cfg.rpcUrl,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getLatestLedger", params: {} }),
+      },
+      timeoutMs,
+    );
+  } catch (err) {
+    if (err && (err.name === "AbortError" || err.name === "TimeoutError")) {
+      report.add("indexer_cursor", "1", "rpc_timeout", null, null, `getLatestLedger timed out after ${timeoutMs}ms`);
+    } else {
+      const httpStatus = err && err.httpStatus !== undefined ? err.httpStatus : null;
+      report.add("indexer_cursor", "1", "rpc_error", httpStatus, null, err && err.message ? err.message : String(err));
+    }
+    return;
+  }
   const latestLedger = body?.result?.sequence;
-  if (typeof latestLedger !== "number") return;
+  if (typeof latestLedger !== "number") {
+    report.add(
+      "indexer_cursor",
+      "1",
+      "rpc_unexpected_response",
+      null,
+      null,
+      `getLatestLedger response missing numeric result.sequence: ${JSON.stringify(body)}`,
+    );
+    return;
+  }
 
   const { rows } = await pg.query("SELECT last_ledger FROM indexer_cursor WHERE id = 1");
   const lastLedger = Number(rows[0]?.last_ledger ?? 0);
@@ -746,6 +830,7 @@ async function main(deps = {}) {
     rpcUrl: args.rpcUrl,
     source: args.source,
     sample: args.sample,
+    rpcTimeoutMs: args.rpcTimeoutMs,
     registrationId: process.env.REGISTRATION_CONTRACT_ID,
     verificationId: process.env.VERIFICATION_CONTRACT_ID,
     progressId: process.env.PROGRESS_CONTRACT_ID,
@@ -845,6 +930,10 @@ module.exports = {
   reconcileContactRecords,
   reconcileEvidenceAccessGrants,
   reconcileDisputeVotes,
+  reconcileIndexerCursor,
+  fetchJsonWithTimeout,
+  HttpStatusError,
+  JsonParseError,
 };
 
 if (require.main === module) {

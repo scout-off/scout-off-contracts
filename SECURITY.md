@@ -105,7 +105,32 @@ The following smart contracts are **in scope** for security reports:
 
 Supporting infrastructure (bindings, scripts, configuration, documentation) is **out of scope** unless a vulnerability in those components directly impacts contract security.
 
-Out of scope:
+---
+
+## Authentication Policy: Unregistered Wallets
+
+Wallets that are not registered on-chain (i.e. `deriveRole` does not resolve them to
+`admin`, `validator`, `scout`, or `player`) are treated as the `unknown` role. The
+backend policy for these wallets is:
+
+- **Authentication is allowed, but only to start onboarding.** An unregistered wallet
+  may call the login endpoint to obtain tokens so that backend-assisted onboarding can
+  proceed. It cannot use those tokens to reach any other protected functionality.
+- **Access tokens are scoped to `onboarding`.** Tokens issued to `unknown` wallets
+  carry an explicit `onboarding` scope instead of a real role, and are short-lived
+  (the standard access-token TTL).
+- **Refresh tokens are short-lived.** `unknown` wallets receive a refresh token with a
+  much shorter TTL than registered wallets (configured separately, e.g. 1 hour
+  instead of the 7-day rotating refresh window). Once the wallet registers, the next
+  refresh re-derives the role and issues tokens carrying the real role and the normal
+  refresh lifetime.
+- **`requireAuth` rejects `unknown` by default.** Middleware denies requests from
+  `unknown`-role tokens unless the route explicitly opts in
+  (`requireAuth({ allowUnknown: true })`). New endpoints are therefore safe by
+  default and must deliberately opt in to serve unregistered wallets.
+
+If you believe this policy is being bypassed (e.g. an `unknown`-role token reaching a
+route that should require a registered role), please report it via the channels above.
 
 - Third-party dependencies (report directly to the upstream maintainer)
 - Theoretical vulnerabilities with no practical exploit path
