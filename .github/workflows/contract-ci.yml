@@ -390,6 +390,33 @@ jobs:
             echo "  OK: dist/index.js present"
           done
 
+      - name: Validate bindings packages (publint, attw, import smoke test)
+        run: |
+          set -euo pipefail
+          for pkg in registration verification progress scout_access; do
+            (cd "bindings/$pkg" && npm run check:package)
+          done
+          node scripts/smoke-test-bindings-exports.mjs
+
+      - name: Run bindings example integration tests against the sandbox
+        run: |
+          set -euo pipefail
+          mkdir -p integration-logs
+          bash scripts/seed-integration-fixtures.sh
+          set -a; source integration.env; set +a
+          for pkg in registration verification progress scout_access; do
+            echo "==> Integration tests for bindings/$pkg..."
+            (cd "bindings/$pkg" && npm run test:integration) 2>&1 | tee "integration-logs/$pkg.log"
+          done
+
+      - name: Upload bindings integration logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bindings-integration-logs
+          path: integration-logs/
+          if-no-files-found: ignore
+
       - name: Verify ABI function coverage in generated bindings
         # Re-extracts each contract's ABI directly from the already-built WASM
         # (Stellar CLI is already installed from the earlier step) and compares

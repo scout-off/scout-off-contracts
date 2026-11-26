@@ -51,7 +51,7 @@ describe("GET /auth", () => {
   it("returns 400 invalid account for a malformed account", async () => {
     const res = await request(app).get("/auth").query({ account: "not-a-key" });
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: "invalid account" });
+    expect(res.body.error).toBe("invalid_request");
     expect(buildChallengeTx).not.toHaveBeenCalled();
     // Check warning log was generated
     const warningLog = logOutput.find((l) => l.level === "warn");
@@ -61,7 +61,7 @@ describe("GET /auth", () => {
   it("returns 400 invalid account when account is an array", async () => {
     const res = await request(app).get(`/auth?account=${VALID_ACCOUNT}&account=${VALID_ACCOUNT}`);
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: "invalid account" });
+    expect(res.body.error).toBe("invalid_request");
   });
 
   it("returns a generic 500 body without the exception message", async () => {

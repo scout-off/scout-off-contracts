@@ -293,6 +293,7 @@ app.post(
   rateLimitMiddleware.admin,
   requireAuth,
   requireRole(["admin"]),
+  validate({ body: RevokeBody }),
   async (req: Request, res: Response) => {
     const requestId = (req as Request & { requestId?: string }).requestId;
     const { token } = req.body;
