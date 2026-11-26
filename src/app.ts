@@ -1,7 +1,7 @@
 import express, { Request, Response, NextFunction } from "express";
 import { jwtVerify as joseVerify } from "jose";
 import { StrKey } from "@stellar/stellar-sdk";
-import { config } from "./config";
+import { config, verifyJwt } from "./config";
 import {
   buildChallengeTx,
   verifyChallengeTx,
