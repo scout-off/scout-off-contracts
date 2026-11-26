@@ -232,14 +232,13 @@ numeric order. **Run every file** — skipping any migration leaves tables, colu
 or indexes missing and will cause silent indexer errors at runtime.
 
 ```bash
-psql $DATABASE_URL -f migrations/001_initial_schema.sql
-psql $DATABASE_URL -f migrations/002_cursor_upsert_helper.sql
-psql $DATABASE_URL -f migrations/003_diagnostic_events.sql
-psql $DATABASE_URL -f migrations/004_scout_subscriptions_auto_renew.sql
-psql $DATABASE_URL -f migrations/005_evidence_access_grants.sql
-psql $DATABASE_URL -f migrations/006_dispute_jury.sql
-psql $DATABASE_URL -f migrations/007_milestone_flags.sql
+DATABASE_URL=postgres://... ./scripts/migrate-db.sh
 ```
+
+`scripts/migrate-db.sh` applies `migrations/NNN_*.sql` in order, each inside a
+transaction, and records it in `schema_migrations(version, checksum, applied_at)`.
+Re-running only applies pending files, and it refuses to run if an applied file's
+checksum changed.
 
 All migration files are idempotent (`CREATE TABLE IF NOT EXISTS`,
 `ALTER TABLE … ADD COLUMN IF NOT EXISTS`): re-running against an already-migrated
@@ -689,6 +688,25 @@ For backward compatibility, `.env.contracts.snapshot` is still refreshed on
 every deploy and always reflects the **latest** snapshot. The
 `.env.contracts.snapshots/` directory is **git-ignored** — snapshots are local
 operator state and must never be committed.
+
+### Two rollback modes (#1812)
+
+| Situation | Command |
+|-----------|---------|
+| A fresh deployment produced bad contract IDs | `./scripts/rollback.sh --deployment <network>` (default; backs up the replaced file to `.env.contracts.pre-rollback`) |
+| An in-place `upgrade()` installed a faulty WASM on existing contracts | `./scripts/rollback.sh --upgrade <contract\|all> --network <net> --source <identity> [--tag <release>]` |
+
+`scripts/upgrade.sh` records each contract's current on-chain WASM hash as
+`<NAME>_PREVIOUS_WASM_HASH` in `.env.contracts` (and `.env.contracts.json` if
+present) before upgrading. `--upgrade` calls `upgrade(previous_hash)` (the old
+code is still installed on the network), then checks the on-chain hash matches;
+with `--tag` it also runs `scripts/verify-deployed-wasm.sh`.
+
+**Caveat:** storage migrations performed by the new WASM (`migrate()`) are not
+reverted. A WASM rollback is unsafe once `schema_version` was bumped and data
+was rewritten, because the old code may not understand the new layout. In that
+case pause the contracts and use a forward-fix upgrade. Sandbox check:
+`scripts/test-rollback-upgrade.sh` (upgrade, rollback, verify hash).
 
 ### Automatic rollback (CI)
 

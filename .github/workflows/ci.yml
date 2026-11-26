@@ -148,8 +148,8 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
-      - name: Push Prisma schema to test DB
-        run: npx prisma db push --skip-generate
+      - name: Apply SQL migrations to test DB
+        run: bash scripts/test-migrate-db.sh
 
       - name: Type-check
         run: npx tsc --noEmit

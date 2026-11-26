@@ -204,18 +204,20 @@ export async function verifyChallengeTx(
   );
 
   if (clientAccountID !== clientAccount) {
-    throw new Error("Challenge account mismatch");
+    throw new AuthError("account_mismatch", "Challenge account mismatch");
   }
 
   // The client account must have signed the transaction. Done before the
   // challenge is consumed so an unsigned submission cannot burn it.
-  WebAuth.verifyChallengeTxSigners(
-    challengeTx,
-    serverAccount,
-    networkPassphrase,
-    [clientAccount],
-    homeDomain,
-    webAuthDomain
+  wrapSdkAuth(() =>
+    WebAuth.verifyChallengeTxSigners(
+      challengeTx,
+      serverAccount,
+      networkPassphrase,
+      [clientAccount],
+      homeDomain,
+      webAuthDomain
+    )
   );
 
   // Replay protection: atomically mark the challenge consumed. Zero rows
@@ -231,7 +233,7 @@ export async function verifyChallengeTx(
     data: { consumedAt: now },
   });
   if (count !== 1) {
-    throw new Error("Challenge has already been used");
+    throw new AuthError("challenge_replayed", "Challenge has already been used");
   }
 
   return clientAccountID;
