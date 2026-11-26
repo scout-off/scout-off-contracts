@@ -266,6 +266,52 @@ describe("token revocation", () => {
     );
   });
 
+  it("should accept a lowercase bearer scheme", async () => {
+    const token = issueSep10Token(
+      { sub: "user123", role: "validator" },
+      TEST_SECRET
+    );
+
+    await request(app)
+      .get("/api/tokens/me")
+      .set("Authorization", `bearer ${token}`)
+      .expect(200);
+  });
+
+  it("should accept extra whitespace between scheme and token", async () => {
+    const token = issueSep10Token(
+      { sub: "user123", role: "validator" },
+      TEST_SECRET
+    );
+
+    await request(app)
+      .get("/api/tokens/me")
+      .set("Authorization", `Bearer  ${token}`)
+      .expect(200);
+  });
+
+  it("should reject headers with extra segments", async () => {
+    const response = await request(app)
+      .get("/api/tokens/me")
+      .set("Authorization", "Bearer a b")
+      .expect(401);
+
+    expect(response.headers["www-authenticate"]).toBe(
+      'Bearer error="invalid_request"'
+    );
+  });
+
+  it("should reject non-JWT tokens", async () => {
+    const response = await request(app)
+      .get("/api/tokens/me")
+      .set("Authorization", "Bearer not-a-jwt")
+      .expect(401);
+
+    expect(response.headers["www-authenticate"]).toBe(
+      'Bearer error="invalid_request"'
+    );
+  });
+
   it("should return 400 if token does not contain jti claim (manual test helper tokens)", async () => {
     // Use an admin token to pass the auth middleware, but send a manual
     // (jti-free) token as the payload to revoke.

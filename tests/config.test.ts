@@ -327,3 +327,92 @@ describe("refreshTokenTtlSeconds", () => {
     expect(refreshTokenTtlSeconds()).toBe(90);
   });
 });
+
+describe("accessTokenTtlSeconds", () => {
+  const ORIGINAL_ENV = process.env;
+
+  beforeEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    delete process.env.ACCESS_TOKEN_TTL_SECONDS;
+  });
+
+  afterEach(() => {
+    process.env = ORIGINAL_ENV;
+  });
+
+  it("defaults to 900 when unset", () => {
+    expect(accessTokenTtlSeconds()).toBe(900);
+  });
+
+  it("parses a valid value", () => {
+    process.env.ACCESS_TOKEN_TTL_SECONDS = "60";
+    expect(accessTokenTtlSeconds()).toBe(60);
+  });
+
+  it("clamps values above the 15-minute ceiling to 900", () => {
+    process.env.ACCESS_TOKEN_TTL_SECONDS = "3600";
+    expect(accessTokenTtlSeconds()).toBe(900);
+  });
+
+  it("falls back to the default for non-numeric values", () => {
+    process.env.ACCESS_TOKEN_TTL_SECONDS = "abc";
+    expect(accessTokenTtlSeconds()).toBe(900);
+  });
+
+  it("falls back to the default for zero", () => {
+    process.env.ACCESS_TOKEN_TTL_SECONDS = "0";
+    expect(accessTokenTtlSeconds()).toBe(900);
+  });
+
+  it("falls back to the default for negative values", () => {
+    process.env.ACCESS_TOKEN_TTL_SECONDS = "-5";
+    expect(accessTokenTtlSeconds()).toBe(900);
+  });
+
+  it("floors fractional values", () => {
+    process.env.ACCESS_TOKEN_TTL_SECONDS = "90.7";
+    expect(accessTokenTtlSeconds()).toBe(90);
+  });
+});
+
+describe("refreshTokenTtlSeconds", () => {
+  const ORIGINAL_ENV = process.env;
+
+  beforeEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    delete process.env.REFRESH_TOKEN_TTL_SECONDS;
+  });
+
+  afterEach(() => {
+    process.env = ORIGINAL_ENV;
+  });
+
+  it("defaults to 604800 when unset", () => {
+    expect(refreshTokenTtlSeconds()).toBe(604800);
+  });
+
+  it("parses a valid value", () => {
+    process.env.REFRESH_TOKEN_TTL_SECONDS = "60";
+    expect(refreshTokenTtlSeconds()).toBe(60);
+  });
+
+  it("falls back to the default for non-numeric values", () => {
+    process.env.REFRESH_TOKEN_TTL_SECONDS = "abc";
+    expect(refreshTokenTtlSeconds()).toBe(604800);
+  });
+
+  it("falls back to the default for zero", () => {
+    process.env.REFRESH_TOKEN_TTL_SECONDS = "0";
+    expect(refreshTokenTtlSeconds()).toBe(604800);
+  });
+
+  it("falls back to the default for negative values", () => {
+    process.env.REFRESH_TOKEN_TTL_SECONDS = "-5";
+    expect(refreshTokenTtlSeconds()).toBe(604800);
+  });
+
+  it("floors fractional values", () => {
+    process.env.REFRESH_TOKEN_TTL_SECONDS = "90.7";
+    expect(refreshTokenTtlSeconds()).toBe(90);
+  });
+});
