@@ -28,6 +28,36 @@ fn register(env: &Env, client: &VerificationContractClient) {
     );
 }
 
+fn register_with_affiliation(
+    env: &Env,
+    client: &VerificationContractClient,
+    affiliation: &str,
+) -> Address {
+    let validator = Address::generate(env);
+    client.register_validator(
+        &validator,
+        &String::from_str(env, "UEFA-B-License-2026"),
+        &String::from_str(env, affiliation),
+        &Vec::new(env),
+    );
+    validator
+}
+
+fn approve_milestone(
+    env: &Env,
+    client: &VerificationContractClient,
+    validator: &Address,
+    player_id: u64,
+    milestone_index: u32,
+) {
+    client.approve_milestone(
+        validator,
+        &player_id,
+        &milestone_index,
+        &String::from_str(env, "ipfs://evidence"),
+    );
+}
+
 fn unreachable_emitted(env: &Env) -> bool {
     has_event(env, "diversity_gate_unreachable")
 }
@@ -109,6 +139,80 @@ fn diversity_config_reachable_does_not_warn() {
     register(&env, &client);
     client.set_diversity_config(&2u32, &1u32);
     assert!(!unreachable_emitted(&env));
+}
+
+#[test]
+fn affiliation_count_new_player_is_zero() {
+    let (env, _, client) = setup();
+    let player_id = 1u64;
+    assert_eq!(client.get_player_affiliation_count(&player_id), 0);
+    // Sanity: the player has no recorded affiliations at all.
+    assert!(client.get_player_affiliations(&player_id).is_none());
+    let _ = env;
+}
+
+#[test]
+fn affiliation_count_same_affiliation_counts_once() {
+    let (env, _, client) = setup();
+    let player_id = 1u64;
+    let v1 = register_with_affiliation(&env, &client, "Academy");
+    let v2 = register_with_affiliation(&env, &client, "Academy");
+
+    approve_milestone(&env, &client, &v1, player_id, 0);
+    approve_milestone(&env, &client, &v2, player_id, 1);
+
+    assert_eq!(client.get_player_affiliation_count(&player_id), 1);
+}
+
+#[test]
+fn affiliation_count_different_affiliation_counts_twice() {
+    let (env, _, client) = setup();
+    let player_id = 1u64;
+    let v1 = register_with_affiliation(&env, &client, "Academy");
+    let v2 = register_with_affiliation(&env, &client, "Academy");
+    let v3 = register_with_affiliation(&env, &client, "Scouting");
+
+    approve_milestone(&env, &client, &v1, player_id, 0);
+    approve_milestone(&env, &client, &v2, player_id, 1);
+    assert_eq!(client.get_player_affiliation_count(&player_id), 1);
+
+    approve_milestone(&env, &client, &v3, player_id, 2);
+    assert_eq!(client.get_player_affiliation_count(&player_id), 2);
+}
+
+#[test]
+fn affiliation_count_resets_after_purge() {
+    let (env, _, client) = setup();
+    let player_id = 1u64;
+    let v1 = register_with_affiliation(&env, &client, "Academy");
+    let v2 = register_with_affiliation(&env, &client, "Scouting");
+
+    approve_milestone(&env, &client, &v1, player_id, 0);
+    approve_milestone(&env, &client, &v2, player_id, 1);
+    assert_eq!(client.get_player_affiliation_count(&player_id), 2);
+
+    client.purge_player_data(&player_id);
+    assert_eq!(client.get_player_affiliation_count(&player_id), 0);
+}
+
+#[test]
+fn affiliation_count_normalises_affiliation_strings() {
+    // Documents the currently implemented normalisation behaviour (see #1601):
+    // affiliations differing only by case/whitespace are treated as distinct
+    // unless the contract normalises them. This test pins the current
+    // behaviour so a future normalisation change is a deliberate one.
+    let (env, _, client) = setup();
+    let player_id = 1u64;
+    let v1 = register_with_affiliation(&env, &client, "Academy");
+    let v2 = register_with_affiliation(&env, &client, "academy");
+
+    approve_milestone(&env, &client, &v1, player_id, 0);
+    approve_milestone(&env, &client, &v2, player_id, 1);
+
+    let count = client.get_player_affiliation_count(&player_id);
+    // Current implementation stores affiliations verbatim, so case variants
+    // count as distinct affiliations.
+    assert_eq!(count, 2);
 }
 
 #[test]

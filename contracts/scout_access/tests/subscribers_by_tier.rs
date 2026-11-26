@@ -6,7 +6,7 @@
 mod common;
 
 use scoutchain_scout_access::{
-    FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
+    DataKey, FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
 };
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
@@ -154,4 +154,42 @@ fn test_subscribers_by_tier_expired_subscription_still_listed() {
         .client
         .get_subscribers_by_tier(&SubscriptionTier::Basic)
         .contains(&scout));
+}
+
+/// Reading `get_subscribers_by_tier` must bump the instance TTL and extend the
+/// persistent `TierSubscribers(tier)` entry TTL, matching the neighbouring
+/// getters (issue #1829).
+#[test]
+fn test_subscribers_by_tier_read_extends_ttls() {
+    let h = setup();
+    let scout = funded_scout(&h);
+    h.client.subscribe(&scout, &SubscriptionTier::Basic);
+
+    let key = DataKey::TierSubscribers(SubscriptionTier::Basic);
+
+    // Advance the ledger close to the minimum TTL so a bump is observable.
+    h.env.ledger().with_mut(|l| {
+        l.sequence_number += scoutchain_scout_access::PERSISTENT_TTL_MIN - 1;
+    });
+
+    let entry_ttl_before = h.env.storage().persistent().get_ttl(&key);
+    let instance_ttl_before = h.env.storage().instance().get_ttl();
+
+    let _ = h.client.get_subscribers_by_tier(&SubscriptionTier::Basic);
+
+    let entry_ttl_after = h.env.storage().persistent().get_ttl(&key);
+    let instance_ttl_after = h.env.storage().instance().get_ttl();
+
+    assert!(
+        entry_ttl_after > entry_ttl_before,
+        "TierSubscribers entry TTL should be extended by the getter"
+    );
+    assert!(
+        entry_ttl_after >= scoutchain_scout_access::PERSISTENT_TTL_MIN,
+        "TierSubscribers entry TTL should be at least the minimum"
+    );
+    assert!(
+        instance_ttl_after > instance_ttl_before,
+        "instance TTL should be bumped by the getter"
+    );
 }

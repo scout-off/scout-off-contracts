@@ -25,7 +25,8 @@
  *     evidence_hash: String,
  *   ) -> Result<u32, VerificationError>
  *   Auth: the validator's wallet must sign.
- *   Errors:
+ *   Errors (fixed, append-only discriminants from
+ *   `contracts/verification/src/errors.rs`):
  *     ValidatorNotFound (5)      — wallet not in the registry
  *     ValidatorInactive (6)      — validator has been revoked
  *     PlayerNotFound (8)         — invalid player_id

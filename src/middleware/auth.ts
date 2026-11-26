@@ -1,4 +1,4 @@
-import jwt from "jsonwebtoken";
+import { jwtVerify } from "jose";
 import { Request, Response, NextFunction } from "express";
 import { prisma } from "../db";
 import { config } from "../config";
@@ -17,38 +17,116 @@ declare global {
   }
 }
 
+// Sentinel role assigned to wallets that have not registered as any known role.
+// Tokens carrying this role are only accepted by routes that explicitly opt in
+// via `requireAuth({ allowUnknown: true })`.
+export const UNKNOWN_ROLE = "unknown";
+
+export interface RequireAuthOptions {
+  /**
+   * When true, tokens whose role is `UNKNOWN_ROLE` are accepted. Defaults to
+   * false so protected routes reject unregistered wallets unless they opt in.
+   */
+  allowUnknown?: boolean;
+}
+
 export async function isTokenRevoked(jti: string): Promise<boolean> {
   if (!jti) {
     return false;
   }
 
-  const existingRevocation = await prisma.revokedToken.findFirst({
+  const existingRevocation = await prisma.revokedToken.findUnique({
     where: { jti },
   });
 
   return !!existingRevocation;
 }
 
+// RFC 6750: the auth scheme is case-insensitive; tolerate extra whitespace
+// before the token. The token must be a compact JWT (three segments).
+const BEARER_JWT_PATTERN =
+  /^Bearer\s+([A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]*)$/i;
+
+/**
+ * Verify a JWT using the active signing configuration.
+ *
+ * - Asymmetric (EdDSA): look up the public key by `kid`; reject tokens with
+ *   an unknown or missing `kid`.
+ * - Migration mode (HS256 fallback): accepted only when
+ *   `config.allowHs256Migration` is true.
+ * - `alg: none` and cross-algorithm confusion are prevented by pinning
+ *   the allowed algorithms list.
+ */
+export async function verifyToken(token: string): Promise<{
+  sub: string;
+  role: string;
+  jti?: string;
+}> {
+  const { signingKeys, allowHs256Migration, jwtSecret } = config;
+
+  if (signingKeys) {
+    // Decode header to pick the right public key by kid (before full verify).
+    const parts = token.split(".");
+    if (parts.length !== 3) throw new Error("malformed token");
+    const header = JSON.parse(Buffer.from(parts[0], "base64url").toString());
+    const kid = typeof header.kid === "string" ? header.kid : undefined;
+    if (!kid) throw new Error("missing kid");
+    const pubKey = signingKeys.publicKeys.get(kid);
+    if (!pubKey) throw new Error(`unknown kid: ${kid}`);
+    const { payload } = await jwtVerify(token, pubKey, {
+      algorithms: ["EdDSA"],
+      issuer: config.jwtIssuer || undefined,
+      audience: config.jwtAudience || undefined,
+    });
+    return {
+      sub: payload.sub as string,
+      role: payload.role as string,
+      jti: payload.jti as string | undefined,
+    };
+  }
+
+  if (allowHs256Migration) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const jwt = require("jsonwebtoken") as typeof import("jsonwebtoken");
+    const payload = jwt.verify(token, jwtSecret, {
+      algorithms: ["HS256"],
+      issuer: config.jwtIssuer || undefined,
+      audience: config.jwtAudience || undefined,
+    }) as { sub: string; role: string; jti?: string };
+    return payload;
+  }
+
+  throw new Error("No verification key available");
+}
+
 export async function requireAuth(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
+  options: RequireAuthOptions = {}
 ): Promise<void> {
-  const authHeader = req.headers["authorization"];
+  const { allowUnknown = false } = options;
+  const authHeader = req.headers["authorization"]?.trim();
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  if (!authHeader || !/^Bearer(\s|$)/i.test(authHeader)) {
     res.status(401).json({ error: "Unauthorized - no token provided" });
     return;
   }
 
-  const token = authHeader.split(" ")[1];
+  const match = BEARER_JWT_PATTERN.exec(authHeader);
+
+  if (!match) {
+    res
+      .set("WWW-Authenticate", 'Bearer error="invalid_request"')
+      .status(401)
+      .json({ error: "Unauthorized - malformed authorization header" });
+    return;
+  }
+
+  const token = match[1];
 
   try {
-    const payload = jwt.verify(token, config.jwtSecret, { algorithms: ["HS256"] }) as {
-      sub: string;
-      role: string;
-      jti?: string;
-    };
+    const payload = await verifyToken(token);
 
     if (!payload.jti) {
       res.status(401).json({ error: "Unauthorized - token has no jti claim" });
@@ -61,6 +139,11 @@ export async function requireAuth(
       res
         .status(401)
         .json({ error: "Unauthorized - token has been revoked" });
+      return;
+    }
+
+    if (payload.role === UNKNOWN_ROLE && !allowUnknown) {
+      res.status(403).json({ error: "Forbidden - wallet not registered" });
       return;
     }
 
@@ -91,3 +174,4 @@ export function requireRole(allowedRoles: string[]) {
     next();
   };
 }
+

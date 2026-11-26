@@ -1,0 +1,11 @@
+{
+  "network": "local",
+  "reg_cooldown_secs": 0,
+  "xlm_token_address": null,
+  "xlm_token_address_note": "Derived at runtime via 'stellar contract id asset --asset native --network local', or supplied through the XLM_TOKEN_ADDRESS environment variable.",
+  "fee_config": {
+    "base_fee": 100,
+    "fee_bps": 30,
+    "treasury": "GDNQ2CT3R5J7Z5J7Z5J7Z5J7Z5J7Z5J7Z5J7Z5J7Z5J7Z5J7Z5J7Z5"
+  }
+}
