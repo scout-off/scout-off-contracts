@@ -21,9 +21,80 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Path-based gating (issue #1822): docs-only changes skip the heavy
+  # sandbox, ABI, budget and reproducible-build jobs. The `gate` job below is
+  # the single stable check to require in branch protection.
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      contracts: ${{ steps.filter.outputs.contracts }}
+      scripts: ${{ steps.filter.outputs.scripts }}
+      bindings: ${{ steps.filter.outputs.bindings }}
+      docs: ${{ steps.filter.outputs.docs }}
+      backend: ${{ steps.filter.outputs.backend }}
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: |
+            contracts:
+              - 'contracts/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain*'
+              - 'ci/**'
+              - '.github/workflows/contract-ci.yml'
+            scripts:
+              - 'scripts/**'
+              - 'testnet/**'
+              - 'ci/**'
+              - '.github/workflows/contract-ci.yml'
+            bindings:
+              - 'bindings/**'
+              - 'contracts/**'
+              - 'scripts/generate-bindings.sh'
+              - 'scripts/check-bindings.sh'
+              - 'ci/**'
+              - '.github/workflows/contract-ci.yml'
+            docs:
+              - 'docs/**'
+              - '**/*.md'
+              - 'scripts/check-docs.sh'
+              - 'scripts/check-*-consistency.sh'
+              - 'scripts/check-guard-ordering.sh'
+              - 'scripts/check-error-code-continuity.sh'
+              - 'scripts/check-cargo-doc.sh'
+              - '.github/workflows/contract-ci.yml'
+            backend:
+              - 'backend/**'
+              - 'prisma/**'
+              - 'scripts/check-prisma-drift.sh'
+              - 'ci/**'
+              - '.github/workflows/contract-ci.yml'
+            # Anything that can affect a Rust build/test run.
+            code:
+              - 'contracts/**'
+              - 'scripts/**'
+              - 'bindings/**'
+              - 'backend/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain*'
+              - 'ci/**'
+              - '.github/workflows/contract-ci.yml'
+
   test:
     name: Build & Test
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -74,12 +145,11 @@ jobs:
           path: cpu-cost-budget-report.txt
           if-no-files-found: error
 
-      - name: Build WASM (release)
-        run: cargo build --workspace --target wasm32v1-none --release --locked
-
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.docs == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
@@ -142,7 +212,8 @@ jobs:
   bindings-smoke-test:
     name: Bindings smoke-test (local sandbox)
     runs-on: ubuntu-latest
-    needs: test
+    needs: [changes, test]
+    if: needs.changes.outputs.contracts == 'true' || needs.changes.outputs.scripts == 'true' || needs.changes.outputs.bindings == 'true'
     env:
       # Read-only `stellar contract invoke` calls (health/get_wiring_state/
       # version) still require a --source-account. The sandbox identity is
@@ -509,7 +580,8 @@ jobs:
   abi-export:
     name: Export Contract ABIs
     runs-on: ubuntu-latest
-    needs: test
+    needs: [changes, test]
+    if: needs.changes.outputs.contracts == 'true' || needs.changes.outputs.bindings == 'true'
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -631,7 +703,8 @@ jobs:
   abi-diff:
     name: ABI Diff Gate
     runs-on: ubuntu-latest
-    needs: abi-export
+    needs: [changes, abi-export]
+    if: needs.changes.outputs.contracts == 'true' || needs.changes.outputs.bindings == 'true'
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -670,6 +743,8 @@ jobs:
   storage-layout-compat:
     name: Storage Layout Compat Gate
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -706,7 +781,8 @@ jobs:
   budget-calibration:
     name: Budget Calibration
     runs-on: ubuntu-latest
-    needs: [test, abi-export]
+    needs: [changes, test, abi-export]
+    if: needs.changes.outputs.contracts == 'true'
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -774,6 +850,8 @@ jobs:
   reproducible-build:
     name: Reproducible WASM build
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
