@@ -93,6 +93,9 @@ This invariant is enforced by the combination of:
 | Contract | Error | Code |
 |---------|-------|------|
 | `registration` | `PlayerErased` | 22 |
+| `progress` | `PlayerErased` | 29 |
+| `verification` | `PlayerErased` | 65 |
+| `scout_access` | `PlayerErased` | 59 |
 | `progress` | `PlayerErased` | 30 |
 | `verification` | `PlayerErased` | 66 |
 | `scout_access` | `PlayerErased` | 61 |
