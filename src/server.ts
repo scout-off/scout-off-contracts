@@ -1,7 +1,9 @@
 import { app } from "./app";
 import { prisma } from "./db";
+import { startCleanupJob } from "./jobs/cleanup";
+import { logger } from "./logger";
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const PORT = config.port;
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 
@@ -101,8 +103,10 @@ export async function shutdown({
 }
 
 const server = app.listen(PORT, () => {
-  // eslint-disable-next-line no-console
-  console.log(`ScoutChain backend listening on port ${PORT}`);
+  logger.info(`ScoutChain backend listening on port ${PORT}`);
+
+  // Start the cleanup job
+  startCleanupJob();
 });
 
 // Sensible keep-alive/header timeouts. headersTimeout must be greater than

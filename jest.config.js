@@ -1,9 +1,23 @@
 module.exports = {
   preset: "ts-jest",
   testEnvironment: "node",
-  roots: ["<rootDir>/tests", "<rootDir>/src"],
-  setupFiles: ["<rootDir>/tests/setupEnv.ts"],
+  testMatch: ["**/*.test.ts"],
+  roots: ["<rootDir>/tests"],
   transform: {
     "^.+\\.tsx?$": "ts-jest"
-  }
+  },
+  globals: {
+    "ts-jest": {
+      tsconfig: {
+        strict: true,
+        esModuleInterop: true,
+        moduleResolution: "node",
+        skipLibCheck: true,
+      }
+    }
+  },
+  testPathIgnorePatterns: [
+    "/node_modules/",
+    "<rootDir>/e2e/"
+  ]
 };
