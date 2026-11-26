@@ -2,8 +2,18 @@
 /** @type {import('jest').Config} */
 module.exports = {
   testEnvironment: "node",
-  transform: {},
-  extensionsToTreatAsEsm: [".ts"],
+  preset: "ts-jest",
+  transform: {
+    "^.+\\.tsx?$": [
+      "ts-jest",
+      {
+        tsconfig: {
+          module: "CommonJS",
+          moduleResolution: "node",
+        },
+      },
+    ],
+  },
   testMatch: ["**/tests/**/*.test.ts", "**/tests/**/*.test.js"],
-  moduleFileExtensions: ["js", "mjs", "ts"],
+  moduleFileExtensions: ["ts", "js", "mjs"],
 };
