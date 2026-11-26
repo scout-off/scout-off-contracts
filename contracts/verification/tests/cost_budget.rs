@@ -23,7 +23,7 @@ use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
 // current-cost-plus-headroom after the first real CI run reports actual
 // numbers — that tightening is a follow-up, not a blocker.
 const REGISTER_VALIDATOR_CPU_BUDGET: u64 = 15_000_000;
-const APPROVE_MILESTONE_CPU_BUDGET: u64 = 20_000_000;
+const APPROVE_MILESTONE_CPU_BUDGET: u64 = 25_000_000;
 const GET_VALIDATOR_MILESTONES_PAGE_CPU_BUDGET: u64 = 15_000_000;
 /// Bounded cascade sweep (CASCADE_LIMIT = 50) with 500 total milestones.
 /// Cost must be proportional to the 50-entry limit, not the full 500.
@@ -39,10 +39,12 @@ const CID_3: &str = "QmgzsER5ykyxoTsVUSePRkKXqkEzsRVLpUv511dp4c3vAs";
 fn setup() -> (Env, VerificationContractClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let contract_id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &contract_id);
+    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(
+        &env,
+    ));
     (env, client)
 }
 
@@ -192,5 +194,40 @@ fn cost_revoke_validator_cascade_50_limit_at_500_milestones() {
         &env,
         "revoke_validator(ForCause, limit=50, total=500)",
         REVOKE_VALIDATOR_CASCADE_50_CPU_BUDGET,
+    );
+}
+
+/// `get_validator_activity_report` reads a counter, so its cost must not
+/// scale with the validator's distinct-player count (issue #1806).
+const ACTIVITY_REPORT_CPU_BUDGET: u64 = 15_000_000;
+
+#[test]
+fn cost_validator_activity_report_with_100_players() {
+    let (env, client) = setup();
+    let validator = Address::generate(&env);
+    client.register_validator(
+        &validator,
+        &String::from_str(&env, "UEFA-A-License-2026"),
+        &String::from_str(&env, ""),
+        &Vec::new(&env),
+    );
+    for i in 0u32..100 {
+        client.approve_milestone(
+            &validator,
+            &(30_000u64 + i as u64),
+            &String::from_str(&env, "verified achievement"),
+            &cid_for_budget(&env, 30_000 + i),
+            &None,
+        );
+    }
+
+    env.cost_estimate().budget().reset_default();
+    let report = client.get_validator_activity_report(&validator);
+    assert_eq!(report.distinct_player_count, 100);
+    assert_eq!(report.milestone_count, 100);
+    assert_cpu_budget(
+        &env,
+        "get_validator_activity_report(100 players)",
+        ACTIVITY_REPORT_CPU_BUDGET,
     );
 }

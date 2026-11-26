@@ -9,8 +9,10 @@
 //! - Interaction between whole-contract pause and function-scoped pause
 //! - health() reflecting the function-scoped pause state
 
+mod common;
+
 use scoutchain_scout_access::{
-    FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
+    FeeConfig, ScoutAccessContract, ScoutAccessContractClient, ScoutAccessError, SubscriptionTier,
 };
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
@@ -47,6 +49,7 @@ fn default_fees() -> FeeConfig {
 struct Harness {
     env: Env,
     xlm: Address,
+    #[allow(dead_code)]
     admin: Address,
     contract: ScoutAccessContractClient<'static>,
 }
@@ -61,9 +64,13 @@ fn setup() -> Harness {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    let id = env.register(ScoutAccessContract, ());
+    let id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
     let contract = ScoutAccessContractClient::new(&env, &id);
-    contract.initialize(&admin, &xlm, &default_fees());
+    common::wire_registration(&env, Some(&contract), None);
+    common::wire_progress_level_stub(&env, &contract);
 
     Harness {
         env,
@@ -73,10 +80,11 @@ fn setup() -> Harness {
     }
 }
 
-/// Mint XLM and subscribe `scout` to Basic tier.
+/// Mint XLM and subscribe `scout` to Elite tier (Basic has no contact
+/// entitlement since #1357).
 fn subscribe(h: &Harness, scout: &Address) {
-    StellarAssetClient::new(&h.env, &h.xlm).mint(scout, &(BASIC_FEE * 2));
-    h.contract.subscribe(scout, &SubscriptionTier::Basic);
+    StellarAssetClient::new(&h.env, &h.xlm).mint(scout, &(ELITE_FEE * 2));
+    h.contract.subscribe(scout, &SubscriptionTier::Elite);
 }
 
 /// Give an address enough XLM for many operations.
@@ -220,7 +228,7 @@ fn test_subscribe_works_when_pay_to_contact_paused() {
         .expect("subscribed scout should have a subscription");
     assert_eq!(
         sub.tier,
-        SubscriptionTier::Basic,
+        SubscriptionTier::Elite,
         "scout should still be subscribable while pay_to_contact is paused"
     );
 }
@@ -242,7 +250,7 @@ fn test_reads_work_when_pay_to_contact_paused() {
         .expect("subscribed scout should have a subscription");
     assert_eq!(
         sub.tier,
-        SubscriptionTier::Basic,
+        SubscriptionTier::Elite,
         "subscription status should still be readable"
     );
 }
@@ -354,5 +362,59 @@ fn test_unpause_pay_to_contact_emits_event() {
     assert!(
         !health.pay_to_contact_paused,
         "flag should be cleared after unpause"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests: batch_contact_players honours the function-scoped pause (#1616)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_batch_contact_players_blocked_by_function_scoped_pause() {
+    let h = setup();
+    let scout = Address::generate(&h.env);
+    subscribe(&h, &scout);
+    fund(&h, &scout);
+    pause_function(&h);
+
+    let ids = soroban_sdk::vec![&h.env, 1u64, 2u64];
+    let result = h.contract.try_batch_contact_players(&scout, &ids);
+    assert_eq!(
+        result.err().unwrap().unwrap(),
+        ScoutAccessError::PayToContactPaused
+    );
+    // No state change: nothing was recorded as contacted.
+    assert!(!h.contract.has_contacted(&scout, &1u64));
+}
+
+#[test]
+fn test_batch_contact_players_succeeds_after_unpause() {
+    let h = setup();
+    let scout = Address::generate(&h.env);
+    subscribe(&h, &scout);
+    fund(&h, &scout);
+    pause_function(&h);
+    unpause_function(&h);
+
+    let ids = soroban_sdk::vec![&h.env, 1u64, 2u64];
+    assert_eq!(h.contract.batch_contact_players(&scout, &ids), 2);
+}
+
+/// Error ordering: the whole-contract pause (`ContractPaused`) is checked
+/// before the function-scoped pause (`PayToContactPaused`).
+#[test]
+fn test_batch_contact_players_whole_contract_pause_takes_precedence() {
+    let h = setup();
+    let scout = Address::generate(&h.env);
+    subscribe(&h, &scout);
+    fund(&h, &scout);
+    pause_function(&h);
+    pause_contract(&h);
+
+    let ids = soroban_sdk::vec![&h.env, 1u64];
+    let result = h.contract.try_batch_contact_players(&scout, &ids);
+    assert_eq!(
+        result.err().unwrap().unwrap(),
+        ScoutAccessError::ContractPaused
     );
 }

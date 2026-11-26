@@ -1,21 +1,33 @@
-import jwt, { JwtPayload } from "jsonwebtoken";
-import type { RequestHandler } from "express";
+import { jwtVerify } from "jose";
+import { Request, Response, NextFunction } from "express";
 import { prisma } from "../db";
+import { config } from "../config";
 
-export interface UserIdentity {
-  sub: string;
-  role: string;
-  jti: string;
-  sid?: string;
+// Extend the Express Request type so downstream handlers can access req.user
+// without casting.
+declare global {
+  namespace Express {
+    interface Request {
+      user?: {
+        sub: string;
+        role: string;
+        jti: string;
+      };
+    }
+  }
 }
 
-const SESSION_CACHE_TTL_MS = 2_000;
-const sessionRevocationCache = new Map<string, { revoked: boolean; expiresAt: number }>();
+// Sentinel role assigned to wallets that have not registered as any known role.
+// Tokens carrying this role are only accepted by routes that explicitly opt in
+// via `requireAuth({ allowUnknown: true })`.
+export const UNKNOWN_ROLE = "unknown";
 
-export function clearSessionRevocationCache(sessionIds: string[]): void {
-  for (const sessionId of sessionIds) {
-    sessionRevocationCache.delete(sessionId);
-  }
+export interface RequireAuthOptions {
+  /**
+   * When true, tokens whose role is `UNKNOWN_ROLE` are accepted. Defaults to
+   * false so protected routes reject unregistered wallets unless they opt in.
+   */
+  allowUnknown?: boolean;
 }
 
 export async function isTokenRevoked(jti: string): Promise<boolean> {
@@ -28,9 +40,8 @@ export async function isSessionRevoked(sid: string): Promise<boolean> {
     return cached.revoked;
   }
 
-  const session = await prisma.session.findUnique({
-    where: { id: sid },
-    select: { revokedAt: true },
+  const existingRevocation = await prisma.revokedToken.findUnique({
+    where: { jti },
   });
   const revoked = !session || session.revokedAt !== null;
   sessionRevocationCache.set(sid, {
@@ -40,34 +51,97 @@ export async function isSessionRevoked(sid: string): Promise<boolean> {
   return revoked;
 }
 
-function getJwtSecret(): string {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    throw new Error("JWT_SECRET is not configured");
+// RFC 6750: the auth scheme is case-insensitive; tolerate extra whitespace
+// before the token. The token must be a compact JWT (three segments).
+const BEARER_JWT_PATTERN =
+  /^Bearer\s+([A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]*)$/i;
+
+/**
+ * Verify a JWT using the active signing configuration.
+ *
+ * - Asymmetric (EdDSA): look up the public key by `kid`; reject tokens with
+ *   an unknown or missing `kid`.
+ * - Migration mode (HS256 fallback): accepted only when
+ *   `config.allowHs256Migration` is true.
+ * - `alg: none` and cross-algorithm confusion are prevented by pinning
+ *   the allowed algorithms list.
+ */
+export async function verifyToken(token: string): Promise<{
+  sub: string;
+  role: string;
+  jti?: string;
+}> {
+  const { signingKeys, allowHs256Migration, jwtSecret } = config;
+
+  if (signingKeys) {
+    // Decode header to pick the right public key by kid (before full verify).
+    const parts = token.split(".");
+    if (parts.length !== 3) throw new Error("malformed token");
+    const header = JSON.parse(Buffer.from(parts[0], "base64url").toString());
+    const kid = typeof header.kid === "string" ? header.kid : undefined;
+    if (!kid) throw new Error("missing kid");
+    const pubKey = signingKeys.publicKeys.get(kid);
+    if (!pubKey) throw new Error(`unknown kid: ${kid}`);
+    const { payload } = await jwtVerify(token, pubKey, {
+      algorithms: ["EdDSA"],
+      issuer: config.jwtIssuer || undefined,
+      audience: config.jwtAudience || undefined,
+    });
+    return {
+      sub: payload.sub as string,
+      role: payload.role as string,
+      jti: payload.jti as string | undefined,
+    };
   }
-  return secret;
+
+  if (allowHs256Migration) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const jwt = require("jsonwebtoken") as typeof import("jsonwebtoken");
+    const payload = jwt.verify(token, jwtSecret, {
+      algorithms: ["HS256"],
+      issuer: config.jwtIssuer || undefined,
+      audience: config.jwtAudience || undefined,
+    }) as { sub: string; role: string; jti?: string };
+    return payload;
+  }
+
+  throw new Error("No verification key available");
 }
 
-export const requireAuth: RequestHandler = async (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) {
+export async function requireAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+  options: RequireAuthOptions = {}
+): Promise<void> {
+  const { allowUnknown = false } = options;
+  const authHeader = req.headers["authorization"]?.trim();
+
+  if (!authHeader || !/^Bearer(\s|$)/i.test(authHeader)) {
     res.status(401).json({ error: "Unauthorized - no token provided" });
     return;
   }
 
-  let secret: string;
-  try {
-    secret = getJwtSecret();
-  } catch (error) {
-    next(error);
+  const match = BEARER_JWT_PATTERN.exec(authHeader);
+
+  if (!match) {
+    res
+      .set("WWW-Authenticate", 'Bearer error="invalid_request"')
+      .status(401)
+      .json({ error: "Unauthorized - malformed authorization header" });
     return;
   }
+  return secret;
+}
 
-  let payload: JwtPayload;
+  const token = match[1];
+
+  let secret: string;
   try {
-    const verified = jwt.verify(authHeader.slice(7), secret);
-    if (typeof verified === "string") {
-      res.status(401).json({ error: "Unauthorized - invalid token" });
+    const payload = await verifyToken(token);
+
+    if (!payload.jti) {
+      res.status(401).json({ error: "Unauthorized - token has no jti claim" });
       return;
     }
     payload = verified;
@@ -76,22 +150,17 @@ export const requireAuth: RequestHandler = async (req, res, next) => {
     return;
   }
 
-  if (
-    typeof payload.sub !== "string" ||
-    typeof payload.role !== "string" ||
-    typeof payload.jti !== "string"
-  ) {
-    res.status(401).json({ error: "Unauthorized - token is missing required claims" });
-    return;
-  }
+    const revoked = await isTokenRevoked(payload.jti);
 
-  try {
-    if (await isTokenRevoked(payload.jti)) {
-      res.status(401).json({ error: "Unauthorized - token has been revoked" });
+    if (revoked) {
+      res
+        .status(401)
+        .json({ error: "Unauthorized - token has been revoked" });
       return;
     }
-    if (typeof payload.sid === "string" && await isSessionRevoked(payload.sid)) {
-      res.status(401).json({ error: "Unauthorized - session has been revoked" });
+
+    if (payload.role === UNKNOWN_ROLE && !allowUnknown) {
+      res.status(403).json({ error: "Forbidden - wallet not registered" });
       return;
     }
 
@@ -102,14 +171,14 @@ export const requireAuth: RequestHandler = async (req, res, next) => {
       ...(typeof payload.sid === "string" ? { sid: payload.sid } : {}),
     };
     next();
-  } catch (error) {
-    next(error);
+  } catch {
+    res.status(401).json({ error: "Unauthorized - invalid token" });
   }
 };
 
-export function requireRole(allowedRoles: string[]): RequestHandler {
-  return (req, res, next) => {
-    if (!req.user?.role) {
+export function requireRole(allowedRoles: string[]) {
+  return function (req: Request, res: Response, next: NextFunction): void {
+    if (!req.user || !req.user.role) {
       res.status(401).json({ error: "Unauthorized - no user role" });
       return;
     }
@@ -121,6 +190,3 @@ export function requireRole(allowedRoles: string[]): RequestHandler {
   };
 }
 
-export function getConfiguredJwtSecret(): string {
-  return getJwtSecret();
-}

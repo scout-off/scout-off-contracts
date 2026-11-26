@@ -1,42 +1,24 @@
 import request from "supertest";
 import jwt from "jsonwebtoken";
-
-jest.mock("../../src/db", () => ({
-  prisma: {
-    session: {
-      create: jest.fn(),
-      findUnique: jest.fn(),
-      findMany: jest.fn(),
-      updateMany: jest.fn(),
-    },
-    refreshToken: {
-      create: jest.fn(),
-      findUnique: jest.fn(),
-      updateMany: jest.fn(),
-    },
-    revokedToken: {
-      findUnique: jest.fn(),
-      upsert: jest.fn(),
-    },
-    $transaction: jest.fn(),
-  },
-}));
-
+import express from "express";
 import { app } from "../../src/app";
 import { issueSep10Token } from "../../src/services/sep10";
 import { prisma } from "../../src/db";
+import { requireAuth } from "../../src/middleware/auth";
 
-const secret = "test-secret";
-const db = prisma as unknown as {
-  session: Record<string, jest.Mock>;
-  refreshToken: Record<string, jest.Mock>;
-  revokedToken: Record<string, jest.Mock>;
-  $transaction: jest.Mock;
+import { config } from "../../src/config";
+
+// In test, setupEnv sets JWT_ALLOW_HS256_MIGRATION=true so config has no
+// signingKeys but allowHs256Migration=true with a known jwtSecret.
+const migrationConfig = {
+  signingKeys: null,
+  allowHs256Migration: true,
+  jwtSecret: config.jwtSecret,
 };
 
-function accessToken(sub: string, role: string, sid?: string): string {
-  return jwt.sign({ sub, role, ...(sid ? { sid } : {}) }, secret, { jwtid: "test-jti" });
-}
+beforeEach(async () => {
+  await prisma.revokedToken.deleteMany();
+});
 
 beforeEach(() => {
   process.env.JWT_SECRET = secret;
@@ -52,28 +34,72 @@ beforeEach(() => {
   db.refreshToken.updateMany.mockResolvedValue({ count: 1 });
 });
 
-describe("session-family auth", () => {
-  it("issues sid-bearing access and refresh tokens", async () => {
-    const response = await request(app)
-      .post("/api/sep10/token")
-      .send({ sub: "user1", role: "validator" })
-      .expect(200);
-    const payload = jwt.verify(response.body.accessToken, secret) as jwt.JwtPayload;
+describe("requireAuth unknown-role policy", () => {
+  const buildApp = (allowUnknown: boolean) => {
+    const testApp = express();
+    testApp.get(
+      "/protected",
+      requireAuth({ allowUnknown }),
+      (req, res) => {
+        res.json({ ok: true, role: req.user?.role });
+      }
+    );
+    return testApp;
+  };
 
-    expect(payload.sid).toBeTruthy();
-    expect(response.body.refreshToken).toBeTruthy();
-    expect(db.session.create).toHaveBeenCalled();
+  it("rejects unknown-role tokens by default with 403 not_registered", async () => {
+    const token = issueSep10Token(
+      { sub: "unregistered-wallet", role: "unknown" },
+      TEST_SECRET
+    );
+
+    const response = await request(buildApp(false))
+      .get("/protected")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(403);
+
+    expect(response.body).toEqual(
+      expect.objectContaining({ error: "not_registered" })
+    );
   });
 
-  it("revokes the family and reports reuse of a rotated refresh token", async () => {
-    db.refreshToken.findUnique.mockResolvedValue({
-      id: "old-hash",
-      sessionId: "session-1",
-      role: "validator",
-      revokedAt: new Date(),
-      rotatedAt: new Date(),
-      session: { account: "user1", revokedAt: null },
-    });
+  it("accepts unknown-role tokens when allowUnknown is true", async () => {
+    const token = issueSep10Token(
+      { sub: "unregistered-wallet", role: "unknown" },
+      TEST_SECRET
+    );
+
+    const response = await request(buildApp(true))
+      .get("/protected")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+
+    expect(response.body).toEqual({ ok: true, role: "unknown" });
+  });
+
+  it("still accepts registered roles on default routes", async () => {
+    const token = issueSep10Token(
+      { sub: "player1", role: "player" },
+      TEST_SECRET
+    );
+
+    const response = await request(buildApp(false))
+      .get("/protected")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+
+    expect(response.body).toEqual({ ok: true, role: "player" });
+  });
+});
+
+describe("Token revocation through real SEP-10 flow", () => {
+  it("should include jti claim in JWT issued through sep10 signing path", async () => {
+    const token = await issueSep10Token(
+      { sub: "user123", role: "validator" },
+      migrationConfig
+    );
+
+    const decoded = jwt.verify(token, config.jwtSecret) as { jti?: string };
 
     const response = await request(app)
       .post("/auth/refresh")
@@ -90,27 +116,12 @@ describe("session-family auth", () => {
     }));
   });
 
-  it("allows only one winner when two refresh requests race and revokes the family on reuse", async () => {
-    const tokenRecord = {
-      id: "old-hash",
-      sessionId: "session-1",
-      role: "validator",
-      revokedAt: null as Date | null,
-      rotatedAt: null as Date | null,
-      session: { account: "user1", revokedAt: null },
-    };
-    db.refreshToken.findUnique.mockImplementation(({ include, select }) => {
-      if (include) return Promise.resolve({ ...tokenRecord });
-      if (select) return Promise.resolve({ rotatedAt: tokenRecord.rotatedAt, sessionId: "session-1" });
-      return Promise.resolve({ ...tokenRecord });
-    });
-    db.session.findUnique.mockResolvedValue({ revokedAt: null });
-    db.refreshToken.updateMany.mockImplementation(async () => {
-      if (tokenRecord.rotatedAt) return { count: 0 };
-      tokenRecord.rotatedAt = new Date();
-      tokenRecord.revokedAt = tokenRecord.rotatedAt;
-      return { count: 1 };
-    });
+  it("should allow revoking a token via the admin endpoint when jti is present", async () => {
+    // Issue an admin-role token so requireRole(["admin"]) is satisfied.
+    const token = await issueSep10Token(
+      { sub: "admin1", role: "admin" },
+      migrationConfig
+    );
 
     const responses = await Promise.all([
       request(app).post("/auth/refresh").send({ refreshToken: "same-token" }),
@@ -126,74 +137,101 @@ describe("session-family auth", () => {
 
   it("logout revokes the current session and access-token jti", async () => {
     await request(app)
-      .post("/auth/logout")
-      .set("Authorization", `Bearer ${accessToken("user1", "validator", "session-1")}`)
-      .expect(200);
-
-    expect(db.session.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "session-1", revokedAt: null },
-      data: expect.objectContaining({ revokedReason: "logout" }),
-    }));
-    expect(db.revokedToken.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      where: { jti: "test-jti" },
-    }));
-  });
-
-  it("logout-all revokes every session for the authenticated account", async () => {
-    db.session.findMany.mockResolvedValue([{ id: "session-1" }, { id: "session-2" }]);
-    db.session.updateMany.mockResolvedValueOnce({ count: 2 });
-    await request(app)
-      .post("/auth/logout-all")
-      .set("Authorization", `Bearer ${accessToken("user1", "validator", "session-1")}`)
+      .post("/api/admin/tokens/revoke")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ token })
       .expect(200)
-      .expect(({ body }) => expect(body.sessionsRevoked).toBe(2));
-
-    expect(db.session.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { account: "user1", revokedAt: null },
-      data: expect.objectContaining({ revokedReason: "logout_all" }),
-    }));
-    expect(db.refreshToken.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { session: { is: { account: "user1" } }, revokedAt: null },
-    }));
+      .expect((res) => {
+        expect(res.body.revoked).toBe(true);
+      });
   });
 
-  it("rejects access tokens whose session has been revoked", async () => {
-    db.session.findUnique.mockResolvedValue({ revokedAt: new Date() });
+  it("should block the revoked token on subsequent requests", async () => {
+    const token = await issueSep10Token(
+      { sub: "admin1", role: "admin" },
+      migrationConfig
+    );
+
+    await request(app)
+      .post("/api/admin/tokens/revoke")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ token });
+
+    // Revocation is enforced by requireAuth (isTokenRevoked), not by the
+    // /api/tokens/me handler, which no longer performs its own lookup.
+    const response = await request(app)
+      .get("/api/tokens/me")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(401);
+
+    expect(response.body.error).toContain("revoked");
+  });
+
+  it("should accept a lowercase bearer scheme", async () => {
+    const token = issueSep10Token(
+      { sub: "user123", role: "validator" },
+      TEST_SECRET
+    );
+
     await request(app)
       .get("/api/tokens/me")
-      .set("Authorization", `Bearer ${accessToken("user1", "validator", "session-1")}`)
-      .expect(401)
-      .expect(({ body }) => expect(body.error).toContain("session has been revoked"));
-  });
-
-  it("retains jti-based revocation support for pre-session tokens", async () => {
-    const token = issueSep10Token({ sub: "user1", role: "validator" }, secret);
-    const payload = jwt.verify(token, secret) as jwt.JwtPayload;
-
-    await request(app)
-      .post("/api/admin/tokens/revoke")
-      .set("Authorization", `Bearer ${accessToken("admin1", "admin")}`)
-      .send({ token })
+      .set("Authorization", `bearer ${token}`)
       .expect(200);
-
-    expect(db.revokedToken.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      where: { jti: payload.jti },
-    }));
   });
 
-  it("allows an admin to revoke every session for an account", async () => {
-    db.session.findMany.mockResolvedValue([{ id: "session-a" }, { id: "session-b" }]);
-    db.session.updateMany.mockResolvedValueOnce({ count: 2 });
+  it("should accept extra whitespace between scheme and token", async () => {
+    const token = issueSep10Token(
+      { sub: "user123", role: "validator" },
+      TEST_SECRET
+    );
+
+    await request(app)
+      .get("/api/tokens/me")
+      .set("Authorization", `Bearer  ${token}`)
+      .expect(200);
+  });
+
+  it("should reject headers with extra segments", async () => {
+    const response = await request(app)
+      .get("/api/tokens/me")
+      .set("Authorization", "Bearer a b")
+      .expect(401);
+
+    expect(response.headers["www-authenticate"]).toBe(
+      'Bearer error="invalid_request"'
+    );
+  });
+
+  it("should reject non-JWT tokens", async () => {
+    const response = await request(app)
+      .get("/api/tokens/me")
+      .set("Authorization", "Bearer not-a-jwt")
+      .expect(401);
+
+    expect(response.headers["www-authenticate"]).toBe(
+      'Bearer error="invalid_request"'
+    );
+  });
+
+  it("should return 400 if token does not contain jti claim (manual test helper tokens)", async () => {
+    // Use an admin token to pass the auth middleware, but send a manual
+    // (jti-free) token as the payload to revoke.
+    const adminToken = await issueSep10Token(
+      { sub: "admin1", role: "admin" },
+      migrationConfig
+    );
+    const manualToken = jwt.sign(
+      { sub: "user123", role: "validator" },
+      config.jwtSecret
+    );
+
     await request(app)
       .post("/api/admin/tokens/revoke")
-      .set("Authorization", `Bearer ${accessToken("admin1", "admin")}`)
-      .send({ account: "user1" })
-      .expect(200)
-      .expect(({ body }) => expect(body.sessionsRevoked).toBe(2));
-
-    expect(db.session.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { account: "user1", revokedAt: null },
-      data: expect.objectContaining({ revokedReason: "admin_revoke" }),
-    }));
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ token: manualToken })
+      .expect(400)
+      .expect((res) => {
+        expect(res.body.error).toContain("jti claim");
+      });
   });
 });

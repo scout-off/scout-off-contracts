@@ -11,6 +11,8 @@
 //! matching row in `ci/cpu-cost-budget.md` with a one-line justification in
 //! the PR description explaining why the growth is expected and acceptable.
 
+mod common;
+
 use scoutchain_scout_access::{
     FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
 };
@@ -20,16 +22,18 @@ use soroban_sdk::{
     vec, Address, Env, String,
 };
 
-const SUBSCRIBE_CPU_BUDGET: u64 = 597_410;
+// Re-calibrated after the mandatory registration (#1417) and progress
+// (#1357) cross-contract checks: measured cost plus 20% headroom.
+const SUBSCRIBE_CPU_BUDGET: u64 = 820_000;
 // #619: pay_to_contact budget includes evidence_access_granted event emission
 // (atomically written with every successful pay_to_contact call per
 // docs/EVIDENCE_PRIVACY.md). Budget raised from 777,109 → 810,000 to cover
 // the ~27k instruction increase from the event write.
-const PAY_TO_CONTACT_CPU_BUDGET: u64 = 810_000;
+const PAY_TO_CONTACT_CPU_BUDGET: u64 = 1_150_000;
 // #619: batch_contact_players budget raised from 1,545,146 → 2,350,000 to
 // cover the 5× evidence_access_granted event emissions (one per player)
 // that are now written atomically alongside each contact record.
-const BATCH_CONTACT_PLAYERS_CPU_BUDGET: u64 = 2_350_000;
+const BATCH_CONTACT_PLAYERS_CPU_BUDGET: u64 = 3_215_000;
 // #795: expire_trial_offers is capped at 20 escrows/call — see
 // EXPIRE_TRIAL_OFFERS_MAX_LIMIT in contracts/scout_access/src/lib.rs.
 const EXPIRE_TRIAL_OFFERS_CPU_BUDGET: u64 = 8_614_029;
@@ -37,6 +41,10 @@ const EXPIRE_TRIAL_OFFERS_CPU_BUDGET: u64 = 8_614_029;
 // seek avoids a full scan). Measured at a mid-history page (offset 500,
 // limit 50) — see cost_get_player_access_grants_at_1000_grants below.
 const GET_PLAYER_ACCESS_GRANTS_CPU_BUDGET: u64 = 15_000_000;
+// #1827: withdraw_fees zeroes AccumulatedFees once, before the token
+// transfer (CEI). Budget unchanged by the redundant-write removal; kept as a
+// regression guard so the single-write CEI ordering stays cheap.
+const WITHDRAW_FEES_CPU_BUDGET: u64 = 400_000;
 
 fn default_fees() -> FeeConfig {
     FeeConfig {
@@ -58,9 +66,13 @@ fn setup() -> (Env, ScoutAccessContractClient<'static>, Address) {
     let xlm = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
-    let contract_id = env.register(ScoutAccessContract, ());
+    let contract_id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
     let client = ScoutAccessContractClient::new(&env, &contract_id);
-    client.initialize(&admin, &xlm, &default_fees());
+    common::wire_registration(&env, Some(&client), None);
+    common::wire_progress_level_stub(&env, &client);
     (env, client, xlm)
 }
 
@@ -144,6 +156,20 @@ fn cost_expire_trial_offers() {
     let swept = client.expire_trial_offers(&20u32);
     assert_eq!(swept, 20);
     assert_cpu_budget(&env, "expire_trial_offers", EXPIRE_TRIAL_OFFERS_CPU_BUDGET);
+}
+
+#[test]
+fn cost_withdraw_fees() {
+    let (env, client, xlm) = setup();
+    let scout = Address::generate(&env);
+    fund(&env, &xlm, &scout);
+    client.subscribe(&scout, &SubscriptionTier::Pro);
+    client.pay_to_contact(&scout, &1u64);
+
+    let admin = client.get_admin();
+    env.cost_estimate().budget().reset_default();
+    client.withdraw_fees(&admin);
+    assert_cpu_budget(&env, "withdraw_fees", WITHDRAW_FEES_CPU_BUDGET);
 }
 
 /// #1040: proves `get_player_access_grants`' CPU cost is independent of a

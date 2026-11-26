@@ -18,10 +18,9 @@ use soroban_sdk::{
 fn setup() -> (Env, RegistrationContractClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
-    let id = env.register(RegistrationContract, ());
-    let client = RegistrationContractClient::new(&env, &id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let id = env.register(RegistrationContract, (admin.clone(),));
+    let client = RegistrationContractClient::new(&env, &id);
     (env, client)
 }
 
@@ -43,9 +42,9 @@ fn wallet_from_signing_key(env: &Env, sk: &SigningKey) -> Address {
 fn vitals(env: &Env) -> PlayerVitals {
     PlayerVitals {
         age: 20,
-        position: String::from_str(env, "Forward"),
-        region: String::from_str(env, "West Africa"),
-        nationality: String::from_str(env, "Ghana"),
+        position: String::from_str(env, "ST"),
+        region: String::from_str(env, "NG"),
+        nationality: String::from_str(env, "GH"),
     }
 }
 

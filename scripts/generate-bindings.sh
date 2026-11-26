@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 # ScoutChain — generate TypeScript bindings for all contracts
-# Usage: ./scripts/generate-bindings.sh [testnet|mainnet]
+# Usage: ./scripts/generate-bindings.sh [testnet|mainnet|local]
 # Requires .env.contracts to exist (written by deploy.sh)
 set -euo pipefail
 
+# shellcheck disable=SC1091
+source "$(dirname "$0")/network.sh" "${1:-}"
 # Reference stellar-cli version the generated bindings were last validated
-# against. Keep in sync with: docs/CONTRIBUTING.md and
-# .github/workflows/contract-ci.yml.
+# against. Single source of truth: ci/stellar-cli-version (also read by
+# scripts/install-stellar-cli.sh, which CI uses to install a checksum-verified
+# release binary).
 #
-# This is advisory, not enforced: the upstream `install.sh` always installs
-# the latest release regardless of the tag it is fetched from, and the
-# "Verify ABI function coverage in generated bindings" CI step structurally
-# checks the output against the WASM ABI. A different CLI version only
-# warns — set STRICT_STELLAR_CLI_VERSION=1 to make it fatal.
-REFERENCE_STELLAR_CLI_VERSION="28.0.0"
+# A different locally installed CLI version only warns — set
+# STRICT_STELLAR_CLI_VERSION=1 to make it fatal. The "Verify ABI function
+# coverage in generated bindings" CI step structurally checks the output.
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/lib/check-stellar-cli.sh"
+REFERENCE_STELLAR_CLI_VERSION="$PINNED_STELLAR_CLI_VERSION"
 
 actual_version=$(stellar --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
 if [[ "$actual_version" != "$REFERENCE_STELLAR_CLI_VERSION" ]]; then
@@ -52,49 +55,69 @@ fi
 
 echo "==> Using workspace version $WORKSPACE_VERSION for bindings packages (from Cargo.toml)"
 
-# Rewrite the "version" field of a generated binding package.json to the
-# workspace version. `stellar contract bindings typescript` wipes the output
-# dir (with --overwrite) and regenerates package.json from the CLI's own
-# template, which hardcodes a placeholder version — so this must run after
-# every generation. jq is preferred; python3 is a fallback (both are already
-# used elsewhere in this repo's tooling).
-sync_binding_version() {
+# Canonical repository metadata for the published bindings packages.
+REPO_URL="https://github.com/scout-off/scout-off-contracts"
+REPO_GIT_URL="git+${REPO_URL}.git"
+REPO_ISSUES_URL="${REPO_URL}/issues"
+
+# Rewrite the "version" and repository metadata fields of a generated binding
+# package.json. `stellar contract bindings typescript` wipes the output dir
+# (with --overwrite) and regenerates package.json from the CLI's own template,
+# which hardcodes a placeholder version and (if anything) the wrong homepage —
+# so this must run after every generation. jq is preferred; python3 is a
+# fallback (both are already used elsewhere in this repo's tooling).
+sync_binding_metadata() {
   local name="$1"
   local pkg_json="bindings/${name}/package.json"
+  local homepage="${REPO_URL}/tree/main/bindings/${name}#readme"
+  local directory="bindings/${name}"
 
   if [[ ! -f "$pkg_json" ]]; then
-    echo "    WARNING: $pkg_json not found — cannot sync version"
+    echo "    WARNING: $pkg_json not found — cannot sync metadata"
     return
   fi
 
   if command -v jq >/dev/null 2>&1; then
     local tmpfile
     tmpfile="$(mktemp)"
-    if jq --arg v "$WORKSPACE_VERSION" '.version = $v' "$pkg_json" > "$tmpfile" && mv "$tmpfile" "$pkg_json"; then
-      echo "    Synced version to $WORKSPACE_VERSION in $pkg_json"
+    if jq \
+      --arg v "$WORKSPACE_VERSION" \
+      --arg homepage "$homepage" \
+      --arg giturl "$REPO_GIT_URL" \
+      --arg directory "$directory" \
+      --arg bugs "$REPO_ISSUES_URL" \
+      '.version = $v
+       | .homepage = $homepage
+       | .repository = {type: "git", url: $giturl, directory: $directory}
+       | .bugs = {url: $bugs}' \
+      "$pkg_json" > "$tmpfile" && mv "$tmpfile" "$pkg_json"; then
+      echo "    Synced version and repository metadata in $pkg_json"
     else
-      echo "    WARNING: failed to sync version in $pkg_json"
+      echo "    WARNING: failed to sync metadata in $pkg_json"
       rm -f "$tmpfile"
     fi
   elif command -v python3 >/dev/null 2>&1; then
-    if python3 - "$pkg_json" "$WORKSPACE_VERSION" <<'PYEOF'
+    if python3 - "$pkg_json" "$WORKSPACE_VERSION" "$homepage" "$REPO_GIT_URL" "$directory" "$REPO_ISSUES_URL" <<'PYEOF'
 import json, sys
 
-path, version = sys.argv[1], sys.argv[2]
+path, version, homepage, giturl, directory, bugs = sys.argv[1:7]
 with open(path) as f:
     data = json.load(f)
 data["version"] = version
+data["homepage"] = homepage
+data["repository"] = {"type": "git", "url": giturl, "directory": directory}
+data["bugs"] = {"url": bugs}
 with open(path, "w") as f:
     json.dump(data, f, indent=2)
     f.write("\n")
 PYEOF
     then
-      echo "    Synced version to $WORKSPACE_VERSION in $pkg_json"
+      echo "    Synced version and repository metadata in $pkg_json"
     else
-      echo "    WARNING: failed to sync version in $pkg_json"
+      echo "    WARNING: failed to sync metadata in $pkg_json"
     fi
   else
-    echo "    WARNING: neither jq nor python3 available — could not sync version in $pkg_json"
+    echo "    WARNING: neither jq nor python3 available — could not sync metadata in $pkg_json"
   fi
 }
 
@@ -121,9 +144,10 @@ for name in "${CONTRACTS[@]}"; do
   echo "    Written to $out/"
 
   # The CLI regenerates package.json from its own template on every run, so
-  # re-apply the workspace version afterwards to keep bindings in lockstep
-  # with the contracts they wrap.
-  sync_binding_version "$name"
+  # re-apply the workspace version and repository metadata afterwards to keep
+  # bindings in lockstep with the contracts they wrap and to point npm users
+  # at the correct repository.
+  sync_binding_metadata "$name"
 done
 
 # Extract function lists from CONTRACT_REFERENCE.md and inject into each bindings README
@@ -149,8 +173,9 @@ extract_function_list() {
       next;
     }
     in_section && in_functions && /^#### `/ {
-      # Extract function signature
-      match($0, /`([^`]+)`/, sig);
+      # Extract function signature (2-arg match: portable to mawk/POSIX awk)
+      match($0, /`[^`]+`/);
+      sig = substr($0, RSTART + 1, RLENGTH - 2);
       getline; # skip blank line
       getline; # get description line or table start
 
@@ -168,7 +193,7 @@ extract_function_list() {
       }
 
       # Print formatted entry
-      print "- `" sig[1] "` — " desc;
+      print "- `" sig "` — " desc;
     }
   ' "$doc_file"
 }

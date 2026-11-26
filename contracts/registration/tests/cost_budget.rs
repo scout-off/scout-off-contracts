@@ -1,11 +1,12 @@
-//! CPU-instruction cost regression budget for the registration contract.
+//! CPU-instruction and memory-byte cost regression budget for the
+//! registration contract.
 //!
-//! Measures the CPU-instruction cost of representative registration
-//! operations using soroban-sdk's test budget utilities (`Env::cost_estimate`)
-//! and asserts each stays within a checked-in per-operation budget. See
-//! `ci/cpu-cost-budget.md` for the full cross-contract budget table and the
-//! process for raising a budget when a legitimate feature grows an
-//! operation's cost.
+//! Measures the CPU-instruction and memory-byte cost of representative
+//! registration operations using soroban-sdk's test budget utilities
+//! (`Env::cost_estimate`) and asserts each stays within a checked-in
+//! per-operation budget. See `ci/cpu-cost-budget.md` for the full
+//! cross-contract budget table and the process for raising a budget when a
+//! legitimate feature grows an operation's cost.
 //!
 //! To raise a budget: bump the relevant constant below AND update the
 //! matching row in `ci/cpu-cost-budget.md` with a one-line justification in
@@ -13,28 +14,43 @@
 
 use scoutchain_registration::{PlayerVitals, RegistrationContract, RegistrationContractClient};
 use scoutchain_shared_types::ProgressLevel;
-use soroban_sdk::{testutils::Address as _, vec, Address, Env, String};
+use soroban_sdk::{testutils::Address as _, vec, Address, Env, String, Vec};
 
 const REGISTER_PLAYER_CPU_BUDGET: u64 = 452_787;
 const UPDATE_PROFILE_CPU_BUDGET: u64 = 193_686;
 const FILTER_PLAYERS_CPU_BUDGET: u64 = 1_714_870;
+// Calibrated from the first measurement (~437k / ~1.11M) plus 20% headroom;
+// the original values were set before this test could compile.
+const SET_PLAYER_LEVEL_CPU_BUDGET: u64 = 525_000;
+const SET_PLAYER_LEVEL_LARGE_BUCKET_CPU_BUDGET: u64 = 1_335_000;
+
+// Memory-byte budgets. Initial values are the measured memory cost plus the
+// same 20% headroom policy used for WASM size budgets. Recalibrate with
+// `scripts/calibrate-budgets.py` and tighten with `scripts/tighten-budgets.sh`.
+// Memory budgets re-baselined to measured + 20% after the 2026-10 batch
+// (constructors, wiring handshake, scout verification records, cooldown
+// ordering) grew these operations by 15-43%.
+const REGISTER_PLAYER_MEM_BUDGET: u64 = 185_000;
+const UPDATE_PROFILE_MEM_BUDGET: u64 = 85_000;
+const FILTER_PLAYERS_MEM_BUDGET: u64 = 720_000;
+const SET_PLAYER_LEVEL_MEM_BUDGET: u64 = 200_000;
+const SET_PLAYER_LEVEL_LARGE_BUCKET_MEM_BUDGET: u64 = 620_000;
 
 fn setup() -> (Env, RegistrationContractClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(RegistrationContract, ());
-    let client = RegistrationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let contract_id = env.register(RegistrationContract, (admin.clone(),));
+    let client = RegistrationContractClient::new(&env, &contract_id);
     (env, client)
 }
 
 fn dummy_vitals(env: &Env) -> PlayerVitals {
     PlayerVitals {
         age: 20,
-        position: String::from_str(env, "Midfielder"),
-        region: String::from_str(env, "West Africa"),
-        nationality: String::from_str(env, "Nigeria"),
+        position: String::from_str(env, "CM"),
+        region: String::from_str(env, "NG"),
+        nationality: String::from_str(env, "NG"),
     }
 }
 
@@ -54,6 +70,22 @@ fn assert_cpu_budget(env: &Env, op: &str, budget: u64) {
     );
 }
 
+/// Reads the memory-byte cost accumulated since the last budget reset and
+/// asserts it is within `budget`, panicking with a diagnostic naming the
+/// operation, the measured cost, and the overage when it is not.
+fn assert_mem_budget(env: &Env, op: &str, budget: u64) {
+    let mem = env.cost_estimate().budget().memory_bytes_cost();
+    println!("cost_budget: registration::{op} = {mem} memory bytes (budget {budget})");
+    assert!(
+        mem <= budget,
+        "registration::{op} regressed: measured {mem} memory bytes, exceeding the \
+         {budget}-byte budget by {over} ({pct:.1}% over). See ci/cpu-cost-budget.md \
+         for how to raise this budget if the growth is intentional.",
+        over = mem.saturating_sub(budget),
+        pct = (mem.saturating_sub(budget)) as f64 / budget as f64 * 100.0,
+    );
+}
+
 #[test]
 fn cost_register_player() {
     let (env, client) = setup();
@@ -64,6 +96,7 @@ fn cost_register_player() {
     env.cost_estimate().budget().reset_default();
     client.register_player(&wallet, &vitals, &hashes);
     assert_cpu_budget(&env, "register_player", REGISTER_PLAYER_CPU_BUDGET);
+    assert_mem_budget(&env, "register_player", REGISTER_PLAYER_MEM_BUDGET);
 }
 
 #[test]
@@ -78,12 +111,13 @@ fn cost_update_profile() {
     env.cost_estimate().budget().reset_default();
     client.update_profile(&player_id, &new_hashes);
     assert_cpu_budget(&env, "update_profile", UPDATE_PROFILE_CPU_BUDGET);
+    assert_mem_budget(&env, "update_profile", UPDATE_PROFILE_MEM_BUDGET);
 }
 
 #[test]
 fn cost_filter_players() {
     let (env, client) = setup();
-    let region = String::from_str(&env, "West Africa");
+    let region = String::from_str(&env, "NG");
     for i in 0..10u32 {
         let wallet = Address::generate(&env);
         let vitals = dummy_vitals(&env);
@@ -103,4 +137,116 @@ fn cost_filter_players() {
         &20u32,
     );
     assert_cpu_budget(&env, "filter_players", FILTER_PLAYERS_CPU_BUDGET);
+    assert_mem_budget(&env, "filter_players", FILTER_PLAYERS_MEM_BUDGET);
+}
+
+/// Typical level change: `PlayerLevel` is stored, so only the previous
+/// and new buckets are touched (2 removes + 2 adds instead of 8 removes + 2 adds).
+#[test]
+fn cost_set_player_level() {
+    let (env, client) = setup();
+    let wallet = Address::generate(&env);
+    let vitals = dummy_vitals(&env);
+    let hashes = vec![&env, String::from_str(&env, "QmTestHashSetPlayerLevel1")];
+    let player_id = client.register_player(&wallet, &vitals, &hashes);
+
+    let progress_contract = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
+    client.set_progress_contract(&progress_contract);
+
+    env.cost_estimate().budget().reset_default();
+    client.set_player_level(&player_id, &ProgressLevel::VerifiedIdentity);
+    assert_cpu_budget(&env, "set_player_level", SET_PLAYER_LEVEL_CPU_BUDGET);
+    assert_mem_budget(&env, "set_player_level", SET_PLAYER_LEVEL_MEM_BUDGET);
+}
+
+/// Large-bucket scenario: many players share the same level+region so
+/// the composite index Vec is large. The optimized path still only
+/// touches the previous and new buckets.
+#[test]
+fn cost_set_player_level_large_bucket() {
+    let (env, client) = setup();
+    let region = String::from_str(&env, "NG");
+    let progress_contract = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
+    client.set_progress_contract(&progress_contract);
+
+    // Seed 60 players at Unverified in the same region so the
+    // PlayersByLevel(Unverified) composite index is large.
+    for i in 0..60u32 {
+        let wallet = Address::generate(&env);
+        let vitals = PlayerVitals {
+            age: 20,
+            position: String::from_str(&env, "CM"),
+            region: region.clone(),
+            nationality: String::from_str(&env, "NG"),
+        };
+        let hashes = vec![
+            &env,
+            String::from_str(&env, &format!("QmTestHashLargeBucket{i}")),
+        ];
+        client.register_player(&wallet, &vitals, &hashes);
+    }
+
+    // Register one more player in the same region/level to advance.
+    let wallet = Address::generate(&env);
+    let vitals = PlayerVitals {
+        age: 20,
+        position: String::from_str(&env, "GK"),
+        region: region.clone(),
+        nationality: String::from_str(&env, "SN"),
+    };
+    let hashes = vec![&env, String::from_str(&env, "QmTestHashLargeBucketTarget")];
+    let player_id = client.register_player(&wallet, &vitals, &hashes);
+
+    env.cost_estimate().budget().reset_default();
+    client.set_player_level(&player_id, &ProgressLevel::VerifiedIdentity);
+    assert_cpu_budget(
+        &env,
+        "set_player_level_large_bucket",
+        SET_PLAYER_LEVEL_LARGE_BUCKET_CPU_BUDGET,
+    );
+    assert_mem_budget(
+        &env,
+        "set_player_level_large_bucket",
+        SET_PLAYER_LEVEL_LARGE_BUCKET_MEM_BUDGET,
+    );
+}
+
+/// Duplicate IDs in a batch getter must collapse to a single entry and a
+/// single load. `get_players` deduplicates its input (preserving
+/// first-occurrence order) and silently skips misses, so a batch of 20
+/// copies of the same ID returns exactly one profile.
+#[test]
+fn get_players_deduplicates_ids() {
+    let (env, client) = setup();
+    let wallet = Address::generate(&env);
+    let vitals = dummy_vitals(&env);
+    let hashes = vec![&env, String::from_str(&env, "bafytestdedupeplayers")];
+    let player_id = client.register_player(&wallet, &vitals, &hashes);
+
+    let mut ids: Vec<u64> = Vec::new(&env);
+    for _ in 0..20u32 {
+        ids.push_back(player_id);
+    }
+
+    let players = client.get_players(&ids);
+    assert_eq!(players.len(), 1, "duplicate IDs must collapse to one entry");
+    assert_eq!(players.get(0).unwrap().player_id, player_id);
+}
+
+/// `get_scouts` shares the same dedupe + partial-hit semantics as
+/// `get_players`: repeated IDs yield a single entry.
+#[test]
+fn get_scouts_deduplicates_ids() {
+    let (env, client) = setup();
+    let wallet = Address::generate(&env);
+    let scout_id = client.register_scout(&wallet, &String::from_str(&env, "EU"));
+
+    let mut ids: Vec<u64> = Vec::new(&env);
+    for _ in 0..20u32 {
+        ids.push_back(scout_id);
+    }
+
+    let scouts = client.get_scouts(&ids);
+    assert_eq!(scouts.len(), 1, "duplicate IDs must collapse to one entry");
+    assert_eq!(scouts.get(0).unwrap().scout_id, scout_id);
 }

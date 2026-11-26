@@ -217,7 +217,7 @@ its second real use. It follows the conventions above exactly:
 
 - **Storage Flag:** `DataKey::PausedPayToContact` (instance storage)
 - **Pause / Unpause:** `pause_pay_to_contact()` / `unpause_pay_to_contact()`
-- **Check Helper:** `require_pay_to_contact_not_paused()`, called from `pay_to_contact()`
+- **Check Helper:** `require_pay_to_contact_not_paused()`, called from `pay_to_contact()` and `batch_contact_players()` (#1616: the pause covers both contact entrypoints)
 - **Events:** `pay_to_contact_paused` / `pay_to_contact_unpaused`
 - **Error Code:** `ScoutAccessError::PayToContactPaused = 36`
 - **Health Query:** `pay_to_contact_paused: bool` added to the scout_access health response

@@ -46,6 +46,33 @@ struct RegStub;
 
 #[contractimpl]
 impl RegStub {
+    /// The owner wallet owns player 1, the only player these tests dispute.
+    pub fn get_player_id_by_wallet(env: Env, wallet: Address) -> u64 {
+        let owner: Address = env.storage().persistent().get(&RegStubKey::Owner).unwrap();
+        if wallet == owner {
+            1
+        } else {
+            0
+        }
+    }
+
+    /// Every player counts as active for verification's #1622 check.
+    pub fn get_player_status(
+        _env: Env,
+        _player_id: u64,
+    ) -> scoutchain_verification::RegPlayerStatus {
+        scoutchain_verification::RegPlayerStatus::Active
+    }
+
+    /// Wiring handshake (#1610): report the kind of contract this stub stands in for.
+    pub fn contract_kind(env: Env) -> soroban_sdk::Symbol {
+        soroban_sdk::Symbol::new(&env, "registration")
+    }
+
+    pub fn version(env: Env) -> soroban_sdk::String {
+        soroban_sdk::String::from_str(&env, "2.0.0")
+    }
+
     pub fn initialize(env: Env, owner: Address) {
         env.storage().persistent().set(&RegStubKey::Owner, &owner);
     }
@@ -57,8 +84,8 @@ impl RegStub {
             wallet,
             vitals: RegPlayerVitals {
                 age: 20,
-                position: String::from_str(&env, "Forward"),
-                region: String::from_str(&env, "Europe"),
+                position: String::from_str(&env, "ST"),
+                region: String::from_str(&env, "FR"),
                 nationality: String::from_str(&env, "ES"),
             },
             ipfs_hashes: Vec::new(&env),
@@ -81,11 +108,10 @@ const REASON: &str = "Milestone was approved in error";
 fn setup() -> (Env, VerificationContractClient<'static>, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    let id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &id);
     let admin = Address::generate(&env);
     let player = Address::generate(&env);
-    client.initialize(&admin);
+    let id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &id);
     // Wire a minimal registration stub so `dispute_milestone` can verify
     // wallet→player_id ownership.  The stub returns `player` for every lookup.
     let reg_id = env.register(RegStub, ());
@@ -95,18 +121,68 @@ fn setup() -> (Env, VerificationContractClient<'static>, Address, Address) {
     (env, client, admin, player)
 }
 
-fn reg_validator(env: &Env, client: &VerificationContractClient, creds: &str) -> Address {
+std::thread_local! {
+    static NEXT_ACADEMY: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+    /// Jurors registered by `setup_jury_dispute` *before* the dispute was
+    /// filed; `reg_validator` hands these out first.
+    static JUROR_POOL: core::cell::RefCell<std::vec::Vec<Address>> =
+        const { core::cell::RefCell::new(std::vec::Vec::new()) };
+}
+
+/// Register a validator with its own academy. Since #1375 a validator that
+/// shares the approver's affiliation is excluded from the jury.
+fn register_fresh_validator(
+    env: &Env,
+    client: &VerificationContractClient,
+    creds: &str,
+) -> Address {
+    let academy = NEXT_ACADEMY.with(|n| {
+        n.set(n.get() + 1);
+        std::format!("Test Academy {}", n.get())
+    });
     let wallet = Address::generate(env);
     client.register_validator(
         &wallet,
         &String::from_str(env, creds),
-        &String::from_str(env, "Test Academy"),
+        &String::from_str(env, &academy),
         &Vec::new(env),
     );
     wallet
 }
 
+/// A validator for the test to use. After `setup_jury_dispute` this returns
+/// one of the jurors registered before filing, since only those may vote
+/// (#1375); otherwise it registers a fresh one.
+fn reg_validator(env: &Env, client: &VerificationContractClient, creds: &str) -> Address {
+    JUROR_POOL
+        .with(|pool| pool.borrow_mut().pop())
+        .unwrap_or_else(|| register_fresh_validator(env, client, creds))
+}
+
+fn seed_validators(env: &Env, client: &VerificationContractClient, n: u32) {
+    let creds = [
+        CREDENTIALS,
+        CRED2,
+        CRED3,
+        CRED4,
+        CRED5,
+        "Extra-License-A-2026",
+        "Extra-License-B-2026",
+        "Extra-License-C-2026",
+        "Extra-License-D-2026",
+        "Extra-License-E-2026",
+    ];
+    for i in 0..n {
+        let c = creds[(i as usize) % creds.len()];
+        // Distinct credentials strings; wallet is always unique.
+        let _ = reg_validator(env, client, c);
+    }
+}
+
 fn file_jury_dispute(env: &Env, client: &VerificationContractClient, player: &Address) {
+    // Only validators registered strictly before filing may vote (#1375), so
+    // file one second after the validators set up so far.
+    env.ledger().with_mut(|l| l.timestamp += 1);
     // impact_score >= default threshold (100) → jury path
     client.dispute_milestone(
         player,
@@ -118,8 +194,11 @@ fn file_jury_dispute(env: &Env, client: &VerificationContractClient, player: &Ad
 }
 
 /// Creates a milestone and files a jury dispute. Returns the approver wallet.
+///
+/// Also registers a pool of eligible jurors before filing, which later
+/// `reg_validator` calls hand out.
 fn setup_jury_dispute(env: &Env, client: &VerificationContractClient, player: &Address) -> Address {
-    let validator = reg_validator(env, client, CREDENTIALS);
+    let validator = register_fresh_validator(env, client, CREDENTIALS);
     client.approve_milestone(
         &validator,
         &1u64,
@@ -127,6 +206,10 @@ fn setup_jury_dispute(env: &Env, client: &VerificationContractClient, player: &A
         &String::from_str(env, CID_1),
         &None,
     );
+    let jurors: std::vec::Vec<Address> = (0..8)
+        .map(|_| register_fresh_validator(env, client, CRED2))
+        .collect();
+    JUROR_POOL.with(|pool| *pool.borrow_mut() = jurors);
     file_jury_dispute(env, client, player);
     validator
 }
@@ -137,7 +220,7 @@ fn setup_jury_dispute(env: &Env, client: &VerificationContractClient, player: &A
 
 #[test]
 fn test_get_jury_config_defaults() {
-    let (env, client, _admin, player) = setup();
+    let (_env, client, _admin, _player) = setup();
     let cfg = client.get_jury_config();
     assert_eq!(cfg.impact_threshold, 100);
     assert_eq!(cfg.quorum, 3);
@@ -146,7 +229,8 @@ fn test_get_jury_config_defaults() {
 
 #[test]
 fn test_set_jury_config_updates_values() {
-    let (env, client, _admin, player) = setup();
+    let (env, client, _admin, _player) = setup();
+    seed_validators(&env, &client, 5);
     client.set_jury_config(&50u32, &5u32, &86_400u64);
     let cfg = client.get_jury_config();
     assert_eq!(cfg.impact_threshold, 50);
@@ -216,6 +300,7 @@ fn test_dispute_at_threshold_is_jury_path() {
 #[test]
 fn test_jury_config_snapshotted_at_filing() {
     let (env, client, _admin, player) = setup();
+    seed_validators(&env, &client, 10);
     client.set_jury_config(&100u32, &3u32, &604_800u64);
 
     let v = reg_validator(&env, &client, CREDENTIALS);
@@ -288,6 +373,17 @@ fn test_eligibility_conflict_of_interest_original_approver() {
     // The validator who approved the milestone cannot vote
     let result = client.try_cast_dispute_vote(&approver, &1u64, &1u32, &true);
     assert_eq!(result, Err(Ok(VerificationError::ConflictOfInterest)));
+}
+
+/// Validators registered after the dispute was filed cannot vote (#1375).
+#[test]
+fn test_eligibility_registered_after_filing_rejected() {
+    let (env, client, _admin, player) = setup();
+    setup_jury_dispute(&env, &client, &player);
+
+    let late = register_fresh_validator(&env, &client, CRED3);
+    let result = client.try_cast_dispute_vote(&late, &1u64, &1u32, &true);
+    assert_eq!(result, Err(Ok(VerificationError::NotEligibleJuror)));
 }
 
 #[test]
@@ -393,6 +489,7 @@ fn test_tally_early_close_against_majority() {
 fn test_tally_tie_break_resolves_not_upheld() {
     let (env, client, _admin, player) = setup();
     // quorum=2 so we can test a tie with minimal voters
+    seed_validators(&env, &client, 2);
     client.set_jury_config(&100u32, &2u32, &604_800u64);
     let v = reg_validator(&env, &client, CREDENTIALS);
     client.approve_milestone(
@@ -402,16 +499,9 @@ fn test_tally_tie_break_resolves_not_upheld() {
         &String::from_str(&env, CID_1),
         &None,
     );
-    client.dispute_milestone(
-        &player,
-        &1u64,
-        &1u32,
-        &String::from_str(&env, REASON),
-        &100u32,
-    );
-
     let v1 = reg_validator(&env, &client, CRED2);
     let v2 = reg_validator(&env, &client, CRED3);
+    file_jury_dispute(&env, &client, &player);
 
     // 1 for, 1 against — tied at quorum=2
     client.cast_dispute_vote(&v1, &1u64, &1u32, &true);
@@ -541,6 +631,7 @@ fn test_resolve_dispute_works_for_non_jury_dispute() {
 fn test_adversarial_tied_at_quorum_refuses_early_close_then_resolves_false() {
     let (env, client, _admin, player) = setup();
     // quorum=4 so we can get a 2–2 tie exactly at quorum
+    seed_validators(&env, &client, 4);
     client.set_jury_config(&100u32, &4u32, &604_800u64);
 
     let v = reg_validator(&env, &client, CREDENTIALS);
@@ -551,18 +642,11 @@ fn test_adversarial_tied_at_quorum_refuses_early_close_then_resolves_false() {
         &String::from_str(&env, CID_1),
         &None,
     );
-    client.dispute_milestone(
-        &player,
-        &1u64,
-        &1u32,
-        &String::from_str(&env, REASON),
-        &100u32,
-    );
-
     let v1 = reg_validator(&env, &client, CRED2);
     let v2 = reg_validator(&env, &client, CRED3);
     let v3 = reg_validator(&env, &client, CRED4);
     let v4 = reg_validator(&env, &client, CRED5);
+    file_jury_dispute(&env, &client, &player);
 
     // 2 for, 2 against — tied at quorum=4
     client.cast_dispute_vote(&v1, &1u64, &1u32, &true);

@@ -89,14 +89,18 @@ This document defines the persistent storage TTL policy for the scout-off-contra
 | `Validator(wallet)` | 518,400 | Core identity: validator registration and active/revoked status. Extended on `register_validator` write and `get_validator` read. |
 | `ValidatorVector` | 518,400 | Registry index. Extended on registration and implicitly refreshed on `get_validators`. |
 | `ValidatorMilestoneCount(wallet)` | 518,400 | Validator's milestone tally. Extended on `approve_milestone` write. |
-| `ValidatorMilestones(wallet)` | 518,400 | Validator's milestone history index. Extended on `get_validator_milestones` read. |
+| `ValidatorMilestones(wallet)` | 518,400 | Validator's milestone history index. Extended on `approve_milestone` write and `get_validator_milestones` read. |
+| `ValidatorPlayerMilestoneCount(wallet, player_id)` | 518,400 | Per-pair milestone cap enforcement. Extended on `approve_milestone` write. |
+| `ValidatorPlayers(wallet)` | 518,400 | Distinct-player index for each validator. Extended on `approve_milestone` write and `get_validator_players` / `get_validator_players_page` read. |
+| `PlayerAffiliations(player_id)` | 518,400 | Diversity gating: distinct validator affiliations a player has. Extended on `approve_milestone` write when a new affiliation is added. |
 | `Admin` | 518,400 | Cross-contract consistency. |
 
 **Keep-Alive Mechanism:**
 - `get_milestone()` extends Milestone TTL on read.
 - `get_validator()` extends Validator TTL on read.
-- `get_validator_milestones()` extends the index TTL on read.
-- `approve_milestone` ensures all related keys (Milestone, MilestoneCounter, EvidenceUsed) are extended on write.
+- `get_validator_milestones()` and `get_validator_milestones_page_v2()` extend the ValidatorMilestones index TTL on read.
+- `get_validator_players()` and `get_validator_players_page()` extend the ValidatorPlayers index TTL on read.
+- `approve_milestone` ensures all related keys (Milestone, MilestoneCounter, EvidenceUsed, ValidatorPlayerMilestoneCount, ValidatorPlayers, ValidatorMilestones, PlayerAffiliations) are extended on write.
 
 ### Scout Access Contract (`contracts/scout_access/src/lib.rs`)
 
@@ -119,7 +123,7 @@ This document defines the persistent storage TTL policy for the scout-off-contra
 | `ProgressContract` | 518,400 | Address of Progress contract for cross-contract level updates. Extended on `set_progress_contract` write and `get_progress_contract` read. |
 | `RegistrationContract` | 518,400 | Address of Registration contract for cross-contract scout checks. Extended on `set_registration_contract` write and `get_registration_contract` read. |
 | `TrialOfferLastSent(scout, player_id)` | 518,400 | Rate-limit cooldown timestamp. Extended on `log_trial_offer` write. |
-| `TierSubscribers(tier)` | 518,400 | Subscriber list index per tier. Extended in `add_to_tier_index` and `remove_from_tier_index` write operations. |
+| `TierSubscribers(tier)` | 518,400 | Subscriber list index per tier. Extended in `add_to_tier_index` and `remove_from_tier_index` write operations, and on every `get_subscribers_by_tier` read when the list is non-empty (read-side keep-alive, matching the other scout_access getters). |
 | `ProContactCount(scout)` | 518,400 | Pro-tier contact quota tracking. Extended on contact operations (`pay_to_contact`/`log_trial_offer`) and `get_pro_contact_count` read. |
 | `PlayerContacts(player_id)` | 518,400 | Inbound scout contact index for a player. Extended on `pay_to_contact`/`log_trial_offer` writes and `get_player_contacts` read. |
 | `ScoutTrialOffers(scout)` | 518,400 | Index of trial offers logged by a scout. Extended on `log_trial_offer` write and `get_scout_trial_offers` read. |

@@ -9,6 +9,7 @@ use scoutchain_scout_access::{
     ScoutAccessContractClient, ScoutAccessError, Subscription, SubscriptionTier, TrialEscrow,
     TrialOffer,
 };
+use scoutchain_shared_types::testutils::count_events;
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
     Address, Env, String,
@@ -33,15 +34,17 @@ fn setup() -> (Env, ScoutAccessContractClient<'static>, Address) {
     env.ledger().with_mut(|li| {
         li.timestamp = 1_700_000_000;
     });
-    let id = env.register(ScoutAccessContract, ());
-    let client = ScoutAccessContractClient::new(&env, &id);
     let admin = Address::generate(&env);
 
     // Register native XLM token for fee config.
     let xlm_id = env.register_stellar_asset_contract_v2(admin.clone());
     let xlm_addr = xlm_id.address();
 
-    client.initialize(&admin, &xlm_addr, &make_fee_config());
+    let id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm_addr.clone(), make_fee_config()),
+    );
+    let client = ScoutAccessContractClient::new(&env, &id);
     (env, client, admin)
 }
 
@@ -535,4 +538,154 @@ fn test_full_migration_sequence_parity() {
     // Close the migration window.
     client.close_migration_window();
     assert!(!client.migration_window_is_open());
+}
+
+// ── Reopening after close fails with MigrationWindowSealed (Issue #1410) ─────────
+
+#[test]
+fn test_reopening_after_close_fails() {
+    let (_env, client, _admin) = setup();
+    client.open_migration_window();
+    assert!(client.health().migration_window_open);
+
+    client.close_migration_window();
+    assert!(!client.health().migration_window_open);
+
+    let res = client.try_open_migration_window();
+    assert_eq!(res, Err(Ok(ScoutAccessError::MigrationWindowSealed)));
+}
+
+#[test]
+fn test_migration_window_events_emitted() {
+    let (env, client, _admin) = setup();
+
+    client.open_migration_window();
+    assert_eq!(
+        count_events(&env, "migration_window_opened", Some(&client.address)),
+        1,
+        "migration_window_opened event must be emitted"
+    );
+
+    client.close_migration_window();
+    assert_eq!(
+        count_events(&env, "migration_window_closed", Some(&client.address)),
+        1,
+        "migration_window_closed event must be emitted"
+    );
+}
+
+#[test]
+fn close_without_open_fails_and_does_not_seal() {
+    let (_env, client, _admin) = setup();
+    let res = client.try_close_migration_window();
+    assert_eq!(res, Err(Ok(ScoutAccessError::MigrationNotActive)));
+    // Not sealed: the window can still be opened afterwards.
+    client.open_migration_window();
+    assert!(client.migration_window_is_open());
+}
+
+#[test]
+fn close_twice_fails_the_second_time() {
+    let (_env, client, _admin) = setup();
+    client.open_migration_window();
+    client.close_migration_window();
+    let res = client.try_close_migration_window();
+    assert_eq!(res, Err(Ok(ScoutAccessError::MigrationNotActive)));
+}
+
+// ── admin_seed_fee_config_history ─────────────────────────────────────────────
+
+fn history_entry(env: &Env, updated_at: u64) -> FeeConfigHistoryEntry {
+    let _ = env;
+    FeeConfigHistoryEntry {
+        config: make_fee_config(),
+        updated_at,
+    }
+}
+
+#[test]
+fn test_seed_fee_config_history_rejected_when_window_closed() {
+    let (env, client, _admin) = setup();
+    let history = soroban_sdk::vec![&env, history_entry(&env, 1_699_000_000)];
+    let result = client.try_admin_seed_fee_config_history(&history);
+    assert_eq!(result, Err(Ok(ScoutAccessError::MigrationNotActive)));
+}
+
+#[test]
+fn test_seed_fee_config_history_oldest_first() {
+    let (env, client, _admin) = setup();
+    client.open_migration_window();
+
+    let e1 = history_entry(&env, 1_699_000_000);
+    let e2 = history_entry(&env, 1_699_100_000);
+    let e3 = history_entry(&env, 1_699_200_000);
+    client.admin_seed_fee_config_history(&soroban_sdk::vec![&env, e1.clone(), e2.clone(), e3.clone()]);
+
+    let stored = client.get_fee_config_history();
+    assert_eq!(stored.len(), 3u32);
+    assert_eq!(stored.get(0).unwrap().updated_at, e1.updated_at);
+    assert_eq!(stored.get(1).unwrap().updated_at, e2.updated_at);
+    assert_eq!(stored.get(2).unwrap().updated_at, e3.updated_at);
+}
+
+#[test]
+fn test_seed_fee_config_history_respects_cap() {
+    let (env, client, _admin) = setup();
+    client.open_migration_window();
+
+    // Seed more than the 5-entry cap.
+    let mut entries = soroban_sdk::Vec::new(&env);
+    for i in 0u64..8 {
+        entries.push_back(history_entry(&env, 1_699_000_000 + i * 1_000));
+    }
+    client.admin_seed_fee_config_history(&entries);
+
+    let stored = client.get_fee_config_history();
+    assert!(stored.len() <= 5u32, "history must be capped at 5 entries");
+    // Ordering preserved: oldest first.
+    let mut prev = 0u64;
+    for i in 0..stored.len() {
+        let ts = stored.get(i).unwrap().updated_at;
+        assert!(ts >= prev, "history must be oldest-first");
+        prev = ts;
+    }
+}
+
+#[test]
+fn test_seed_fee_config_history_requires_admin() {
+    let (env, client, _admin) = setup();
+    client.open_migration_window();
+
+    // Drop the blanket auth mock so the admin auth check is enforced.
+    env.set_auths(&[]);
+    let history = soroban_sdk::vec![&env, history_entry(&env, 1_699_000_000)];
+    let result = client.try_admin_seed_fee_config_history(&history);
+    assert!(result.is_err(), "non-admin seeding must fail auth");
+}
+
+#[test]
+fn test_seed_fee_config_history_then_update_maintains_cap() {
+    let (env, client, _admin) = setup();
+    client.open_migration_window();
+
+    let mut entries = soroban_sdk::Vec::new(&env);
+    for i in 0u64..3 {
+        entries.push_back(history_entry(&env, 1_699_000_000 + i * 1_000));
+    }
+    client.admin_seed_fee_config_history(&entries);
+    assert_eq!(client.get_fee_config_history().len(), 3u32);
+
+    // A subsequent update appends and keeps the cap.
+    let mut new_config = make_fee_config();
+    new_config.contact_fee_stroops = 2_000_000;
+    client.update_fee_config(&new_config);
+
+    let stored = client.get_fee_config_history();
+    assert!(stored.len() <= 5u32, "cap maintained after update");
+    let mut prev = 0u64;
+    for i in 0..stored.len() {
+        let ts = stored.get(i).unwrap().updated_at;
+        assert!(ts >= prev, "ordering preserved after update");
+        prev = ts;
+    }
 }

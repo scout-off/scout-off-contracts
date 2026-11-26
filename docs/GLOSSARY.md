@@ -27,6 +27,10 @@ until an operator deliberately opts into k-of-n mode.
   attestation](CONTRACT_REFERENCE.md#k-of-n-threshold-milestone-attestation)
   for the full design rationale (claim identity, bounded storage, revoke-mid-vote
   and window-expiry semantics).
+- If a revocation leaves fewer active validators than an open claim's snapshotted
+  threshold, the round is aborted (votes deleted, `attestation_round_aborted`
+  emitted) so the evidence can be re-attested; `is_pending_claim_reachable`
+  reports reachability (issue #1613).
 - Relevant functions: `attest_milestone`, `submit_attested_milestone`,
   `set_milestone_threshold`, `get_milestone_threshold`, `get_pending_claim`,
   `has_attested` — see
@@ -153,7 +157,7 @@ adjustable via `update_fee_config`.
 | `sub_duration_secs` | `u64` | duration in seconds (not a Unix timestamp) | > 0 | `2592000` (30 days) |
 | `pro_contact_limit` | `u32` | count | > 0 | `10` (10 contacts/period) |
 | `trial_offer_escrow_stroops` | `i128` | stroops | > 0 | `500000` (0.05 XLM) |
-| `trial_offer_expiry_secs` | `u64` | duration in seconds | > 0 | `3600` (1 hour) |
+| `trial_offer_expiry_secs` | `u64` | duration in seconds | 3600 – 2592000 when escrow > 0 | `3600` (1 hour) |
 
 All fields must be strictly greater than zero; `initialize` and
 `update_fee_config` return `InvalidInput` otherwise.
@@ -257,6 +261,34 @@ dispute mechanism itself only records the outcome on-chain.
 
 ---
 
+## Paged Purge (purge_player_data)
+
+The bounded, cursor-driven deletion mechanism used to erase a deregistered
+player's off-chain-referenced state. `purge_player_data` deletes at most
+**50 entries per call** and returns a cursor plus a `more` flag; the caller
+repeats the call with the returned cursor until `more == false`. This keeps
+each invocation within Soroban's CPU and ledger-entry limits instead of
+attempting an unbounded wipe in a single transaction.
+
+A purge removes the player's progress history and verification records, and
+the related `scout_access` records (contact records and evidence access
+grants) that are eligible for deletion. It is guarded so that a player with a
+pending trial-offer escrow cannot be purged until the escrow is resolved
+(confirmed or expired/refunded), preventing escrowed funds from being orphaned.
+
+What is deleted is the mutable on-chain state; what is retained is the
+immutable transaction history and events, plus tombstone records that other
+contracts or audit trails depend on. See [Player Erasure](#player-erasure).
+
+- Relevant functions: `purge_player_data` — see
+  [CONTRACT_REFERENCE.md — registration](CONTRACT_REFERENCE.md#registration)
+  and [CONTRACT_REFERENCE.md — scout_access](CONTRACT_REFERENCE.md#scout_access).
+- Full procedure and retention rules: [PLAYER_ERASURE.md](PLAYER_ERASURE.md).
+- Related: [Player Erasure](#player-erasure),
+  [Scout Deregistration](#scout-deregistration).
+
+---
+
 ## Player
 
 A registered footballer with an on-chain identity. A player is identified by a
@@ -269,6 +301,32 @@ See [Trial Offer](#trial-offer) and [Progress Level](#progress-level).
 
 - Relevant functions: `register_player`, `get_player`, `filter_players` — see
   [CONTRACT_REFERENCE.md](CONTRACT_REFERENCE.md#registration).
+
+---
+
+## Player Erasure
+
+The process by which a player's on-chain profile is removed at the player's
+request via `deregister_player`. Erasure deletes the player profile and the
+indexes that point to it (so the player no longer appears in `filter_players`
+or other lookups), and is followed by [paged purges](#paged-purge-purge_player_data)
+of the remaining mutable state.
+
+Erasure is deliberately **partial**: on-chain transaction history and emitted
+events are immutable and are never deleted — they remain queryable by indexers
+and auditors forever. Records that other parties rely on are retained as
+tombstones rather than removed, for example validator milestone records (so a
+validator's approval history stays auditable) and `ContactRecord` entries (so
+scouts' paid-contact audit trails stay intact). A `player_id` is tombstoned on
+erasure and is **never reused**; a returning player receives a fresh ID.
+
+- Relevant functions: `deregister_player`, `purge_player_data` — see
+  [CONTRACT_REFERENCE.md — registration](CONTRACT_REFERENCE.md#registration)
+  and [CONTRACT_REFERENCE.md — scout_access](CONTRACT_REFERENCE.md#scout_access).
+- Full procedure, retained keys, and tombstone list:
+  [PLAYER_ERASURE.md](PLAYER_ERASURE.md).
+- Related: [Paged Purge (purge_player_data)](#paged-purge-purge_player_data),
+  [Scout Deregistration](#scout-deregistration).
 
 ---
 
@@ -285,6 +343,7 @@ sequentially; skipping or reversing is blocked by the progress contract (admin
 | 2 | `PerformanceMilestones` | Performance stats verified by a validator |
 | 3 | `EliteTier` | Player confirmed an Elite-tier scout's trial offer via `confirm_trial_offer` |
 
+- Level progression is canonically implemented by `ProgressLevel::next()`; its `None` return from `EliteTier` is what `progress::advance_level` maps to `ProgressError::AlreadyAtMaxLevel`.
 - Relevant functions: `advance_level`, `get_level`, `get_progress_history`,
   `reset_player_level` — see
   [CONTRACT_REFERENCE.md](CONTRACT_REFERENCE.md#progress).
@@ -333,6 +392,26 @@ only) log trial offers that a player can confirm to reach Level 3.
 - Relevant functions: `register_scout`, `subscribe`, `pay_to_contact`,
   `log_trial_offer` — see
   [CONTRACT_REFERENCE.md](CONTRACT_REFERENCE.md#scout_access).
+
+---
+
+## Scout Deregistration
+
+The removal of a scout's on-chain profile via `deregister_scout`. The call
+deletes the scout profile and the indexes that reference it, so the scout no
+longer appears in scout lookups and can no longer act as an active scout.
+
+As with [Player Erasure](#player-erasure), deregistration is partial: the
+scout's subscription records and contact audit records (including
+`ContactRecord` and evidence access grants) are **retained** so that payment
+and access history stays auditable, and on-chain transaction history and events
+are immutable and never deleted. Scout IDs are tombstoned and never reused.
+
+- Relevant functions: `deregister_scout` — see
+  [CONTRACT_REFERENCE.md — scout_access](CONTRACT_REFERENCE.md#scout_access).
+- Full procedure and retention rules: [PLAYER_ERASURE.md](PLAYER_ERASURE.md).
+- Related: [Player Erasure](#player-erasure), [Scout](#scout),
+  [ContactRecord](#contactrecord).
 
 ---
 
@@ -435,6 +514,40 @@ pending escrow record.
 - Relevant functions: `log_trial_offer`, `confirm_trial_offer`,
   `expire_trial_offers`, `get_trial_offer`, `get_trial_count` — see
   [CONTRACT_REFERENCE.md](CONTRACT_REFERENCE.md#scout_access).
+
+---
+
+## Wiring Handshake
+
+The on-chain check that guards every `set_*_contract` wiring setter. Each of
+the four contracts exposes `contract_kind() -> Symbol`, returning its own
+identity:
+
+| Contract | `contract_kind()` |
+|---|---|
+| `registration` | `"registration"` |
+| `verification` | `"verification"` |
+| `progress` | `"progress"` |
+| `scout_access` | `"scout_access"` |
+
+When an admin calls a wiring setter (e.g. `set_verification_contract`,
+`set_progress_contract`, `set_scout_access_contract`) with a candidate peer
+address, the setter first invokes `contract_kind()` on that address and
+compares the returned symbol against the kind it expects. If the address
+points at the wrong kind of contract (or at something that does not implement
+`contract_kind()` at all), the call is rejected with the contract's
+`InvalidPeerContract` error and the stored wiring is left unchanged. This
+prevents an operator from silently wiring, say, the `progress` contract into
+the `verification` slot — a misconfiguration that would otherwise only surface
+later as confusing cross-contract call failures.
+
+- See [WIRING_REGISTRY_DESIGN.md](WIRING_REGISTRY_DESIGN.md) for the full
+  design of the wiring registry and the handshake introduced in #1610.
+- Relevant functions: `contract_kind`, `set_verification_contract`,
+  `set_progress_contract`, `set_scout_access_contract` — see
+  [CONTRACT_REFERENCE.md](CONTRACT_REFERENCE.md).
+- Related: [Migration Window](#migration-window) (re-wiring during a
+  migration must pass the same handshake).
 
 ---
 

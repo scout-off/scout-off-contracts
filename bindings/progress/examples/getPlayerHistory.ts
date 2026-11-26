@@ -14,10 +14,19 @@
  * and how did they get here?"
  *
  * Covered functions:
- *   get_level(player_id)            → ProgressLevel (Unverified for unknown IDs)
- *   get_progress_history(player_id) → Vec<ProgressEntry> (O(1) single-key read)
- *   get_history_since(player_id, since_timestamp) → Vec<ProgressEntry>
+ *   get_level(player_id)                    → ProgressLevel (Unverified for unknown IDs)
+ *   get_progress_history(player_id)         → Vec<ProgressEntry> (DEPRECATED: unbounded cost)
+ *   get_history_since_v2(player_id, since_timestamp, limit) → HistorySince { entries, truncated }
+ *   get_history_since(player_id, since_timestamp, limit) → Vec<ProgressEntry>
+ *       (SUPERSEDED by get_history_since_v2: silently truncates at `limit` or the
+ *        10-page scan cap, so entries can be dropped without notice. Prefer v2.)
  *   get_progress_history_page(player_id, offset, limit) → Vec<ProgressEntry>
+ *   get_history_page_with_cursor(player_id, cursor_snapshot?, cursor_next_index?, limit) → Vec<ProgressEntry>
+ *
+ * When using `get_history_since_v2`, check the returned `truncated` flag: when it
+ * is true, more matching entries may exist beyond `limit` (or beyond the scan
+ * cap). Page further with `get_history_page_with_cursor`, advancing the cursor
+ * from the last entry you received, until `truncated` is false.
  *
  * See `contracts/progress/src/lib.rs` and `docs/CONTRACT_REFERENCE.md` for the
  * on-chain contract this wraps.
@@ -36,9 +45,14 @@ export interface GetPlayerHistoryParams {
   rpcUrl: string;
   /**
    * Optional: only return history entries at or after this Unix timestamp
-   * (seconds). When omitted, all history is returned.
+   * (seconds). When omitted, all history is returned (DEPRECATED: unbounded cost).
    */
   sinceTimestamp?: bigint;
+  /**
+   * Optional: maximum number of entries to return for `get_history_since_v2`.
+   * Clamped to 1–50 on-chain. Only used when `sinceTimestamp` is provided.
+   */
+  sinceLimit?: number;
   /**
    * Optional: paginate results. When provided, `offset` and `limit` are
    * forwarded to `get_progress_history_page`. `limit` is clamped to 1–50
@@ -63,6 +77,12 @@ export interface GetPlayerHistoryResult {
   currentLevel: string;
   /** History entries, oldest-first */
   history: ProgressEntry[];
+  /**
+   * True when more matching entries may exist beyond `sinceLimit` (or beyond the
+   * on-chain scan cap). Page further with `get_history_page_with_cursor` until
+   * this is false. Always false for the non-`sinceTimestamp` branches.
+   */
+  truncated: boolean;
 }
 
 interface ResultLike<T, E> {
@@ -93,7 +113,7 @@ function unwrapResult<T>(result: unknown, context: string): T {
 export async function getPlayerHistory(
   params: GetPlayerHistoryParams,
 ): Promise<GetPlayerHistoryResult> {
-  const { playerId, network, rpcUrl, sinceTimestamp, page } = params;
+  const { playerId, network, rpcUrl, sinceTimestamp, sinceLimit, page } = params;
 
   // Read-only queries need no publicKey or signTransaction.
   const client = new ProgressClient({
@@ -117,18 +137,28 @@ export async function getPlayerHistory(
 
   // --- history ---
   let history: ProgressEntry[];
+  let truncated = false;
 
   if (sinceTimestamp !== undefined) {
     // Incremental: only entries at or after the caller's last sync point.
+    // Uses get_history_since_v2 (preferred over get_history_since, which
+    // silently truncates): returns up to `sinceLimit` (default 50) matching
+    // entries plus a `truncated` flag telling you whether more may exist.
     try {
-      const assembled = await client.get_history_since({
+      const assembled = await client.get_history_since_v2({
         player_id: playerId,
         since_timestamp: sinceTimestamp,
+        limit: sinceLimit ?? 50,
       });
-      history = unwrapResult<ProgressEntry[]>(assembled.result, `get_history_since(${playerId})`);
+      const result = unwrapResult<{ entries: ProgressEntry[]; truncated: boolean }>(
+        assembled.result,
+        `get_history_since_v2(${playerId})`,
+      );
+      history = result.entries;
+      truncated = result.truncated;
     } catch (err) {
       throw new Error(
-        `getPlayerHistory: get_history_since failed for player ${playerId}: ` +
+        `getPlayerHistory: get_history_since_v2 failed for player ${playerId}: ` +
           `${err instanceof Error ? err.message : String(err)}`,
         { cause: err instanceof Error ? err : undefined },
       );
@@ -170,5 +200,5 @@ export async function getPlayerHistory(
     }
   }
 
-  return { currentLevel, history };
+  return { currentLevel, history, truncated };
 }

@@ -18,6 +18,81 @@ The initial v0.1.0 entry below retains the year-only date because no exact histo
 
 ## Unreleased
 
+### Bug fixes (#1784, #1785)
+
+- **scout_access** (#1784): `purge_player_data` now preserves `TrialCounter` until the final
+  page (`more == false`). Previously the counter was deleted on the first call (`cursor == 0`),
+  causing all subsequent calls to read a count of 0 and silently return `(0, false)` — leaving
+  `TrialOffer` and `TrialEscrow` keys for indices 51+ on-chain forever. The cursor is now
+  guaranteed to be monotonically non-decreasing across calls.
+
+- **scout_access** (#1785): `purge_player_data` now erases `EvidenceAccessGrant(player_id, scout)`,
+  `EvidenceAccessGrantPage(player_id, page)`, and `EvidenceAccessGrantCount(player_id)` during the
+  second pagination phase (after all trial offers are removed). Previously only the count was
+  deleted on the first page while the individual grant records survived, leaving scouts with
+  permanent on-chain access proofs for erased players. `EvidenceAccessGrantCount` is removed
+  only on the final page. `ScoutTrialOffers(scout)` back-references pointing at the purged player
+  are cleaned up during the trial-offer removal loop. `ContactRecord(player_id, scout)` entries
+  are intentionally **retained** for billing audit, matching `docs/PLAYER_ERASURE.md`. The
+  `purge_player_data` doc comment is corrected to reflect this.
+
+### New features (#1782)
+
+- **scout_access** (#1782): Added `get_xlm_token() -> Option<Address>` and
+  `get_outstanding_escrows_page(offset: u32, limit: u32) -> (Vec<(u64, u32, i128)>, bool)`
+  read-only view functions. The escrow page getter lets off-chain tools sum outstanding
+  trial-escrow amounts without an external index.
+
+- **operations** (#1782): Added `scripts/solvency-monitor.js` — an off-chain monitor that
+  reads `get_accumulated_fees`, the XLM token balance, and all outstanding escrow entries,
+  then reports a JSON solvency snapshot and exits non-zero on any deficit or unexplained
+  surplus. Webhook alerts (Slack/Discord) are sent on non-ok status when `WEBHOOK_URL` is
+  set. A scheduled GitHub Actions workflow (`.github/workflows/solvency-monitor.yml`) runs
+  the monitor against testnet every 6 hours and uploads the report as an artifact.
+  `docs/RUNBOOK.md` has a new section documenting how to respond to a deficit or surplus.
+
+- Contracts affected: `registration`, `scout_access`, `progress`, `verification`, `shared-types`
+- Summary: Added erasure tombstone mechanism (issue #1622). `registration.deregister_player` now cross-calls each wired contract's `mark_player_erased(player_id)` to write a local `Erased(player_id)` tombstone flag. All player-scoped write entrypoints in `progress`, `verification`, and `scout_access` check this flag and return `PlayerErased` error if set. New error codes: `PlayerErased` (registration: 22, progress: 30, verification: 66, scout_access: 61). Updated `docs/PLAYER_ERASURE.md` with the tombstone invariant.
+- Classification: `Non-breaking (MINOR)` — additive behavior with new error codes; existing entrypoints gain a pre-check but no signature changes.
+
+- Contracts affected: `registration`, `scout_access`, `progress`, `verification`, `shared-types`
+- Summary: Added erasure tombstone mechanism (issue #1622). `registration.deregister_player` now cross-calls each wired contract's `mark_player_erased(player_id)` to write a local `Erased(player_id)` tombstone flag. All player-scoped write entrypoints in `progress`, `verification`, and `scout_access` check this flag and return `PlayerErased` error if set. New error codes: `PlayerErased` (registration: 22, progress: 29, verification: 65, scout_access: 59). Updated `docs/PLAYER_ERASURE.md` with the tombstone invariant.
+- Classification: `Non-breaking (MINOR)` — additive behavior with new error codes; existing entrypoints gain a pre-check but no signature changes.
+
+- Contracts affected: `registration`, `scout_access`, `progress`, `verification`, `shared-types`
+- Summary: Added `registration.unverify_scout` / `is_scout_verified` and the `scout_unverified` event; `ScoutVerificationRecord` gains `revoked_at` and `revoked_reason` (#1608). scout_access re-checks verification for Pro/Elite on contact, batch contact, trial offers and renewal. Added `contract_kind()` to every contract and an on-chain `verify_peer` handshake in all wiring setters, with new `InvalidPeerContract` errors (#1610).
+- Classification: `Breaking (MAJOR)` — storage layout of `ScoutVerificationRecord` changes; wiring setters now reject non-ScoutChain addresses.
+
+- Contracts affected: `progress`, `verification`, `scout_access`, `registration`
+- Summary: Added player-data erasure across contracts (#1373). New admin entrypoints `progress.purge_player_data`, `verification.purge_player_data` and `scout_access.purge_player_data` erase a player's contract-held records (progress history and milestone state, verification records and attestations, scout_access contacts, grants, trial offers and subscriptions) and emit the `player_data_purged` event from each contract. Added scout deregistration via `registration.deregister_scout`, which removes a scout's registration record and emits the `scout_deregistered` event. See [docs/PLAYER_ERASURE.md](docs/PLAYER_ERASURE.md) for the erasure scope and operator procedure.
+- Classification: `Non-breaking (MINOR)` — new entrypoints and events only; no existing signature, error code or storage layout changes.
+
+- Contracts affected: `registration`
+- Summary: `registration.deregister_scout` (#1641) changes registration behaviour: a deregistered scout is no longer returned by scout lookups or accepted by downstream scout_access flows until re-registered, and deregistration emits `scout_deregistered`.
+- Classification: `Non-breaking (MINOR)` — additive entrypoint; existing registration entrypoints are unchanged.
+
+- Version: `v2.0.1`
+- Release date: `2026-10-23`
+- Contracts affected: `verification`, `progress`, `scout_access`
+- Summary: #1622 `verification` now fails closed with `RegistrationNotConfigured` (62) when registration is unwired and uses one `get_player_status` call instead of two dynamic calls. #1615 the per-validator-per-player milestone cap charges only the committing validator and resets per 90-day window. #1617 `progress.admin_seed_history` rejects mismatched player IDs, level discontinuities and timestamp regressions (`SeedPlayerMismatch` 24, `SeedLevelDiscontinuity` 25, `SeedTimestampRegression` 26). #1621 `scout_access` rejects payment tokens whose `decimals()` is not 7 with `UnsupportedTokenDecimals` (48); SAC-wrapped XLM is unaffected. Also restores compilation after #1562 (`.publish`, removed topic constants, event name over 32 chars, duplicate `health`).
+- Classification: `Breaking (MAJOR)` for the unwired-registration behaviour change in `verification`; otherwise `Non-breaking (MINOR)`.
+
+- Version: `v2.0.0`
+- Release date: `2026-10-23`
+- Contracts affected: `scout_access`, `progress`
+- Summary: `scout_access`: `log_trial_offer` now fails with new `TrialOffersDisabled` (47) when `trial_offer_escrow_stroops` is 0 (#1625); `validate_fee_config` bounds `trial_offer_escrow_stroops` (<= `MAX_SUB_FEE_STROOPS`) and `trial_offer_expiry_secs` (1 hour – 30 days when escrow > 0) (#1624); `admin_refund_trial_escrow` drops its `to` argument and always refunds `TrialOffer.scout`, with a new `admin_rescue_orphan_trial_escrow` for escrows lacking a `TrialOffer` record (#1623). `progress`: `get_history_since` returns at the first older entry, and new `get_history_since_v2` returns `HistorySince { entries, truncated }` (#1619).
+- Classification: `Breaking (MAJOR)` — `admin_refund_trial_escrow` signature change.
+
+- Contracts affected: `progress`, `registration`, `scout_access`, `verification`
+- Summary: Pause/unpause entrypoints (`pause_contract`, `unpause_contract`, `pause_pay_to_contact`, `unpause_pay_to_contact`, `pause_approve_milestone`, `unpause_approve_milestone`) are now idempotent and emit no event when the flag already has the target value (#1718). Unified `limit = 0` handling (#1720): views clamp to 1, state-changing batches reject with `InvalidInput` — `registration::filter_players(limit = 0)` now returns one item instead of `InvalidInput`, `verification::get_player_disputes*` return one item instead of an empty page, and `scout_access::expire_trial_offers(0)` now returns `InvalidInput` instead of `Ok(0)`. `verification::get_validator_statuses` now returns `Result` and rejects more than 20 wallets with `InvalidInput` instead of silently truncating (#1721).
+- Classification: `Breaking (MAJOR)` — `get_validator_statuses` return type changes and `limit = 0` behaviour changes for `filter_players` and `expire_trial_offers`.
+
+- Version: `v1.1.1`
+- Release date: `2026-08-21`
+- Contracts affected: `progress`
+- Summary: Fixed unbounded read cost in three progress contract history readers (issue #1411). `get_progress_history` no longer extends TTL on every page and is documented as deprecated with unbounded cost — callers should migrate to `get_progress_history_page` or `get_history_page_with_cursor`. `get_history_since` now accepts a `limit` parameter and scans at most 10 pages (80 entries) from the newest, bounding CPU/storage cost. `get_history_proof` doc comment updated to accurately describe its linear cost with history length and recommends off-chain computation for large histories.
+- Classification: `Non-breaking (MINOR)` — function signatures for `get_history_since` and `get_progress_history` change in a backward-compatible way (new optional `limit` parameter for `get_history_since`, behavior change only for `get_progress_history` removing TTL writes); existing callers continue to work.
+
 Use the structure below for upcoming MINOR or MAJOR contract changes:
 
 - Version: `vX.Y.Z`
@@ -27,6 +102,38 @@ Use the structure below for upcoming MINOR or MAJOR contract changes:
 - Classification: `Breaking (MAJOR)` or `Non-breaking (MINOR)`
 
 > **Breaking-change classification rules:** See [docs/VERSIONING.md — What Constitutes a Breaking Change](VERSIONING.md#what-constitutes-a-breaking-change) for the full criteria (storage layout changes, function signature changes, error code renumbering, event schema changes, cross-contract interface changes).
+
+- Version: `v0.4.1`
+- Release date: `2026-09-30`
+- Contracts affected: `scout_access`, `registration`
+- Summary: Added player-initiated evidence access revocation and grant expiry (issue #1380). `EvidenceAccessGrant` gains an `expires_at` field (90-day TTL from `granted_at`); `has_evidence_access` now returns `false` for expired grants while retaining the record for audit. New `revoke_evidence_access(player, player_id, scout)` entrypoint lets a player revoke their own scout's evidence access grant after verifying ownership via the registration contract. `admin_revoke_evidence_access` returns a new `GrantAlreadyRevoked` (39) error when called on an already-revoked grant (it was previously a no-op). Registration contract gains `get_player_id_by_wallet(wallet)` cross-contract helper. New errors: `GrantAlreadyRevoked` (39), `PlayerNotVerified` (40). New event: `evidence_access_revoked_by_player`. Migration `005_evidence_access_grants.sql` adds `expires_at` column.
+- Classification: `Breaking (MAJOR)` (storage layout change — `EvidenceAccessGrant` gains `expires_at`; existing grants on-chain must be migrated or re-issued before the new WASM can decode them)
+
+---
+
+- Version: `v2.0.0`
+- Release date: `2026-09-27`
+- Contracts affected: `registration`, `scout_access`, `verification`
+- Summary: Fixed infinite paging bug where `limit=0` produced a non-advancing cursor. Added `has_more: bool` field to `FilterResult` (registration ABI change). Clamped `limit` to 1..=50 across all paginated getters (`filter_players`, `get_scout_contacts_page`, `list_disputes_page`, `get_global_milestone_index`, `get_validator_milestones_page`, `get_validator_milestones_page_v2`). Documented pagination convention in CONTRACT_REFERENCE.md.
+- Classification: `Breaking (MAJOR)`
+
+---
+
+### [Unreleased] — fix/1412-progress-wiring-state-use-wiring-link
+
+- Contracts affected: `progress`
+- Summary: `progress::get_wiring_state()` now returns `ProgressWiringState`
+  with three `WiringLink { address, epoch }` fields (`registration_contract`,
+  `verification_contract`, `scout_access_contract`) instead of the previous
+  flat representation that had separate `Option<Address>` and `u32` epoch
+  fields. This aligns `progress` with the shared `WiringLink` pattern used
+  by the other three contracts and removes the need for the `flat_link`
+  special-case in `scripts/verify-cross-contract-wiring.sh`.
+- Classification: **Breaking (MAJOR)** — ABI change: callers reading
+  `registration_contract`, `verification_contract`, or `scout_access_contract`
+  as plain addresses (or reading the separate `*_epoch` fields) must update to
+  read `link.address` / `link.epoch` from the returned `WiringLink` object.
+  TypeScript bindings must be regenerated. Fixes #1412.
 
 - Version: `v0.4.0`
 - Release date: `2026-08-19`
