@@ -238,6 +238,11 @@ paused, but outstanding escrows must still be expired or refunded first. If
 refunds are performed as part of the purge path, they may occur while the
 contract is paused.
 
+This guard applies regardless of the pause state: erasure is permitted while
+paused, but outstanding escrows must still be expired or refunded first. If
+refunds are performed as part of the purge path, they may occur while the
+contract is paused.
+
 ---
 
 ## Legal / product notes
