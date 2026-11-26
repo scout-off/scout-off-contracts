@@ -137,4 +137,6 @@ deployment guide.
 ## Related documentation
 
 - [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md) — full deployment guide including the migration step
+- [docs/AUTH_SESSIONS.md](../docs/AUTH_SESSIONS.md) — session lifecycle and auth endpoint semantics
+- `npm run check:auth-schema` — compare the live auth tables and foreign key with the session model
 - [README.md — Database Schema](../README.md#database-schema) — table-level overview

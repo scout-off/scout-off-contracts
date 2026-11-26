@@ -20,8 +20,18 @@ beforeEach(async () => {
   await prisma.revokedToken.deleteMany();
 });
 
-afterAll(async () => {
-  await prisma.$disconnect();
+beforeEach(() => {
+  process.env.JWT_SECRET = secret;
+  jest.clearAllMocks();
+  db.$transaction.mockImplementation((callback) => callback(db));
+  db.revokedToken.findUnique.mockResolvedValue(null);
+  db.revokedToken.upsert.mockResolvedValue({});
+  db.session.findUnique.mockResolvedValue({ revokedAt: null, id: "session-1", account: "user1" });
+  db.session.findMany.mockResolvedValue([]);
+  db.session.create.mockResolvedValue({});
+  db.session.updateMany.mockResolvedValue({ count: 1 });
+  db.refreshToken.create.mockResolvedValue({});
+  db.refreshToken.updateMany.mockResolvedValue({ count: 1 });
 });
 
 describe("requireAuth unknown-role policy", () => {
@@ -91,8 +101,19 @@ describe("Token revocation through real SEP-10 flow", () => {
 
     const decoded = jwt.verify(token, config.jwtSecret) as { jti?: string };
 
-    expect(decoded.jti).toBeDefined();
-    expect(typeof decoded.jti).toBe("string");
+    const response = await request(app)
+      .post("/auth/refresh")
+      .send({ refreshToken: "already-rotated-token" })
+      .expect(401);
+
+    expect(response.body.error).toBe("refresh_token_reused");
+    expect(db.session.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "session-1", revokedAt: null },
+      data: expect.objectContaining({ revokedReason: "refresh_token_reused" }),
+    }));
+    expect(db.refreshToken.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { sessionId: "session-1", revokedAt: null },
+    }));
   });
 
   it("should allow revoking a token via the admin endpoint when jti is present", async () => {
@@ -102,6 +123,19 @@ describe("Token revocation through real SEP-10 flow", () => {
       migrationConfig
     );
 
+    const responses = await Promise.all([
+      request(app).post("/auth/refresh").send({ refreshToken: "same-token" }),
+      request(app).post("/auth/refresh").send({ refreshToken: "same-token" }),
+    ]);
+
+    expect(responses.map(({ status }) => status).sort()).toEqual([200, 401]);
+    expect(responses.find(({ status }) => status === 401)?.body.error).toBe("refresh_token_reused");
+    expect(db.session.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ revokedReason: "refresh_token_reused" }),
+    }));
+  });
+
+  it("logout revokes the current session and access-token jti", async () => {
     await request(app)
       .post("/api/admin/tokens/revoke")
       .set("Authorization", `Bearer ${token}`)

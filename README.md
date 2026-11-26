@@ -608,6 +608,7 @@ Subsequent migrations add additional tables and columns:
 | `005_evidence_access_grants.sql` | `evidence_access_grants` table |
 | `006_dispute_jury.sql` | Jury columns on `milestone_disputes`; `dispute_votes` table |
 | `007_milestone_flags.sql` | `milestone_flags` and `revocation_records` tables |
+| `008_session_management.sql` | Session families, refresh-token rotation, and access-token revocation tables |
 
 Run all migrations against your backend PostgreSQL instance:
 
@@ -619,9 +620,11 @@ psql $DATABASE_URL -f migrations/004_scout_subscriptions_auto_renew.sql
 psql $DATABASE_URL -f migrations/005_evidence_access_grants.sql
 psql $DATABASE_URL -f migrations/006_dispute_jury.sql
 psql $DATABASE_URL -f migrations/007_milestone_flags.sql
+psql $DATABASE_URL -f migrations/008_session_management.sql
 ```
 
 All migrations are idempotent and safe to re-run against an already-migrated database. See `migrations/README.md` for apply-order notes and file reference.
+See [docs/AUTH_SESSIONS.md](docs/AUTH_SESSIONS.md) for auth session behavior and endpoint details.
 
 To verify this database's copy of on-chain state hasn't drifted from the
 contracts, see [`scripts/reconcile-indexer.js`](scripts/reconcile-indexer.js)
