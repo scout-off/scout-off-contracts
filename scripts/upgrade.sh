@@ -104,6 +104,23 @@ print("")
 '
 }
 
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/lib/wasm-hash.sh"
+
+# Record the currently installed WASM hash so rollback.sh --upgrade can revert (#1812).
+CONTRACT_NAME="$(contract_name_for_id "$CONTRACT_ID" || true)"
+if [[ -n "$CONTRACT_NAME" ]]; then
+  if PREV_HASH="$(onchain_wasm_hash "$CONTRACT_ID" "$NETWORK")" && [[ -n "$PREV_HASH" ]]; then
+    env_set .env.contracts "${CONTRACT_NAME}_PREVIOUS_WASM_HASH" "$PREV_HASH"
+    json_set .env.contracts.json "${CONTRACT_NAME}_PREVIOUS_WASM_HASH" "$PREV_HASH"
+    echo "==> Recorded ${CONTRACT_NAME}_PREVIOUS_WASM_HASH=$PREV_HASH"
+  else
+    echo "WARN: could not fetch current WASM hash; upgrade will not be revertible via rollback.sh --upgrade." >&2
+  fi
+else
+  echo "WARN: $CONTRACT_ID not found in .env.contracts; previous WASM hash not recorded." >&2
+fi
+
 echo "==> Contract:  $CONTRACT_ID"
 echo "==> Network:   $NETWORK"
 echo "==> WASM:      $WASM_PATH"

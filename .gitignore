@@ -10,16 +10,12 @@ target/
 .env
 .env.contracts
 .env.contracts.json
--.env.contracts.snapshot
-.env.local
-.env.contracts.json
 .env.contracts.snapshot
+.env.contracts.snapshots/
+.env.local
 
 # Migration state exports (may contain player PII) -- never commit these
 migration-export/
-
-# Migration state exports (may contain player PII) -- never commit these
--migration-export/
 
 # Optimized WASM outputs
 *.optimized.wasm
@@ -40,6 +36,9 @@ Thumbs.db
 
 # Pull-request drafts
 pr-*.md
+
+# Change summary (local tracking only)
+CHANGES.md
 
 # ── Node / TypeScript build output ──
 # Compiled JS lives in dist/ — never commit it.
@@ -68,7 +67,9 @@ pnpm-lock.yaml
 
 # ── Bindings — generated src/ and compiled dist/ are not committed. ──
 # Only package.json and tsconfig.json scaffolds are tracked.
+# Exception: bindings/sdk/src/ is hand-authored and must be committed.
 bindings/*/src/
+!bindings/sdk/src/
 bindings/*/dist/
 bindings/*/node_modules/
 
@@ -83,3 +84,6 @@ budget-drift.json
 
 # Log files
 *.log
+
+# Session change summaries
+changes.md

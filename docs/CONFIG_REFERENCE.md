@@ -133,7 +133,7 @@ This document describes every field in `config/testnet.json` and `config/mainnet
 
 | Script / Component | Fields Consumed |
 |--------------------|-----------------|
-| `scripts/deploy.sh` | `rpc_url`, `network_passphrase` |
+| `scripts/deploy.sh` | `rpc_url`, `network_passphrase`, `xlm_token_address` (local: derived when `null`) |
 | `scripts/initialize.sh` | `rpc_url`, `network_passphrase`, `xlm_token_address` (via `.env`) |
 | `scripts/upgrade.sh` | `rpc_url`, `network_passphrase` |
 | `scripts/migrate-contract.sh` | All fields |
@@ -186,7 +186,12 @@ Enforced by `validate_fee_config` on `initialize`, `update_fee_config`,
 
 ## Per-network config (`config/<network>.json`)
 
-`scripts/initialize.sh` reads these fields (networks without a config file, e.g. `local`, use `config/testnet.json`) and aborts before sending anything if one is missing, contains `FILL_IN_BEFORE_USE`, or is outside the bounds below. `XLM_TOKEN_ADDRESS` in the environment overrides `xlm_token_address` (used by the sandbox CI job).
+`scripts/initialize.sh` reads these fields from `config/<network>.json` and aborts before sending anything if one is missing, contains `FILL_IN_BEFORE_USE`, or is outside the bounds below. `XLM_TOKEN_ADDRESS` in the environment overrides `xlm_token_address` (used by the sandbox CI job).
+
+There is **no silent fallback**: if `config/<network>.json` does not exist, the scripts
+fail with an error naming the missing file. Supported networks are restricted by
+`scripts/network.sh`; an unknown network name is rejected there before any config
+lookup happens.
 
 | Field | Bounds | Description |
 |-------|--------|-------------|
@@ -199,11 +204,38 @@ Enforced by `validate_fee_config` on `initialize`, `update_fee_config`,
 | `fee_config.trial_offer_expiry_secs` | non-zero when escrow `> 0` | Trial-offer expiry. |
 | `fee_config.pro_contact_limit` | `1..=10000` | Pro-tier contact limit. |
 
+### `config/local.json`
+
+Local development against a Stellar Quickstart / local Soroban network.
+
+| Field | Value | Description |
+|-------|-------|-------------|
+| `network` | `"local"` | Must match the filename (`local.json` → `"local"`). |
+| `rpc_url` | `http://localhost:8000/soroban/rpc` | Local Soroban RPC endpoint. |
+| `horizon_url` | `http://localhost:8000` | Local Horizon endpoint. |
+| `network_passphrase` | `Standalone Network ; February 2017` | Passphrase used by local networks. |
+| `friendbot_url` | `http://localhost:8000/friendbot` | Local friendbot for funding accounts. |
+| `xlm_token_address` | `null` | **Derived at runtime.** The native-asset contract ID differs per local network instance, so it is not pinned in the file. |
+| `reg_cooldown_secs` | `0` | Cooldown disabled locally so tests can register repeatedly. |
+| `fee_config` | testnet-like values | Same fee bounds as testnet; see the table above. |
+
+**How the local XLM token address is resolved.** When `NETWORK=local` and no token
+address is configured, `scripts/deploy.sh` derives the native-asset contract ID with:
+
+```sh
+stellar contract id asset --asset native --network local
+```
+
+If that command fails (e.g. the CLI or local network is unavailable), the script
+aborts with a clear error instead of guessing. You can bypass the derivation by
+setting `XLM_TOKEN_ADDRESS` explicitly in the environment — this is what the CI
+sandbox job does, and it keeps working unchanged.
+
 ---
 
 ## Updating Config Values
 
-1. Edit `config/testnet.json` or `config/mainnet.json`
+1. Edit `config/testnet.json`, `config/mainnet.json`, or `config/local.json`
 2. Run `./scripts/health-check.sh <network>` to verify RPC/Horizon connectivity
 3. Commit changes — CI will pick up new values on next deploy
 

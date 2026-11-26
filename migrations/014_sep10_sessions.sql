@@ -15,9 +15,14 @@
 --
 -- Safe to re-run: CREATE TABLE IF NOT EXISTS is idempotent.
 --
--- Cleanup (both tables):
---   DELETE FROM sep10_challenges WHERE expires_at < NOW() - INTERVAL '1 day';
---   DELETE FROM refresh_tokens   WHERE expires_at < NOW() - INTERVAL '1 day';
+-- Cleanup policy (see migrations/016_cleanup_jobs.sql for the full policy):
+--   sep10_challenges:  delete where expires_at < now() - INTERVAL '1 day'
+--   refresh_tokens:    delete where expires_at < now() - INTERVAL '1 day'
+--                      OR (revoked_at IS NOT NULL AND revoked_at < now() - INTERVAL '1 day')
+--
+-- Tokens are revoked by inserting into revoked_tokens. The revocation persists
+-- until the token's expiry (expires_at) has passed, ensuring tokens cannot be
+-- used before their intended lifetime ends.
 
 CREATE TABLE IF NOT EXISTS sep10_challenges (
     hash         VARCHAR(64)  PRIMARY KEY,
