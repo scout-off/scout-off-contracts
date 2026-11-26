@@ -198,6 +198,7 @@ pub fn player_data_purged(
     .publish(env);
 }
 
+/// Emitted by `open_migration_window`; enables the `admin_seed_*` entrypoints.
 /// topics: (event_name, admin)  data: ()
 pub fn migration_window_opened(env: &Env, admin: &Address) {
     env.events().publish(
@@ -206,6 +207,7 @@ pub fn migration_window_opened(env: &Env, admin: &Address) {
     );
 }
 
+/// Emitted by `close_migration_window`; disables the `admin_seed_*` entrypoints.
 /// topics: (event_name, admin)  data: ()
 pub fn migration_window_closed(env: &Env, admin: &Address) {
     env.events().publish(
@@ -224,7 +226,7 @@ pub fn contract_upgraded(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>)
 }
 
 /// Emitted by `migrate` when the stored schema version advances.
-/// topics: (event_name,)  data: (from_version, to_version)
+/// topics: (event_name,)  data: (from_version: u32, to_version: u32)
 pub fn schema_migrated(env: &Env, from: u32, to: u32) {
     env.events()
         .publish((Symbol::new(env, SCHEMA_MIGRATED),), (from, to));
