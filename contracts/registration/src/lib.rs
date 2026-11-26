@@ -9,9 +9,13 @@ mod events;
 mod types;
 
 use types::{
-    ContractHealth, DataKey, FilterResult, PlayerProfile, PlayerSummary, ProgressLevel,
-    RegistrationWiringState, ScoutProfile, ScoutVerificationRecord, StoredPlayerProfile,
+    ContractHealth, DataKey, PlayerSummary, ProgressLevel, RegistrationWiringState,
+    ScoutProfile, ScoutVerificationRecord, StoredPlayerProfile,
 };
+// Re-exported so external integration tests (e.g. tests/integration_progress_sync.rs)
+// can construct register_player's `vitals` argument and read filter_players /
+// get_player results — mirrors scout_access's `pub use types::{FeeConfig, ...}`.
+pub use types::{FilterResult, PlayerProfile};
 
 pub use errors::ScoutChainError;
 pub use types::{MigrationAuthorization, MigrationRole, PlayerStatus, ScoutStatus};
@@ -37,6 +41,29 @@ mod progress_contract {
     #[allow(dead_code)]
     pub trait ProgressContractClient {
         fn get_level(env: Env, player_id: u64) -> ProgressLevel;
+        fn mark_player_erased(env: Env, player_id: u64);
+    }
+}
+
+// Generated client stub for the verification contract — used to mark players as erased.
+mod verification_contract {
+    use soroban_sdk::{contractclient, Env};
+
+    #[contractclient(name = "Client")]
+    #[allow(dead_code)]
+    pub trait VerificationContractClient {
+        fn mark_player_erased(env: Env, player_id: u64);
+    }
+}
+
+// Generated client stub for the scout_access contract — used to mark players as erased.
+mod scout_access_contract {
+    use soroban_sdk::{contractclient, Env};
+
+    #[contractclient(name = "Client")]
+    #[allow(dead_code)]
+    pub trait ScoutAccessContractClient {
+        fn mark_player_erased(env: Env, player_id: u64);
     }
 }
 
@@ -720,6 +747,31 @@ impl RegistrationContract {
         // PlayerRegLastSent is intentionally preserved so that a rapid
         // re-registration from the same wallet is still subject to the
         // per-wallet cooldown.
+
+        // Push erasure tombstones to wired contracts (issue #1622).
+        // This ensures that even if the registration contract is later unwired,
+        // the other contracts still have local tombstones that block writes.
+        if let Some(progress_addr) = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::ProgressContract)
+        {
+            progress_contract::Client::new(&env, &progress_addr).mark_player_erased(&player_id);
+        }
+        if let Some(verification_addr) = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::VerificationContract)
+        {
+            verification_contract::Client::new(&env, &verification_addr).mark_player_erased(&player_id);
+        }
+        if let Some(scout_access_addr) = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::ScoutAccessContract)
+        {
+            scout_access_contract::Client::new(&env, &scout_access_addr).mark_player_erased(&player_id);
+        }
 
         events::player_deregistered(&env, player_id, &level, &region, &admin);
         Ok(())
@@ -1436,7 +1488,7 @@ impl RegistrationContract {
     /// fully evicted (key absent) and is no longer recoverable.
     pub fn restore_player_record(env: Env, player_id: u64) -> Result<(), ScoutChainError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
-        let _profile: PlayerProfile = env
+        let _profile: StoredPlayerProfile = env
             .storage()
             .persistent()
             .get(&DataKey::Player(player_id))
@@ -2261,6 +2313,62 @@ mod tests {
         let id = client.register_scout(&Address::generate(&env), &String::from_str(&env, "FR"));
         env.mock_auths(&[]);
         assert!(client.try_restore_scout_record(&id).is_err());
+    }
+
+    // #1881: admin player-profile TTL restoration. `restore_player_record`
+    // only extends `Player(id)`; it does not touch any index entries.
+    #[test]
+    fn test_restore_player_record_success_emits_event_and_preserves_profile() {
+        use soroban_sdk::testutils::{storage::Persistent as _, Ledger};
+        let env = setup_env();
+        let admin = Address::generate(&env);
+        let client = deploy(&env, &admin);
+        env.ledger().with_mut(|l| {
+            l.sequence_number = 100;
+            l.max_entry_ttl = PERSISTENT_TTL_MAX + 1;
+        });
+        let wallet = Address::generate(&env);
+        let hashes = vec![&env, String::from_str(&env, "QmRestorePlayer")];
+        let player_id = client.register_player(&wallet, &dummy_vitals(&env), &hashes);
+        env.ledger().with_mut(|l| l.sequence_number = 4_100);
+        let key = DataKey::Player(player_id);
+        let before = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&key));
+        client.restore_player_record(&player_id);
+        assert_eq!(
+            env.events().all(),
+            soroban_sdk::vec![&env, {
+                let e = crate::events::PlayerRecordRestored { admin, player_id };
+                (
+                    client.address.clone(),
+                    soroban_sdk::events::Event::topics(&e, &env),
+                    soroban_sdk::events::Event::data(&e, &env),
+                )
+            },]
+        );
+        let after = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&key));
+        assert!(after > before);
+        let restored = client.get_player(&player_id);
+        assert_eq!(restored.wallet, wallet);
+    }
+
+    #[test]
+    fn test_restore_player_record_missing_returns_evicted() {
+        let env = setup_env();
+        let client = deploy(&env, &Address::generate(&env));
+        assert_eq!(
+            client.try_restore_player_record(&999u64),
+            Err(Ok(ScoutChainError::PlayerRecordEvicted))
+        );
+    }
+
+    #[test]
+    fn test_restore_player_record_rejects_non_admin() {
+        let env = setup_env();
+        let client = deploy(&env, &Address::generate(&env));
+        let hashes = vec![&env, String::from_str(&env, "QmRestoreAuth")];
+        let id = client.register_player(&Address::generate(&env), &dummy_vitals(&env), &hashes);
+        env.mock_auths(&[]);
+        assert!(client.try_restore_player_record(&id).is_err());
     }
 
     use super::*;

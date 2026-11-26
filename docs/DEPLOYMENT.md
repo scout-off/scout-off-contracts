@@ -1,5 +1,7 @@
 # Deployment Guide
 
+> **See also:** [Glossary](GLOSSARY.md)
+
 ## Prerequisites
 
 <!-- Note: XLM token address source of truth -->
@@ -155,6 +157,14 @@ chmod +x scripts/deploy.sh
 ./scripts/deploy.sh testnet
 # Contract IDs written to .env.contracts
 ```
+
+`deploy.sh` performs the workspace build (`cargo build --workspace --target
+wasm32v1-none --release --locked`) itself before optimising the WASMs, so this
+is the only build in the flow. `scripts/setup-testnet.sh` wraps steps 1–3 and
+relies on that single build — it does not build the workspace separately. To
+skip building entirely, point `deploy.sh` at prebuilt release WASMs with
+`PREBUILT_WASM_DIR` (see [Reproducible builds and deployed-WASM
+verification](#reproducible-builds-and-deployed-wasm-verification-issue-1614)).
 
 ### 3. Initialize and wire contracts
 
@@ -527,7 +537,7 @@ requires `DEPLOYER_SECRET` / `ADMIN_ADDRESS` / `XLM_TOKEN_ADDRESS` (same as
 
 Migration procedure:
 
-1. **Deploy the new contract set** — `migrate-contract.sh` calls `./scripts/deploy.sh testnet` (which also snapshots the old IDs to `.env.contracts.snapshot`).
+1. **Deploy the new contract set** — `migrate-contract.sh` calls `./scripts/deploy.sh testnet` (which also snapshots the old IDs to a new timestamped file under `.env.contracts.snapshots/` and refreshes `.env.contracts.snapshot`).
 2. **Initialize + wire the new set** — via `./scripts/initialize.sh testnet`.
 3. **Pause the old contracts** so no new state is written to the retired addresses — `migrate-contract.sh` invokes `pause_contract` on each old contract ID (equivalent to `stellar contract invoke --id $OLD_ID -- pause_contract`).
 4. **Replay state onto the new set** — via `./scripts/replay-state.sh testnet` (also invoked automatically by the orchestrator). See the important limitation below.
@@ -662,8 +672,23 @@ known good contract addresses automatically.
 
 ### How it works
 
-`deploy.sh` writes a snapshot of the current `.env.contracts` to `.env.contracts.snapshot`
-**before** making any changes. If a deployment fails, you can restore from that snapshot.
+`deploy.sh` keeps a **timestamped history** of snapshots so that a bad deploy
+never destroys the last known good addresses. **Before** making any changes it
+copies the current `.env.contracts` to:
+
+```
+.env.contracts.snapshots/<UTC timestamp>-<network>.env
+.env.contracts.snapshots/<UTC timestamp>-<network>.json
+```
+
+The timestamp is in UTC and sortable (e.g. `20240115T143012Z-testnet.env`), so
+the files sort chronologically. Earlier snapshots are never deleted, so you can
+roll back past a bad deployment to the last known good state.
+
+For backward compatibility, `.env.contracts.snapshot` is still refreshed on
+every deploy and always reflects the **latest** snapshot. The
+`.env.contracts.snapshots/` directory is **git-ignored** — snapshots are local
+operator state and must never be committed.
 
 ### Automatic rollback (CI)
 
@@ -673,18 +698,46 @@ If the CI deploy pipeline fails, it prints rollback instructions. Run:
 ./scripts/rollback.sh testnet   # or mainnet
 ```
 
-This script:
-1. Restores `.env.contracts` from `.env.contracts.snapshot`
+With no arguments this restores the **latest** snapshot (unchanged default
+behaviour). This script:
+1. Restores `.env.contracts` from the selected snapshot (latest by default)
 2. Runs `scripts/health-check.sh` to verify the restored contracts are responsive
+
+### Listing and selecting snapshots
+
+List every snapshot recorded for a network, newest first:
+
+```bash
+./scripts/rollback.sh testnet --list
+# 20240115T143012Z-testnet.env
+# 20240112T090145Z-testnet.env
+# 20240110T171530Z-testnet.env
+```
+
+Restore a specific snapshot by file name (or path):
+
+```bash
+./scripts/rollback.sh testnet --snapshot 20240112T090145Z-testnet.env
+```
+
+This is how you recover from a deploy that succeeded but turned out to be bad:
+deploy again, notice the problem, then roll back to the snapshot taken *before*
+the bad deploy rather than the one taken before the most recent one.
 
 ### Manual rollback
 
 ```bash
-# Inspect the snapshot
+# Inspect the latest snapshot
 cat .env.contracts.snapshot
 
-# Restore it
+# Inspect the full history
+ls -1 .env.contracts.snapshots/
+
+# Restore the latest snapshot
 cp .env.contracts.snapshot .env.contracts
+
+# ...or restore a specific one
+cp .env.contracts.snapshots/20240112T090145Z-testnet.env .env.contracts
 
 # Verify contracts are healthy
 ./scripts/health-check.sh testnet
@@ -694,7 +747,7 @@ cp .env.contracts.snapshot .env.contracts
 
 A snapshot is only created when `.env.contracts` already exists at the start of a deployment
 (i.e. there was a previous successful deployment). For a first-time deployment failure there is
-no snapshot — you must re-deploy from scratch:
+no snapshot — `rollback.sh --list` prints nothing and you must re-deploy from scratch:
 
 ```bash
 ./scripts/deploy.sh testnet

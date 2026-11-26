@@ -21,7 +21,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Require every PR template checklist item in the description
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
@@ -39,7 +39,7 @@ jobs:
   check-todos:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Block TODO/FIXME/HACK markers in contract, script and backend source
         run: |
           # The pattern uses grouping `(...)` and alternation `|`, which are
@@ -85,10 +85,10 @@ jobs:
       DATABASE_URL: postgresql://scoutchain:scoutchain@localhost:5432/scoutchain_drift
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "20"
           cache: "npm"
@@ -103,8 +103,13 @@ jobs:
         run: bash scripts/check-prisma-drift.sh
 
   backend:
-    name: Backend — lint, typecheck, test
+    name: Backend — lint, typecheck, test (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
 
     services:
       postgres:
@@ -126,12 +131,12 @@ jobs:
       JWT_SECRET: ci-test-secret-do-not-use-in-production
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "20"
+          node-version: ${{ matrix.node }}
           cache: "npm"
           # Only package.json is tracked (see .gitignore); dependencies are
           # pinned to exact versions there.
@@ -149,14 +154,20 @@ jobs:
       - name: Type-check
         run: npx tsc --noEmit
 
+      - name: Build and verify start path
+        run: |
+          npm run build
+          test -f dist/server.js
+          node -e "require('./dist/server.js')"
+
       - name: Run tests
         run: npm test
 
   check-node-scripts:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '20'
       - name: Syntax-check Node scripts
@@ -169,5 +180,7 @@ jobs:
           done
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Check formatting
+        run: npm run format:check
       - name: Run reconcile-indexer smoke test
         run: npx jest scripts/__tests__/reconcile-indexer.test.js --roots='<rootDir>/scripts'
