@@ -128,6 +128,13 @@ explicitly that refunds may occur while the contract is paused, so that
 erasure is never blocked by outstanding escrows during a pause.
 
 ```
+0. Start erasure (safety interlock, #1807).
+   Call:  registration.begin_erasure(player_id)
+   Effect: deactivates the player and records ErasurePending(player_id).
+           Every purge_player_data below fails with ErasureNotAuthorized
+           unless this was called (or the player is already deregistered),
+           and fails closed when registration is not wired.
+
 1. Expire or refund all outstanding trial escrows for the player.
    Call:  scout_access.expire_trial_offers(limit)
    Until: no escrow remains for this player.

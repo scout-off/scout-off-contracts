@@ -66,7 +66,7 @@ for how to verify the event after running `scripts/upgrade.sh`.
 | Field  | Value |
 |--------|-------|
 | Topics | `("scout_verified", wallet: Address)` |
-| Data   | `scout_id: u64` |
+| Data   | `(scout_id: u64, admin: Address)` |
 
 ### `player_deregistered`
 | Field  | Value |

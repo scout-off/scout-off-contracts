@@ -7,7 +7,7 @@ use soroban_sdk::{contracttype, Address, BytesN, String, Vec};
 /// - `get_validator`               → credentials, registered_at, active
 /// - `get_validator_status`        → status
 /// - `get_validator_milestone_count` → milestone_count
-/// - `get_validator_players`       → distinct_players (and distinct_player_count)
+/// - `ValidatorPlayerCount`        → distinct_player_count (list: `get_validator_players_page`)
 ///
 /// This is a pure read-only aggregate — no new storage or business logic.
 #[contracttype]
@@ -27,8 +27,6 @@ pub struct ValidatorActivityReport {
     pub milestone_count: u32,
     /// Number of distinct players for whom this validator has approved at least one milestone.
     pub distinct_player_count: u32,
-    /// List of distinct player IDs (same data as `get_validator_players`).
-    pub distinct_players: Vec<u64>,
 }
 
 // ---------------------------------------------------------------------------

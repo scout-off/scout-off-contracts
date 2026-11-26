@@ -94,6 +94,7 @@ pub struct ScoutVerified {
     #[topic]
     pub wallet: Address,
     pub scout_id: u64,
+    pub admin: Address,
 }
 
 /// Emitted by `deactivate_scout`.
@@ -242,10 +243,11 @@ pub fn player_level_synced(env: &Env, player_id: u64, caller: &Address, level: &
     .publish(env);
 }
 
-pub fn scout_verified(env: &Env, scout_id: u64, wallet: &Address) {
+pub fn scout_verified(env: &Env, scout_id: u64, wallet: &Address, admin: &Address) {
     ScoutVerified {
         wallet: wallet.clone(),
         scout_id,
+        admin: admin.clone(),
     }
     .publish(env);
 }

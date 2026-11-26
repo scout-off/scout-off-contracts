@@ -2098,7 +2098,7 @@ Internally aggregates exactly:
 1. `get_validator(wallet)` → `credentials`, `registered_at`, `active`
 2. `get_validator_status(wallet)` → `status`
 3. `get_validator_milestone_count(wallet)` → `milestone_count`
-4. `get_validator_players(wallet)` → `distinct_players` (and `distinct_player_count`)
+4. `ValidatorPlayerCount(wallet)` → `distinct_player_count` (the player list is no longer embedded; page through `get_validator_players_page`)
 
 This is a **pure read-only aggregation** — no new storage, no new business logic.
 The returned values are byte-for-byte identical to calling the four individual
@@ -5456,8 +5456,7 @@ Bundles the fields from four individual queries into one response:
 | `active` | `get_validator` | Whether the validator is currently active |
 | `status` | `get_validator_status` | Richer status (Active / Revoked / RevokedForCause / NotRegistered) |
 | `milestone_count` | `get_validator_milestone_count` | Total milestones approved across all players |
-| `distinct_player_count` | `get_validator_players` | Number of distinct players with at least one milestone |
-| `distinct_players` | `get_validator_players` | List of distinct player IDs |
+| `distinct_player_count` | `ValidatorPlayerCount` | Number of distinct players with at least one milestone (O(1) read) |
 
 ```rust
 pub struct ValidatorActivityReport {
@@ -5468,7 +5467,6 @@ pub struct ValidatorActivityReport {
     pub status: ValidatorStatus,
     pub milestone_count: u32,
     pub distinct_player_count: u32,
-    pub distinct_players: Vec<u64>,
 }
 ```
 

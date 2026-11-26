@@ -114,6 +114,28 @@ const DEFAULT_REG_COOLDOWN_SECS: u64 = 86_400;
 
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Maximum number of entries kept in a scout's verification history.
+const MAX_SCOUT_VERIFICATION_HISTORY: u32 = 10;
+
+/// Append a verification snapshot to the scout's bounded history, dropping the
+/// oldest entry once the cap is reached.
+fn append_scout_verification_history(env: &Env, scout_id: u64, record: &ScoutVerificationRecord) {
+    let key = DataKey::ScoutVerificationHistory(scout_id);
+    let mut history: Vec<ScoutVerificationRecord> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
+    if history.len() >= MAX_SCOUT_VERIFICATION_HISTORY {
+        history.remove(0);
+    }
+    history.push_back(record.clone());
+    env.storage().persistent().set(&key, &history);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+}
+
 /// Copy `input` into `buf`, trim ASCII whitespace from both ends and uppercase
 /// ASCII letters in place. Returns the `(start, end)` bounds of the trimmed
 /// slice inside `buf`. Inputs longer than `buf` are rejected rather than
@@ -683,6 +705,43 @@ impl RegistrationContract {
     }
 
     /// Deregister a player profile (admin only, GDPR right-to-erasure).
+    /// Start erasure for a player (admin only): deactivates the player and
+    /// records `ErasurePending(player_id)`, which authorises the
+    /// `purge_player_data` entrypoints on progress / verification /
+    /// scout_access. `deregister_player` completes the erasure. Idempotent.
+    pub fn begin_erasure(env: Env, player_id: u64) -> Result<(), ScoutChainError> {
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        Self::load_stored_player(&env, player_id)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::PlayerDeactivated(player_id), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ErasurePending(player_id), &true);
+        env.storage().persistent().extend_ttl(
+            &DataKey::ErasurePending(player_id),
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
+        Ok(())
+    }
+
+    /// Whether `begin_erasure` has been called for the player and erasure has
+    /// not yet been completed by `deregister_player`.
+    pub fn is_erasure_pending(env: Env, player_id: u64) -> bool {
+        env.storage()
+            .persistent()
+            .get::<DataKey, bool>(&DataKey::ErasurePending(player_id))
+            .unwrap_or(false)
+    }
+
+    /// Check used by the purging contracts: `true` when erasure is pending or
+    /// the player no longer exists (so purges can be re-run after deregister).
+    pub fn is_erasure_authorized(env: Env, player_id: u64) -> bool {
+        Self::is_erasure_pending(env.clone(), player_id)
+            || !env.storage().persistent().has(&DataKey::Player(player_id))
+    }
+
     pub fn deregister_player(env: Env, player_id: u64) -> Result<(), ScoutChainError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         let profile = Self::load_stored_player(&env, player_id)?;
@@ -709,6 +768,10 @@ impl RegistrationContract {
         env.storage()
             .persistent()
             .remove(&DataKey::PlayerDeactivated(player_id));
+        // Erasure is complete: clear the interlock marker.
+        env.storage()
+            .persistent()
+            .remove(&DataKey::ErasurePending(player_id));
 
         // Remove from player index
         let mut player_ids: Vec<u64> = env
@@ -1726,7 +1789,8 @@ impl RegistrationContract {
             PERSISTENT_TTL_MIN,
             PERSISTENT_TTL_MAX,
         );
-        events::scout_verified(&env, scout_id, &profile.wallet);
+        append_scout_verification_history(&env, scout_id, &profile.verification);
+        events::scout_verified(&env, scout_id, &profile.wallet, &admin);
         Ok(())
     }
 
@@ -1758,8 +1822,26 @@ impl RegistrationContract {
             PERSISTENT_TTL_MIN,
             PERSISTENT_TTL_MAX,
         );
+        append_scout_verification_history(&env, scout_id, &profile.verification);
         events::scout_unverified(&env, scout_id, &profile.wallet, &admin);
         Ok(())
+    }
+
+    /// Bounded, append-only history (last `MAX_SCOUT_VERIFICATION_HISTORY`
+    /// entries, oldest first) of verification records: one snapshot is
+    /// appended on every `verify_scout` and `unverify_scout`.
+    pub fn get_scout_verification_history(
+        env: Env,
+        scout_id: u64,
+    ) -> Result<Vec<ScoutVerificationRecord>, ScoutChainError> {
+        if !env.storage().persistent().has(&DataKey::Scout(scout_id)) {
+            return Err(ScoutChainError::ScoutNotFound);
+        }
+        Ok(env
+            .storage()
+            .persistent()
+            .get(&DataKey::ScoutVerificationHistory(scout_id))
+            .unwrap_or_else(|| Vec::new(&env)))
     }
 
     /// Lightweight check used by `scout_access`: whether the scout owning
@@ -3987,6 +4069,7 @@ mod tests {
                 let e = crate::events::ScoutVerified {
                     wallet: wallet.clone(),
                     scout_id,
+                    admin: admin.clone(),
                 };
                 (
                     client.address.clone(),
