@@ -892,7 +892,7 @@ registration is permitted; duplicate prevention is enforced per role only.
 | `admin_seed_scout(wallet, region, scout_id, registered_at, verified) -> Result<u64, ScoutChainError>` | admin | Seed a historical scout profile at a fixed `scout_id` during a migration window. |
 | `restore_player_record(player_id) -> Result<(), ScoutChainError>` | admin | Re-extend the TTL of an archived player record and re-insert it into the filter indexes before it is permanently evicted. Errors `PlayerRecordEvicted` if the key is already gone. |
 | `restore_scout_record(scout_id) -> Result<(), ScoutChainError>` | admin | Re-extend the TTL of an archived scout record before it is permanently evicted. Errors `ScoutRecordEvicted` if the key is already gone. |
-| `is_player_deactivated(player_id) -> bool` | none | Whether the player is currently soft-hidden from `filter_players` results. |
+| `is_player_deactivated(player_id) -> bool` | none | Whether the player is currently soft-hidden from `filter_players` results. Never errors: returns `false` for unknown or deregistered ids. |
 | `get_player_status(player_id) -> Result<PlayerStatus, ScoutChainError>` | none | Combined existence / deactivation status for a player. |
 | `get_scout_status(scout_id) -> ScoutStatus` | none | Registration / verification status for a scout (`NotRegistered`, `Registered`, `Verified`). |
 
@@ -3885,6 +3885,36 @@ stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
 
 ---
 
+#### `purge_player_data(player_id: u64, cursor: u32) -> Result<(u32, bool), ProgressError>` — progress
+
+Admin-only, paged GDPR erasure of a player's current-state ledger entries in
+the progress contract. Call with `cursor = 0`, then feed the returned cursor
+back in while the returned `more` flag is `true`. See
+[`docs/PLAYER_ERASURE.md`](PLAYER_ERASURE.md) for the full procedure.
+
+| | |
+|---|---|
+| **Auth** | Admin must sign |
+| **Guards** | `require_not_paused` then `require_initialized`, both before auth and before any state change |
+| **Returns** | `(next_cursor, more)` — `next_cursor` is the cursor to pass on the next call; `more` is `true` when at least one further page remains |
+| **Errors** | `ContractPaused` · `NotInitialized` · `Unauthorized` |
+| **Emits** | `player_data_purged` with `(player_id, next_cursor, more)` |
+
+Keys removed, by page:
+
+| Page | Keys removed |
+|------|--------------|
+| First page (`cursor = 0`) | `PlayerLevel(player_id)` and the player's `ProgressHistory` entries, starting from the first history slot |
+| Each subsequent page | The next batch of `ProgressHistory` entries for `player_id`, continuing from `cursor` |
+| Final page (`more = false`) | The remaining `ProgressHistory` entries; the cursor is returned at the end of the history so a retried call is a no-op |
+
+```bash
+stellar contract invoke --id $PROGRESS_CONTRACT_ID \
+  -- purge_player_data --player_id 1 --cursor 0
+```
+
+---
+
 #### `activate_fee_config() -> Result<(), ScoutAccessError>`
 
 Activate a pending fee configuration proposal after the 7-day delay has elapsed.
@@ -5880,6 +5910,34 @@ All events follow the unified `(Symbol, actor)` topic schema introduced in #246.
 | `voting_window_secs_updated` | event_name, admin (Address) | (old (u64), new (u64)) | `set_voting_window_secs` changed the attestation voting window (#1453) |
 | `reg_cooldown_updated` | event_name, admin (Address) | (old (u64), new (u64)) | `set_reg_cooldown` changed the validator registration cooldown (#1453) |
 
+#### `purge_player_data(player_id: u64, cursor: u32) -> Result<(u32, bool), VerificationError>` — verification
+
+Admin-only, paged GDPR erasure of a player's current-state ledger entries in
+the verification contract. Call with `cursor = 0`, then feed the returned
+cursor back in while the returned `more` flag is `true`. See
+[`docs/PLAYER_ERASURE.md`](PLAYER_ERASURE.md) for the full procedure.
+
+| | |
+|---|---|
+| **Auth** | Admin must sign |
+| **Guards** | `require_not_paused` then `require_initialized`, both before auth and before any state change |
+| **Returns** | `(next_cursor, more)` — `next_cursor` is the cursor to pass on the next call; `more` is `true` when at least one further page remains |
+| **Errors** | `ContractPaused` · `NotInitialized` · `Unauthorized` |
+| **Emits** | `player_data_purged` with `(player_id, next_cursor, more)` |
+
+Keys removed, by page:
+
+| Page | Keys removed |
+|------|--------------|
+| First page (`cursor = 0`) | The player's milestone and dispute index entries (`PlayerMilestones`, `PlayerDisputes`) and the first batch of per-milestone records |
+| Each subsequent page | The next batch of the player's milestone/dispute records, continuing from `cursor` |
+| Final page (`more = false`) | The remaining milestone/dispute records; the cursor is returned past the last entry so a retried call is a no-op |
+
+```bash
+stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
+  -- purge_player_data --player_id 1 --cursor 0
+```
+
 ### progress
 
 | Event | Topics | Data | Description |
@@ -5939,6 +5997,38 @@ All events follow the unified `(Symbol, actor)` topic schema introduced in #246.
 | `migration_window_opened` | event_name, admin (Address) | () | `open_migration_window` opened the one-time seeding window |
 | `migration_window_closed` | event_name, admin (Address) | () | `close_migration_window` closed and permanently sealed the seeding window |
 | `fee_config_proposal_cancelled` | event_name, admin (Address) | () | A pending fee-config proposal was discarded by `update_fee_config` |
+
+#### `purge_player_data(player_id: u64, cursor: u32) -> Result<(u32, bool), ScoutAccessError>` — scout_access
+
+Admin-only, paged GDPR erasure of a player's current-state ledger entries in
+the scout_access contract. Call with `cursor = 0`, then feed the returned
+cursor back in while the returned `more` flag is `true`. See
+[`docs/PLAYER_ERASURE.md`](PLAYER_ERASURE.md) for the full procedure.
+
+| | |
+|---|---|
+| **Auth** | Admin must sign |
+| **Guards** | `require_not_paused` then `require_initialized`, both before auth and before any state change |
+| **Returns** | `(next_cursor, more)` — `next_cursor` is the cursor to pass on the next call; `more` is `true` when at least one further page remains |
+| **Errors** | `ContractPaused` · `NotInitialized` · `Unauthorized` · `TrialOfferNotFound` (refused while any of the player's trial-offer escrows is still outstanding) |
+| **Emits** | `player_data_purged` with `(player_id, next_cursor, more)` |
+
+Keys removed, by page:
+
+| Page | Keys removed |
+|------|--------------|
+| First page (`cursor = 0`) | The player's contact and evidence-access index entries (`PlayerContacts`, `EvidenceAccessGrant`) and the first batch of per-scout contact records |
+| Each subsequent page | The next batch of the player's contact/evidence-access records, continuing from `cursor` |
+| Final page (`more = false`) | The remaining contact/evidence-access records; the cursor is returned past the last entry so a retried call is a no-op |
+
+Outstanding trial-offer escrows are never erased: the call fails with
+`TrialOfferNotFound` until every escrow for the player has been settled or
+refunded.
+
+```bash
+stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
+  -- purge_player_data --player_id 1 --cursor 0
+```
 
 ---
 
@@ -6085,9 +6175,19 @@ with `InvalidPeerContract` (#1610).
 #### `purge_player_data(player_id, cursor) -> Result<(u32, bool), Error>` — verification, progress, scout_access
 
 Admin-only, paged GDPR erasure of a player's current-state ledger entries.
-Call with `cursor = 0`, then pass the returned cursor back while the returned
-flag is `true`. scout_access refuses (`TrialOfferNotFound`) while any of the
-player's trial escrows is still outstanding.
+Call with `cursor = 0`, then pass that contract's returned cursor back while
+the returned flag is `true`. Wrong, stale, and out-of-range cursors are
+rejected with `InvalidPurgeCursor`; scalar keys are removed on the final page.
+scout_access refuses (`TrialEscrowOutstanding`, code 59) while any of the
+player's trial escrows is still outstanding — refund or expire the escrow first
+(see `admin_refund_trial_escrow` and `expire_trial_offers`).
+
+Full per-contract reference sections (signature, guards, keys removed per page,
+errors and the `player_data_purged` event) are documented under
+[progress](#purge_player_data--progress), [verification](#purge_player_data--verification)
+and [scout_access](#purge_player_data--scout_access). See
+[`docs/PLAYER_ERASURE.md`](PLAYER_ERASURE.md) for the end-to-end erasure
+procedure.
 
 #### `unverify_scout(scout_id, reason) -> Result<(), ScoutChainError>` — registration
 

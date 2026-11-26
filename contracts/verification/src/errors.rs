@@ -225,10 +225,14 @@ pub enum VerificationError {
     // ── Bulk revocation (issue #1605) ──
     /// `batch_revoke_validators` was called with more than `MAX_BATCH_REVOKE` wallets.
     BatchTooLarge = 64,
-    // ── Erasure interlock (issue #1807) ──
-    /// `purge_player_data` was called for a player whose erasure has not been
-    /// started via `registration.begin_erasure` (or registration is unwired).
-    ErasureNotAuthorized = 65,
+    /// `purge_player_data` was called with a cursor other than the next
+    /// expected cursor for this player.
+    InvalidPurgeCursor = 65,
+
+    // ── Player erasure tombstone ──
+    /// The player has been erased via `registration.deregister_player`; all
+    /// player-scoped writes are permanently blocked for this player_id.
+    PlayerErased = 66,
 }
 
 impl AdminError for VerificationError {

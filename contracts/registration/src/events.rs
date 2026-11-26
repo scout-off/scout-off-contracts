@@ -311,6 +311,7 @@ pub fn admin_transferred(env: &Env, old_admin: &Address, new_admin: &Address) {
     .publish(env);
 }
 
+/// Emitted by `set_reg_cooldown`.
 /// topics: (event_name, admin)  data: (old_cooldown_secs, new_cooldown_secs)
 pub fn reg_cooldown_updated(env: &Env, admin: &Address, old_cooldown: u64, new_cooldown: u64) {
     env.events().publish(
@@ -368,12 +369,14 @@ pub fn scout_record_restored(env: &Env, admin: &Address, scout_id: u64) {
     .publish(env);
 }
 
+/// Emitted by `pause_contract` (only when the contract was not already paused).
 /// topics: (event_name, admin)  data: ()
 pub fn contract_paused(env: &Env, admin: &Address) {
     env.events()
         .publish((Symbol::new(env, "contract_paused"), admin.clone()), ());
 }
 
+/// Emitted by `unpause_contract` (only when the contract was paused).
 /// topics: (event_name, admin)  data: ()
 pub fn contract_unpaused(env: &Env, admin: &Address) {
     env.events()
