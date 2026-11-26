@@ -8,7 +8,7 @@
 
 use scoutchain_scout_access::{FeeConfig, ScoutAccessContract, ScoutAccessContractClient};
 use soroban_sdk::testutils::{Address as _, MockAuth, MockAuthInvoke};
-use soroban_sdk::{vec, Address, Env, Val, Vec};
+use soroban_sdk::{vec, Address, Env, Symbol, Val, Vec};
 
 struct Harness {
     env: Env,
@@ -72,6 +72,17 @@ fn propose(h: &Harness, new_admin: &Address) {
         vec![&h.env, new_admin.to_val()],
     );
     h.client.propose_admin(new_admin);
+}
+
+fn transfer(h: &Harness, new_admin: &Address) {
+    auth(
+        &h.env,
+        &h.admin,
+        &h.contract_id,
+        "transfer_admin",
+        vec![&h.env, new_admin.to_val()],
+    );
+    h.client.transfer_admin(new_admin);
 }
 
 // Property 1: only the proposed address can accept
@@ -162,4 +173,105 @@ fn test_replaced_proposal_cannot_accept() {
     auth(&h.env, &first, &h.contract_id, "accept_admin", vec![&h.env]);
     let result = h.client.try_accept_admin();
     assert!(result.is_err());
+}
+
+// transfer_admin alias: only proposes, never transfers immediately (#1887)
+
+#[test]
+fn test_transfer_admin_only_proposes() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    transfer(&h, &new_admin);
+
+    // Admin is still the original: a second (admin-only) transfer succeeds,
+    // proving control did not move to `new_admin`.
+    let third = Address::generate(&h.env);
+    transfer(&h, &third);
+
+    // The pending proposal is `third`, not `new_admin`.
+    auth(
+        &h.env,
+        &new_admin,
+        &h.contract_id,
+        "accept_admin",
+        vec![&h.env],
+    );
+    assert!(h.client.try_accept_admin().is_err());
+
+    auth(&h.env, &third, &h.contract_id, "accept_admin", vec![&h.env]);
+    assert!(h.client.try_accept_admin().is_ok());
+}
+
+#[test]
+fn test_transfer_admin_requires_accept() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    transfer(&h, &new_admin);
+
+    // Without the pending address's auth, accept_admin fails and admin stays.
+    assert!(h.client.try_accept_admin().is_err());
+
+    // The original admin is still in control.
+    let third = Address::generate(&h.env);
+    transfer(&h, &third);
+
+    // With the pending address's auth, the change completes.
+    auth(
+        &h.env,
+        &new_admin,
+        &h.contract_id,
+        "accept_admin",
+        vec![&h.env],
+    );
+    assert!(h.client.try_accept_admin().is_err());
+
+    auth(&h.env, &third, &h.contract_id, "accept_admin", vec![&h.env]);
+    assert!(h.client.try_accept_admin().is_ok());
+}
+
+#[test]
+fn test_transfer_admin_non_admin_rejected() {
+    let h = setup();
+    let non_admin = Address::generate(&h.env);
+    let new_admin = Address::generate(&h.env);
+
+    auth(
+        &h.env,
+        &non_admin,
+        &h.contract_id,
+        "transfer_admin",
+        vec![&h.env, new_admin.to_val()],
+    );
+    let result = h.client.try_transfer_admin(&new_admin);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_transfer_admin_emits_propose_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+
+    // Capture the events emitted by propose_admin.
+    let propose_events = h.env.events().all();
+    propose(&h, &new_admin);
+    let propose_events = h.env.events().all();
+    let propose_count = propose_events.len();
+    assert!(propose_count > 0);
+
+    // Capture the events emitted by transfer_admin.
+    let other = Address::generate(&h.env);
+    transfer(&h, &other);
+    let transfer_events = h.env.events().all();
+
+    // The alias must emit the same event shape as propose_admin.
+    assert_eq!(transfer_events.len(), propose_count);
+}
+
+#[test]
+fn test_contract_kind() {
+    let h = setup();
+    assert_eq!(
+        h.client.contract_kind(),
+        Symbol::new(&h.env, "scout_access")
+    );
 }
