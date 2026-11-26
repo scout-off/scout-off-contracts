@@ -2,7 +2,7 @@
   "name": "scoutchain-backend",
   "private": true,
   "version": "1.0.0",
-  "description": "Node.js Express API + on-chain/off-chain indexer reconciliation tooling for ScoutChain.",
+  "description": "Node backend and tooling for ScoutChain contracts.",
   "license": "MIT",
   "engines": {
     "node": ">=20"

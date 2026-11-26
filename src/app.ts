@@ -298,10 +298,20 @@ app.post(
     let jti: string;
     let exp: number | null = null;
 
-    try {
-      // Use the same asymmetric / migration verification logic as requireAuth.
-      const { signingKeys, allowHs256Migration, jwtSecret } = config;
-      let jtiValue: string | undefined;
+      let payload: JwtPayload;
+      try {
+        const verified = jwt.verify(token, dependencies.jwtSecret, {
+          algorithms: ["HS256"],
+        });
+        if (typeof verified === "string") {
+          res.status(400).json({ error: "Invalid token" });
+          return;
+        }
+        payload = verified;
+      } catch {
+        res.status(400).json({ error: "Invalid token" });
+        return;
+      }
 
       if (signingKeys) {
         const parts = token.split(".");
@@ -334,14 +344,42 @@ app.post(
         return res.status(500).json({ error: "No verification key available" });
       }
 
-      if (!jtiValue) {
-        return res.status(400).json({ error: "Token does not contain a jti claim" });
+      try {
+        await dependencies.database.query(
+          "INSERT INTO revoked_tokens (jti) VALUES ($1) ON CONFLICT (jti) DO NOTHING",
+          [payload.jti]
+        );
+        res.json({ revoked: true });
+      } catch (error) {
+        next(error);
       }
       jti = jtiValue;
     } catch {
       logger.warn({ requestId }, "POST /api/admin/tokens/revoke: invalid token");
       return res.status(400).json({ error: "Invalid token" });
     }
+  );
+
+  app.use(
+    "/api/evidence",
+    createEvidenceRouter({
+      database: dependencies.database,
+      grantChecker: dependencies.grantChecker,
+      masterKey: dependencies.masterKey,
+      authenticate,
+    })
+  );
+
+  app.use(
+    (
+      _error: unknown,
+      _req: Request,
+      res: Response,
+      _next: (error?: unknown) => void
+    ) => {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  );
 
     // Store the token expiry so cleanup can properly track when to delete the revocation
     await prisma.revokedToken.create({

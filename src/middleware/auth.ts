@@ -1,18 +1,16 @@
-import { jwtVerify } from "jose";
-import { Request, Response, NextFunction } from "express";
-import { prisma } from "../db";
-import { config } from "../config";
+import jwt, { type JwtPayload } from "jsonwebtoken";
+import type { RequestHandler } from "express";
 
-// Extend the Express Request type so downstream handlers can access req.user
-// without casting.
+export interface AuthenticatedUser {
+  sub: string;
+  role: string;
+  jti: string;
+}
+
 declare global {
   namespace Express {
     interface Request {
-      user?: {
-        sub: string;
-        role: string;
-        jti: string;
-      };
+      user?: AuthenticatedUser;
     }
   }
 }
@@ -150,12 +148,28 @@ export async function requireAuth(
     return;
   }
 
-    const revoked = await isTokenRevoked(payload.jti);
+    let payload: JwtPayload;
+    try {
+      const verified = jwt.verify(authHeader.slice(7), secret, {
+        algorithms: ["HS256"],
+      });
+      if (typeof verified === "string") {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+      payload = verified;
+    } catch {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
 
-    if (revoked) {
-      res
-        .status(401)
-        .json({ error: "Unauthorized - token has been revoked" });
+    if (
+      typeof payload.sub !== "string" ||
+      typeof payload.role !== "string" ||
+      typeof payload.jti !== "string" ||
+      payload.jti.length === 0
+    ) {
+      res.status(401).json({ error: "Unauthorized" });
       return;
     }
 
@@ -176,10 +190,10 @@ export async function requireAuth(
   }
 };
 
-export function requireRole(allowedRoles: string[]) {
-  return function (req: Request, res: Response, next: NextFunction): void {
-    if (!req.user || !req.user.role) {
-      res.status(401).json({ error: "Unauthorized - no user role" });
+export function requireRole(roles: readonly string[]): RequestHandler {
+  return (req, res, next) => {
+    if (!req.user) {
+      res.status(401).json({ error: "Unauthorized" });
       return;
     }
     if (!allowedRoles.includes(req.user.role)) {
@@ -189,4 +203,3 @@ export function requireRole(allowedRoles: string[]) {
     next();
   };
 }
-

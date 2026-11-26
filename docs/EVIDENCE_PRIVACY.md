@@ -33,8 +33,78 @@ payload client-side encrypted before it is uploaded to IPFS or Arweave.
    delivers a viewer-specific wrapped key. The viewer decrypts locally.
 
 The smart contracts never receive plaintext media, raw encryption keys, or
-wrapped keys. The frontend/backend repository owns encryption, wallet-key
-handling, key wrapping, retrieval, and decryption.
+wrapped keys. The backend owns encrypted key storage, grant checks, key wrapping, and the
+release audit log. The wallet holder unwraps and uses the key locally.
+
+## Backend key-wrapping service
+
+The Node API implements
+`POST /api/evidence/:playerId/:milestoneIndex/key`. It accepts a bearer JWT
+from the trusted SEP-10 authentication issuer; the token must contain a
+Stellar wallet address in `sub`, a `role`, and a `jti`. JWTs are verified with
+`JWT_SECRET` (HS256), and revoked token IDs are checked against PostgreSQL on
+every request. The API intentionally does not mint tokens from a caller-
+supplied role. Configure the issuer and API with the same signing secret.
+
+For `role: scout`, the API performs a fresh Soroban RPC simulation of
+`scout_access.has_evidence_access(player_id, scout)` on every request. It does
+not authorize from the eventually-consistent `evidence_access_grants` mirror
+and does not cache results, so an on-chain revocation applies to the next
+request (subject to RPC availability). A false result returns HTTP 403. The
+current contract's grant is permanent unless explicitly revoked: subscription
+expiry does **not** expire a grant. Expired JWTs are rejected by JWT
+verification. `EvidenceAccessGrant` has no expiry field; the audit table's
+`grant_expires_at` is therefore NULL for current grants.
+
+For `role: player`, the authenticated `sub` must match that player's wallet
+in the indexed `players` table. No caller-supplied recipient address is
+accepted. The API retrieves the ciphertext key record, decrypts it in memory,
+and wraps it to the requester's Stellar ed25519 public key. The wrapping
+format is libsodium sealed boxes after ed25519-to-X25519 conversion; the
+client holding the matching Stellar secret key can unwrap it. The plaintext
+data key is never returned, stored, or logged.
+
+### Key setup and operations
+
+Before a key can be requested, the evidence ingestion process must generate a
+random 32-byte data key, encrypt the evidence locally, upload the ciphertext,
+and call `storeEvidenceDataKey` in `src/services/evidenceKeyStore.ts` to store
+the data key encrypted using AES-256-GCM. The AES master key is a base64-
+encoded 32-byte `EVIDENCE_MASTER_KEY`; in production it must be delivered by
+a KMS/secret manager, not checked into source control. The database migration
+is `008_evidence_key_wrapping.sql`. The unique key constraint prevents
+silently replacing a milestone's data key; publish new evidence as a new
+version instead.
+
+Every successful release is recorded in `evidence_key_releases` before the
+wrapped key is returned. If the audit insert fails, the API does not release
+the key. The endpoint is rate-limited to 30 requests per IP per 15 minutes.
+The default limiter is process-local; multi-instance deployments should
+configure a shared rate-limit store and trusted proxy settings.
+
+### Threat model and limitations
+
+- The master key, JWT signing key, database, and backend process are trusted
+  infrastructure. A compromise of the backend or master key can expose stored
+  data keys; production deployments should use KMS envelope encryption,
+  least-privilege database access, rotation, and restricted operator access.
+- The database stores only AES-GCM ciphertext for the data key. Associated
+  data binds each encrypted key to its player and milestone, preventing
+  undetected record swaps. Do not log request bodies containing secret
+  material or add key values to diagnostics.
+- Sealed-box wrapping protects a released key in transit and at rest on the
+  recipient side; it cannot revoke a key already delivered or prevent the
+  authorized wallet holder from copying plaintext evidence.
+- The on-chain check is authoritative for scouts and runs for every request.
+  RPC outages fail closed. Subscription lapse does not revoke a recorded
+  grant, as described above.
+- Owner lookup uses the indexed `players.wallet` record. Keep the indexer
+  current with registration wallet changes; a stale wallet mirror can delay
+  owner access updates.
+
+Because this endpoint releases confidential-data decryption keys, have the
+security reviewers named in `SECURITY.md` review the deployment configuration,
+key-management controls, and audit-log permissions before production use.
 
 ## Contract scope
 

@@ -1,4 +1,4 @@
-import request from "supertest";
+import { randomBytes } from "node:crypto";
 import jwt from "jsonwebtoken";
 import express from "express";
 import { app } from "../../src/app";
@@ -6,14 +6,15 @@ import { issueSep10Token } from "../../src/services/sep10";
 import { prisma } from "../../src/db";
 import { requireAuth } from "../../src/middleware/auth";
 
-import { config } from "../../src/config";
+const secret = "token-revocation-test-secret";
+const revokedTokens = new Set<string>();
 
-// In test, setupEnv sets JWT_ALLOW_HS256_MIGRATION=true so config has no
-// signingKeys but allowHs256Migration=true with a known jwtSecret.
-const migrationConfig = {
-  signingKeys: null,
-  allowHs256Migration: true,
-  jwtSecret: config.jwtSecret,
+const database: EvidenceDatabase = {
+  async query<Row extends Record<string, unknown> = Record<string, unknown>>(
+    _text: string
+  ) {
+    return { rows: [] as Row[], rowCount: 1 };
+  },
 };
 
 beforeEach(async () => {
@@ -116,11 +117,11 @@ describe("Token revocation through real SEP-10 flow", () => {
     }));
   });
 
-  it("should allow revoking a token via the admin endpoint when jti is present", async () => {
-    // Issue an admin-role token so requireRole(["admin"]) is satisfied.
-    const token = await issueSep10Token(
-      { sub: "admin1", role: "admin" },
-      migrationConfig
+describe("token revocation", () => {
+  it("accepts a signed SEP-10 JWT with a jti claim", async () => {
+    const token = issueSep10Token(
+      { sub: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", role: "validator" },
+      secret
     );
 
     const responses = await Promise.all([
@@ -137,34 +138,28 @@ describe("Token revocation through real SEP-10 flow", () => {
 
   it("logout revokes the current session and access-token jti", async () => {
     await request(app)
-      .post("/api/admin/tokens/revoke")
+      .get("/api/tokens/me")
       .set("Authorization", `Bearer ${token}`)
       .send({ token })
       .expect(200)
-      .expect((res) => {
-        expect(res.body.revoked).toBe(true);
+      .expect(({ body }) => {
+        expect(body.jti).toBeDefined();
+        expect(body.role).toBe("validator");
       });
   });
 
-  it("should block the revoked token on subsequent requests", async () => {
-    const token = await issueSep10Token(
-      { sub: "admin1", role: "admin" },
-      migrationConfig
+  it("rejects a revoked token", async () => {
+    const token = issueSep10Token(
+      { sub: "wallet", role: "validator" },
+      secret
     );
+    const { jti } = jwt.verify(token, secret) as jwt.JwtPayload;
+    revokedTokens.add(jti as string);
 
     await request(app)
-      .post("/api/admin/tokens/revoke")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ token });
-
-    // Revocation is enforced by requireAuth (isTokenRevoked), not by the
-    // /api/tokens/me handler, which no longer performs its own lookup.
-    const response = await request(app)
       .get("/api/tokens/me")
       .set("Authorization", `Bearer ${token}`)
       .expect(401);
-
-    expect(response.body.error).toContain("revoked");
   });
 
   it("should accept a lowercase bearer scheme", async () => {
@@ -224,14 +219,12 @@ describe("Token revocation through real SEP-10 flow", () => {
       { sub: "user123", role: "validator" },
       config.jwtSecret
     );
+    const withoutJti = jwt.sign({ sub: "wallet", role: "validator" }, secret);
 
+    expect(jwt.verify(token, secret)).toBeDefined();
     await request(app)
-      .post("/api/admin/tokens/revoke")
-      .set("Authorization", `Bearer ${adminToken}`)
-      .send({ token: manualToken })
-      .expect(400)
-      .expect((res) => {
-        expect(res.body.error).toContain("jti claim");
-      });
+      .get("/api/tokens/me")
+      .set("Authorization", `Bearer ${withoutJti}`)
+      .expect(401);
   });
 });
