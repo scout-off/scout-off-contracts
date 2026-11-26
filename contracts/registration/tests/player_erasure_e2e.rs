@@ -165,6 +165,9 @@ fn test_full_erasure_leaves_no_readable_state() {
 
     // --- Step 4: Run paged erasure (recommended order) ---
 
+    // 4-pre. Erasure interlock (#1807): mark erasure as pending.
+    h.registration.begin_erasure(&player_id);
+
     // 4a. Purge scout_access (no outstanding escrows so cursor 0 → done).
     let (cursor, more) = h.scout_access.purge_player_data(&player_id, &0u32);
     assert!(!more, "scout_access purge should complete in one page");
@@ -261,6 +264,8 @@ fn test_erasure_blocks_on_outstanding_escrow() {
         &player_id,
         &String::from_str(env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB"),
     );
+
+    h.registration.begin_erasure(&player_id);
 
     // Attempt purge while escrow is outstanding — must be rejected.
     let result = h.scout_access.try_purge_player_data(&player_id, &0u32);

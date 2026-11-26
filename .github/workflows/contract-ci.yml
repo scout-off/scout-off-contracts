@@ -7,6 +7,8 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  schedule:
+    - cron: "0 3 * * *"  # nightly at 03:00 UTC (triggers e2e job)
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,12 +21,83 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Path-based gating (issue #1822): docs-only changes skip the heavy
+  # sandbox, ABI, budget and reproducible-build jobs. The `gate` job below is
+  # the single stable check to require in branch protection.
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      contracts: ${{ steps.filter.outputs.contracts }}
+      scripts: ${{ steps.filter.outputs.scripts }}
+      bindings: ${{ steps.filter.outputs.bindings }}
+      docs: ${{ steps.filter.outputs.docs }}
+      backend: ${{ steps.filter.outputs.backend }}
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: |
+            contracts:
+              - 'contracts/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain*'
+              - 'ci/**'
+              - '.github/workflows/contract-ci.yml'
+            scripts:
+              - 'scripts/**'
+              - 'testnet/**'
+              - 'ci/**'
+              - '.github/workflows/contract-ci.yml'
+            bindings:
+              - 'bindings/**'
+              - 'contracts/**'
+              - 'scripts/generate-bindings.sh'
+              - 'scripts/check-bindings.sh'
+              - 'ci/**'
+              - '.github/workflows/contract-ci.yml'
+            docs:
+              - 'docs/**'
+              - '**/*.md'
+              - 'scripts/check-docs.sh'
+              - 'scripts/check-*-consistency.sh'
+              - 'scripts/check-guard-ordering.sh'
+              - 'scripts/check-error-code-continuity.sh'
+              - 'scripts/check-cargo-doc.sh'
+              - '.github/workflows/contract-ci.yml'
+            backend:
+              - 'backend/**'
+              - 'prisma/**'
+              - 'scripts/check-prisma-drift.sh'
+              - 'ci/**'
+              - '.github/workflows/contract-ci.yml'
+            # Anything that can affect a Rust build/test run.
+            code:
+              - 'contracts/**'
+              - 'scripts/**'
+              - 'bindings/**'
+              - 'backend/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain*'
+              - 'ci/**'
+              - '.github/workflows/contract-ci.yml'
+
   test:
     name: Build & Test
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
@@ -33,7 +106,7 @@ jobs:
           targets: wasm32v1-none
 
       - name: Cache cargo registry
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -66,20 +139,19 @@ jobs:
             | tee cpu-cost-budget-report.txt
 
       - name: Upload CPU-cost budget report artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cpu-cost-budget-${{ github.sha }}
           path: cpu-cost-budget-report.txt
           if-no-files-found: error
 
-      - name: Build WASM (release)
-        run: cargo build --workspace --target wasm32v1-none --release --locked
-
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.docs == 'true'
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
         with:
           toolchain: 1.97.1
@@ -102,6 +174,7 @@ jobs:
           shellcheck scripts/smoke-test.sh
           shellcheck scripts/upgrade.sh
           shellcheck scripts/rollback.sh
+          shellcheck scripts/upgrade.sh
           shellcheck scripts/emergency-pause.sh
           shellcheck scripts/emergency-unpause.sh
           shellcheck scripts/migrate-contract.sh
@@ -121,6 +194,9 @@ jobs:
           shellcheck scripts/check-prisma-drift.sh
       - name: Docs completeness check
         run: bash scripts/check-docs.sh
+
+      - name: README/ai.md entrypoint check (warn-only)
+        run: bash scripts/check-readme-ai-docs.sh
       - name: Event-topic consistency check
         run: bash scripts/check-event-topic-consistency.sh
       - name: Guard-ordering audit
@@ -139,7 +215,8 @@ jobs:
   bindings-smoke-test:
     name: Bindings smoke-test (local sandbox)
     runs-on: ubuntu-latest
-    needs: test
+    needs: [changes, test]
+    if: needs.changes.outputs.contracts == 'true' || needs.changes.outputs.scripts == 'true' || needs.changes.outputs.bindings == 'true'
     env:
       # Read-only `stellar contract invoke` calls (health/get_wiring_state/
       # version) still require a --source-account. The sandbox identity is
@@ -150,7 +227,7 @@ jobs:
       NETWORK_PASSPHRASE: "Standalone Network ; February 2017"
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
@@ -159,7 +236,7 @@ jobs:
           targets: wasm32v1-none
 
       - name: Cache cargo registry
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -174,79 +251,15 @@ jobs:
           echo "$HOME/.stellar/bin" >> "$GITHUB_PATH"
 
       - name: Install Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '20'
 
       - name: Build WASM contracts
         run: cargo build --workspace --target wasm32v1-none --release --locked
 
-      - name: Start Soroban local sandbox
-        run: |
-          docker run -d \
-            --name stellar-local \
-            -p 8000:8000 \
-            stellar/quickstart:testing@sha256:66a19476f2ce2ed09c4dccf3f1af4d438209eee9ee05eb113a02dd926e2b03f5 \
-            --local \
-            --limits unlimited
-          # The image digest is pinned to the build (core/RPC v29, XDR v28) that
-          # matches the stellar-cli in ci/stellar-cli-version. Newer `testing`
-          # builds ship RPC/XDR v30, and CLI 28's upload simulation against
-          # them fails with Error(Context, InternalError). Bump the two together.
-          # `--limits unlimited` raises the local network's Soroban resource
-          # ceilings. The stellar-core default limits are extremely low and
-          # reject the upload of `verification`'s ~134 KB optimized WASM with
-          # `HostError: Error(Budget, ExceededLimit)` at simulation time.
-          # Poll getLatestLedger until the DB is initialised and returns
-          # a real ledger sequence (not just an open TCP port).
-          echo "Waiting for Soroban RPC to be ready..."
-          for i in $(seq 1 60); do
-            LEDGER=$(curl -sf http://localhost:8000/soroban/rpc \
-              -X POST \
-              -H 'Content-Type: application/json' \
-              -d '{"jsonrpc":"2.0","id":1,"method":"getLatestLedger"}' \
-              2>/dev/null \
-              | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('result',{}).get('sequence',0))" \
-              2>/dev/null || echo 0)
-            if [ "${LEDGER:-0}" -gt 0 ] 2>/dev/null; then
-              echo "RPC ready — ledger ${LEDGER} after ${i}s"
-              break
-            fi
-            sleep 2
-          done
-          if [ "${LEDGER:-0}" -eq 0 ] 2>/dev/null; then
-            echo "ERROR: Soroban RPC never became ready"
-            docker logs stellar-local
-            exit 1
-          fi
-
-      - name: Register local network with Stellar CLI
-        run: |
-          stellar network add local \
-            --rpc-url http://localhost:8000/soroban/rpc \
-            --network-passphrase "Standalone Network ; February 2017"
-
-      - name: Generate a local sandbox identity
-        run: |
-          stellar keys generate ci-deployer --network local
-          echo "ADMIN_ADDRESS=$(stellar keys address ci-deployer)" >> "$GITHUB_ENV"
-
-      - name: Fund the sandbox identity
-        run: |
-          set -euo pipefail
-          # `keys generate --fund` swallows funding errors (logs a warning and
-          # still exits 0), so fund separately with `keys fund`, which
-          # propagates failures, and retry since friendbot/Horizon can lag
-          # behind the RPC endpoint becoming ready.
-          for i in $(seq 1 30); do
-            if stellar keys fund ci-deployer --network local; then
-              exit 0
-            fi
-            echo "Friendbot not ready yet, retrying (${i}/30)..."
-            sleep 2
-          done
-          echo "ERROR: unable to fund ci-deployer after retries"
-          exit 1
+      - name: Start local sandbox, register network and fund identity
+        run: bash scripts/setup-local.sh --sandbox-only
 
       - name: Deploy all contracts to local sandbox
         run: |
@@ -377,6 +390,33 @@ jobs:
             echo "  OK: dist/index.js present"
           done
 
+      - name: Validate bindings packages (publint, attw, import smoke test)
+        run: |
+          set -euo pipefail
+          for pkg in registration verification progress scout_access; do
+            (cd "bindings/$pkg" && npm run check:package)
+          done
+          node scripts/smoke-test-bindings-exports.mjs
+
+      - name: Run bindings example integration tests against the sandbox
+        run: |
+          set -euo pipefail
+          mkdir -p integration-logs
+          bash scripts/seed-integration-fixtures.sh
+          set -a; source integration.env; set +a
+          for pkg in registration verification progress scout_access; do
+            echo "==> Integration tests for bindings/$pkg..."
+            (cd "bindings/$pkg" && npm run test:integration) 2>&1 | tee "integration-logs/$pkg.log"
+          done
+
+      - name: Upload bindings integration logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bindings-integration-logs
+          path: integration-logs/
+          if-no-files-found: ignore
+
       - name: Verify ABI function coverage in generated bindings
         # Re-extracts each contract's ABI directly from the already-built WASM
         # (Stellar CLI is already installed from the earlier step) and compares
@@ -506,19 +546,20 @@ jobs:
   abi-export:
     name: Export Contract ABIs
     runs-on: ubuntu-latest
-    needs: test
+    needs: [changes, test]
+    if: needs.changes.outputs.contracts == 'true' || needs.changes.outputs.bindings == 'true'
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # stable
         with:
           toolchain: stable
           targets: wasm32v1-none
 
       - name: Cache cargo registry
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -619,7 +660,7 @@ jobs:
           PYEOF
 
       - name: Upload ABI and size-budget artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: contract-abis-${{ github.sha }}
           path: abi/*.json
@@ -628,10 +669,11 @@ jobs:
   abi-diff:
     name: ABI Diff Gate
     runs-on: ubuntu-latest
-    needs: abi-export
+    needs: [changes, abi-export]
+    if: needs.changes.outputs.contracts == 'true' || needs.changes.outputs.bindings == 'true'
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -659,7 +701,7 @@ jobs:
 
       - name: Upload ABI diff report
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: abi-diff-report-${{ github.sha }}
           path: abi/*.json
@@ -667,9 +709,11 @@ jobs:
   storage-layout-compat:
     name: Storage Layout Compat Gate
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -703,25 +747,26 @@ jobs:
   budget-calibration:
     name: Budget Calibration
     runs-on: ubuntu-latest
-    needs: [test, abi-export]
+    needs: [changes, test, abi-export]
+    if: needs.changes.outputs.contracts == 'true'
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download ABI artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: contract-abis-${{ github.sha }}
           path: abi/
 
       - name: Download CPU-cost budget report artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: cpu-cost-budget-${{ github.sha }}
           path: .
 
       - name: Install Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.x'
 
@@ -771,8 +816,10 @@ jobs:
   reproducible-build:
     name: Reproducible WASM build
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build pinned build image
         run: docker build -t scoutchain-wasm-build -f ci/build/Dockerfile ci/build
@@ -790,10 +837,198 @@ jobs:
         run: diff -u out-1/SHA256SUMS out-2/SHA256SUMS && cmp out-1/wasm-hashes.json out-2/wasm-hashes.json
 
       - name: Upload WASM hashes
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wasm-hashes
           path: |
             out-1/wasm-hashes.json
             out-1/SHA256SUMS
             out-1/*.optimized.wasm
+
+  # ── End-to-end: local stack (nightly + label-triggered) ─────────────────────
+  e2e:
+    name: E2E (local stack)
+    runs-on: ubuntu-latest
+    # Run nightly on main, or on PRs/pushes that carry the "run-e2e" label.
+    if: >
+      github.event_name == 'schedule' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      contains(github.event.pull_request.labels.*.name, 'run-e2e')
+    env:
+      NETWORK_PASSPHRASE: "Standalone Network ; February 2017"
+      STELLAR_SOURCE_ACCOUNT: ci-deployer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
+        with:
+          toolchain: 1.97.1
+          targets: wasm32v1-none
+
+      - name: Cache cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-wasm32v1-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install Stellar CLI (pinned)
+        run: |
+          bash scripts/install-stellar-cli.sh
+          echo "$HOME/.stellar/bin" >> "$GITHUB_PATH"
+
+      - name: Install Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '20'
+
+      - name: Install npm dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build WASM contracts
+        run: cargo build --workspace --target wasm32v1-none --release --locked
+
+      - name: Start Soroban local sandbox
+        run: |
+          docker run -d \
+            --name stellar-local \
+            -p 8000:8000 \
+            stellar/quickstart:testing@sha256:66a19476f2ce2ed09c4dccf3f1af4d438209eee9ee05eb113a02dd926e2b03f5 \
+            --local \
+            --limits unlimited
+          echo "Waiting for Soroban RPC..."
+          for i in $(seq 1 60); do
+            LEDGER=$(curl -sf http://localhost:8000/soroban/rpc \
+              -X POST -H 'Content-Type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"getLatestLedger"}' \
+              2>/dev/null \
+              | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('result',{}).get('sequence',0))" \
+              2>/dev/null || echo 0)
+            if [ "${LEDGER:-0}" -gt 0 ]; then echo "RPC ready (ledger ${LEDGER})"; break; fi
+            sleep 2
+          done
+
+      - name: Start PostgreSQL
+        run: |
+          docker run -d \
+            --name e2e-postgres \
+            -e POSTGRES_USER=scoutchain \
+            -e POSTGRES_PASSWORD=scoutchain \
+            -e POSTGRES_DB=scoutchain_dev \
+            -p 5432:5432 \
+            postgres:15
+          for i in $(seq 1 20); do
+            if docker exec e2e-postgres pg_isready -U scoutchain -d scoutchain_dev >/dev/null 2>&1; then
+              echo "PostgreSQL ready"; break
+            fi
+            sleep 2
+          done
+
+      - name: Register local network with Stellar CLI
+        run: |
+          stellar network add local \
+            --rpc-url http://localhost:8000/soroban/rpc \
+            --network-passphrase "$NETWORK_PASSPHRASE"
+
+      - name: Create and fund deployer identity
+        run: |
+          stellar keys generate ci-deployer --network local
+          echo "ADMIN_ADDRESS=$(stellar keys address ci-deployer)" >> "$GITHUB_ENV"
+          for i in $(seq 1 30); do
+            stellar keys fund ci-deployer --network local && exit 0 || sleep 2
+          done
+          exit 1
+
+      - name: Deploy contracts and write .env.contracts
+        run: |
+          set -euo pipefail
+          WASM=target/wasm32v1-none/release
+          ADMIN=$(stellar keys address ci-deployer)
+          XLM_TOKEN="$(stellar contract asset deploy \
+            --asset native --source ci-deployer --network local 2>/dev/null \
+            || stellar contract id asset --asset native --network local)"
+          read -r _ _ FEE_CONFIG_JSON \
+            <<<"$(python3 scripts/lib/read_network_config.py config/testnet.json "$XLM_TOKEN")"
+
+          _deploy() {
+            local pkg="$1"; shift
+            local opt="$WASM/scoutchain_${pkg}.optimized.wasm"
+            stellar contract optimize --wasm "$WASM/scoutchain_${pkg}.wasm" \
+              --wasm-out "$opt" >/dev/null 2>&1 || cp "$WASM/scoutchain_${pkg}.wasm" "$opt"
+            stellar contract deploy \
+              --wasm "$opt" --source ci-deployer --network local \
+              -- "$@" | grep -oE 'C[A-Z0-9]{55}' | tail -1
+          }
+
+          REG=$(_deploy registration --admin "$ADMIN" --xlm-token "$XLM_TOKEN" \
+              --fee-config "$FEE_CONFIG_JSON")
+          VER=$(_deploy verification --admin "$ADMIN" --registration-contract "$REG")
+          PROG=$(_deploy progress --admin "$ADMIN" --registration-contract "$REG")
+          SCOUT=$(_deploy scout_access --admin "$ADMIN" --xlm-token "$XLM_TOKEN" \
+              --fee-config "$FEE_CONFIG_JSON" --registration-contract "$REG")
+
+          stellar contract invoke --id "$VER" --source ci-deployer --network local \
+            -- set_progress_contract --progress-contract "$PROG" >/dev/null
+          stellar contract invoke --id "$SCOUT" --source ci-deployer --network local \
+            -- set_progress_contract --progress-contract "$PROG" >/dev/null
+
+          cat > .env.contracts <<EOF
+          REGISTRATION_CONTRACT_ID=$REG
+          VERIFICATION_CONTRACT_ID=$VER
+          PROGRESS_CONTRACT_ID=$PROG
+          SCOUT_ACCESS_CONTRACT_ID=$SCOUT
+          NETWORK=local
+          NETWORK_PASSPHRASE=$NETWORK_PASSPHRASE
+          XLM_TOKEN_ADDRESS=$XLM_TOKEN
+          ADMIN_ADDRESS=$ADMIN
+          EOF
+
+      - name: Apply SQL migrations
+        run: |
+          for sql in migrations/*.sql; do
+            psql postgresql://scoutchain:scoutchain@localhost:5432/scoutchain_dev < "$sql" >/dev/null 2>&1 || true
+          done
+        env:
+          PGPASSWORD: scoutchain
+
+      - name: Write .env.local for backend
+        run: |
+          SECRET=$(stellar keys show ci-deployer 2>/dev/null || echo "")
+          JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+          source .env.contracts
+          cat > .env.local <<EOF
+          DATABASE_URL=postgresql://scoutchain:scoutchain@localhost:5432/scoutchain_dev
+          JWT_SECRET=$JWT_SECRET
+          JWT_ALLOW_HS256_MIGRATION=true
+          SEP10_SIGNING_SECRET=${SECRET}
+          HOME_DOMAIN=localhost:3000
+          WEB_AUTH_DOMAIN=localhost:3000
+          STELLAR_NETWORK=local
+          NETWORK_PASSPHRASE=$NETWORK_PASSPHRASE
+          REGISTRATION_CONTRACT_ID=${REGISTRATION_CONTRACT_ID}
+          VERIFICATION_CONTRACT_ID=${VERIFICATION_CONTRACT_ID}
+          PROGRESS_CONTRACT_ID=${PROGRESS_CONTRACT_ID}
+          SCOUT_ACCESS_CONTRACT_ID=${SCOUT_ACCESS_CONTRACT_ID}
+          ADMIN_ADDRESS=${ADMIN_ADDRESS}
+          EOF
+
+      - name: Start backend
+        run: |
+          set -a; source .env.local; set +a
+          node dist/src/server.js &
+          for i in $(seq 1 24); do
+            curl -sf http://localhost:3000/health >/dev/null && echo "Backend ready" && exit 0
+            sleep 5
+          done
+          exit 1
+
+      - name: Run e2e tests
+        run: npx jest --config e2e/jest.config.ts --no-coverage
+        env:
+          E2E_BACKEND_URL: http://localhost:3000
+          E2E_RPC_URL: http://localhost:8000/soroban/rpc
+          NETWORK_PASSPHRASE: "Standalone Network ; February 2017"
+          E2E_FRIENDBOT_URL: http://localhost:8000/friendbot
