@@ -224,11 +224,18 @@ pub enum ScoutAccessError {
     /// `InvalidHistoryIndex` for the same contiguity violation.
     InvalidTrialIndex = 58,
 
-    // ── Cursor validation (issue #1825) ──
-    /// A paged purge function was called with a `cursor` greater than the
-    /// total number of entries, so the requested page cannot exist. Returned
-    /// instead of trapping on cursor arithmetic near `u32::MAX`.
-    CursorOutOfRange = 59,
+    // ── Player erasure (issue #1824) ──
+    /// `purge_player_data` found an unexpired, non-zero `TrialEscrow` for the
+    /// player. The escrow must be refunded or allowed to expire before the
+    /// player's data can be erased.
+    TrialEscrowOutstanding = 59,
+    /// `purge_player_data` was called with a cursor other than the next
+    /// expected cursor for this player.
+    InvalidPurgeCursor = 60,
+    // ── Player erasure tombstone ──
+    /// The player has been erased via `registration.deregister_player`; all
+    /// player-scoped writes are permanently blocked for this player_id.
+    PlayerErased = 61,
 }
 
 impl AdminError for ScoutAccessError {
@@ -311,7 +318,7 @@ mod tests {
     }
 
     #[test]
-    fn cursor_out_of_range_is_code_59() {
-        assert_eq!(ScoutAccessError::CursorOutOfRange as u32, 59);
+    fn trial_escrow_outstanding_is_code_59() {
+        assert_eq!(ScoutAccessError::TrialEscrowOutstanding as u32, 59);
     }
 }

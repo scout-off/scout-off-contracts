@@ -17,7 +17,7 @@
 use scoutchain_progress::{DataKey, ProgressContract, ProgressContractClient, ProgressError};
 use soroban_sdk::{
     testutils::{Address as _, MockAuth, MockAuthInvoke},
-    Address, Env, IntoVal,
+    Address, Env, IntoVal, Symbol,
 };
 
 struct Harness {
@@ -47,6 +47,12 @@ fn current_admin(h: &Harness) -> Address {
     })
 }
 
+fn pending_admin(h: &Harness) -> Option<Address> {
+    h.env.as_contract(&h.client.address, || {
+        h.env.storage().persistent().get(&DataKey::PendingAdmin)
+    })
+}
+
 fn accept_admin_as(h: &Harness, who: &Address) {
     h.env.mock_auths(&[MockAuth {
         address: who,
@@ -54,6 +60,20 @@ fn accept_admin_as(h: &Harness, who: &Address) {
             contract: &h.client.address,
             fn_name: "accept_admin",
             args: ().into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+}
+
+/// Authorize exactly one `transfer_admin` invocation, by `who`, and nothing
+/// else. Any `require_auth()` on a different address will fail.
+fn transfer_admin_as(h: &Harness, who: &Address, new_admin: &Address) {
+    h.env.mock_auths(&[MockAuth {
+        address: who,
+        invoke: &MockAuthInvoke {
+            contract: &h.client.address,
+            fn_name: "transfer_admin",
+            args: (new_admin.clone(),).into_val(&h.env),
             sub_invokes: &[],
         },
     }]);
@@ -176,4 +196,151 @@ fn test_accept_without_proposal_is_rejected() {
         "accepting with no pending proposal must fail cleanly"
     );
     assert_eq!(current_admin(&h), h.admin);
+}
+
+/// `transfer_admin` is a one-step-named alias for `propose_admin`: it must only
+/// *propose* the new admin, leaving the current admin in place until the
+/// proposed address accepts.
+#[test]
+fn test_transfer_admin_only_proposes() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+
+    h.client.transfer_admin(&new_admin);
+
+    assert_eq!(
+        current_admin(&h),
+        h.admin,
+        "transfer_admin must not change the admin on its own"
+    );
+    assert_eq!(
+        pending_admin(&h),
+        Some(new_admin),
+        "transfer_admin must record the new address as pending"
+    );
+}
+
+/// After `transfer_admin(B)`, `accept_admin` is still required: without B's
+/// authorization the acceptance fails and the admin stays A; with it, the admin
+/// becomes B.
+#[test]
+fn test_transfer_admin_requires_accept() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.transfer_admin(&new_admin);
+
+    // Someone else cannot accept the pending proposal.
+    let attacker = Address::generate(&h.env);
+    accept_admin_as(&h, &attacker);
+    assert!(
+        h.client.try_accept_admin().is_err(),
+        "an address that was never proposed must not be able to accept"
+    );
+    assert_eq!(
+        current_admin(&h),
+        h.admin,
+        "a failed acceptance must leave the admin unchanged"
+    );
+
+    // The proposed address can.
+    accept_admin_as(&h, &new_admin);
+    assert!(
+        h.client.try_accept_admin().is_ok(),
+        "the proposed address must be able to accept"
+    );
+    assert_eq!(
+        current_admin(&h),
+        new_admin,
+        "admin must be the newly accepted address"
+    );
+}
+
+/// A non-admin calling `transfer_admin` must fail authorization.
+#[test]
+fn test_transfer_admin_non_admin_rejected() {
+    let h = setup();
+    let attacker = Address::generate(&h.env);
+    let new_admin = Address::generate(&h.env);
+
+    // Only the attacker's signature is available; the contract demands the
+    // current admin's, so the call must fail.
+    transfer_admin_as(&h, &attacker, &new_admin);
+    assert!(
+        h.client.try_transfer_admin(&new_admin).is_err(),
+        "a non-admin must not be able to transfer admin"
+    );
+
+    assert_eq!(
+        current_admin(&h),
+        h.admin,
+        "a rejected transfer must leave the admin unchanged"
+    );
+    assert_eq!(
+        pending_admin(&h),
+        None,
+        "a rejected transfer must not record a pending admin"
+    );
+}
+
+/// `transfer_admin` must emit the same event as `propose_admin`.
+#[test]
+fn test_transfer_admin_emits_propose_event() {
+    let h = setup();
+    let via_propose = Address::generate(&h.env);
+    let via_transfer = Address::generate(&h.env);
+
+    h.client.propose_admin(&via_propose);
+    let propose_events = h.env.events().all();
+
+    h.client.transfer_admin(&via_transfer);
+    let transfer_events = h.env.events().all();
+
+    // The event emitted by `transfer_admin` is the last one; compare it against
+    // the last event emitted by `propose_admin`, normalizing the differing
+    // address argument.
+    let propose_event = propose_events.last().expect("propose_admin must emit an event");
+    let transfer_event = transfer_events.last().expect("transfer_admin must emit an event");
+
+    assert_eq!(
+        propose_event.0, transfer_event.0,
+        "transfer_admin must emit an event from the same contract"
+    );
+    assert_eq!(
+        propose_event.1, transfer_event.1,
+        "transfer_admin must emit the same topics as propose_admin"
+    );
+
+    // The data payloads differ only in the proposed address, so compare the
+    // event shape by re-running propose_admin with the same address.
+    let h2 = setup();
+    let same = Address::generate(&h2.env);
+    h2.client.propose_admin(&same);
+    let propose_same = h2.env.events().all();
+    let propose_same_event = propose_same.last().expect("propose_admin must emit an event");
+
+    let h3 = setup();
+    let same3 = Address::generate(&h3.env);
+    h3.client.transfer_admin(&same3);
+    let transfer_same = h3.env.events().all();
+    let transfer_same_event = transfer_same.last().expect("transfer_admin must emit an event");
+
+    assert_eq!(
+        propose_same_event.0, transfer_same_event.0,
+        "transfer_admin must emit an event from the same contract"
+    );
+    assert_eq!(
+        propose_same_event.1, transfer_same_event.1,
+        "transfer_admin must emit the same topics as propose_admin"
+    );
+}
+
+/// Pin the contract kind symbol used by the wiring handshake (#1610).
+#[test]
+fn test_contract_kind() {
+    let h = setup();
+    assert_eq!(
+        h.client.contract_kind(),
+        Symbol::new(&h.env, "progress"),
+        "contract_kind must return the exact wiring symbol"
+    );
 }

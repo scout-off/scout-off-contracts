@@ -383,9 +383,9 @@ fn test_confirm_expiry_refund_is_atomic_with_escrow_cleanup() {
 /// `withdraw_fees` transfers accumulated platform fees to the specified address
 /// and zeroes AccumulatedFees atomically.
 ///
-/// Proves: outbound transfer and AccumulatedFees zero-out happen in the same
-/// transaction frame (observable by checking the recipient's balance and the
-/// return value).
+/// Proves: outbound transfer and the single AccumulatedFees zero-out (written
+/// before the transfer, per CEI) are observable in the same transaction frame
+/// (observable by checking the recipient's balance and the return value).
 #[test]
 fn test_withdraw_fees_is_atomic_with_accumulated_fees_reset() {
     let h = setup();
