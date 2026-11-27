@@ -41,7 +41,8 @@ function normaliseRpcEvent(rawEvent) {
     contractId: rawEvent.contractId ?? rawEvent.contract_id ?? null,
     type: rawEvent.type ?? null,
     ledger: Number(rawEvent.ledger),
-    ledgerCloseTime: rawEvent.ledger_close_time ?? rawEvent.ledgerCloseTime ?? null,
+    ledgerCloseTime:
+      rawEvent.ledger_close_time ?? rawEvent.ledgerCloseTime ?? null,
     data: (() => {
       try {
         if (rawEvent.value && typeof rawEvent.value.xdr === "string") {
@@ -167,7 +168,8 @@ class RpcEventSource {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
     });
     const body = await res.json();
-    if (body.error) throw new Error(`RPC ${method} error: ${body.error.message}`);
+    if (body.error)
+      throw new Error(`RPC ${method} error: ${body.error.message}`);
     return body.result;
   }
 }
@@ -319,7 +321,12 @@ class GalexieArchiveEventSource {
  *                                               or null if none is configured
  * @returns {Promise<{ok: boolean, message?: string}>}
  */
-async function checkRangeCoverage(fromLedger, toLedger, rpcSource, archivalSource) {
+async function checkRangeCoverage(
+  fromLedger,
+  toLedger,
+  rpcSource,
+  archivalSource,
+) {
   if (archivalSource) {
     // Archival source covers full history.
     return { ok: true };
@@ -375,12 +382,18 @@ function createEventSource(config = {}) {
   } = config;
 
   if (!rpcUrl) {
-    throw new Error("createEventSource: rpcUrl is required (or set RPC_URL env var)");
+    throw new Error(
+      "createEventSource: rpcUrl is required (or set RPC_URL env var)",
+    );
   }
 
   const rpc = new RpcEventSource({ rpcUrl, fetchFn });
   const archival = galexieArchiveUrl
-    ? new GalexieArchiveEventSource({ archiveBaseUrl: galexieArchiveUrl, apiKey: galexieApiKey, fetchFn })
+    ? new GalexieArchiveEventSource({
+        archiveBaseUrl: galexieArchiveUrl,
+        apiKey: galexieApiKey,
+        fetchFn,
+      })
     : null;
 
   return { rpc, archival };

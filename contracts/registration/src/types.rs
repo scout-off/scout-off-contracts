@@ -271,6 +271,12 @@ pub enum DataKey {
     /// contracts only delete a player's data while this is set (or the player
     /// no longer exists).
     ErasurePending(u64),
+    /// Address of the verification contract that receives erasure tombstones
+    /// from `deregister_player` (issue #1622). Set by `set_verification_contract`.
+    VerificationContract,
+    /// Address of the scout_access contract that receives erasure tombstones
+    /// from `deregister_player` (issue #1622). Set by `set_scout_access_contract`.
+    ScoutAccessContract,
 }
 
 /// Snapshot of the single cross-contract peer address pointer held by the

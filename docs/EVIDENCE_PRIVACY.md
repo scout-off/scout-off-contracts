@@ -72,7 +72,7 @@ and call `storeEvidenceDataKey` in `src/services/evidenceKeyStore.ts` to store
 the data key encrypted using AES-256-GCM. The AES master key is a base64-
 encoded 32-byte `EVIDENCE_MASTER_KEY`; in production it must be delivered by
 a KMS/secret manager, not checked into source control. The database migration
-is `008_evidence_key_wrapping.sql`. The unique key constraint prevents
+is `018_evidence_key_wrapping.sql`. The unique key constraint prevents
 silently replacing a milestone's data key; publish new evidence as a new
 version instead.
 

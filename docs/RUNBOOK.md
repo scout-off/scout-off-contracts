@@ -135,7 +135,9 @@ Valid contract names: `registration`, `verification`, `progress`, `scout_access`
 #### Example output
 
 ```bash
+========================================
   Emergency Pause - Starting
+========================================
 
 Target network: testnet
 Contracts to pause: registration verification progress scout_access
@@ -158,7 +160,9 @@ Contracts to pause: registration verification progress scout_access
 {"initialized":true,"paused":true}
 {"initialized":true,"paused":true}
 
+========================================
   Emergency Pause - Summary
+========================================
 
 Contract              Pause Result    Health Check
 --------              ------------    ------------
@@ -171,17 +175,6 @@ progress              success         paused:true
 ```
 
 If any contract fails to pause or health check fails, the summary shows the failure and the script exits with code 1.
-
-### Player erasure while paused
-
-`purge_player_data` on **all three** contracts (`scout_access`,
-`progress`, `verification`) is an intentional exception to the pause: it
-remains callable while a contract is paused, because erasure is a compliance
-operation (it deletes state and moves no funds) and operators may be required
-to honour erasure requests precisely during an incident. The guard set is
-identical on all three contracts — `require_admin` → `require_initialized` —
-so erasure is still admin-only and still fails on an uninitialised contract.
-See [PLAYER_ERASURE.md](PLAYER_ERASURE.md) for the full procedure.
 
 ### Player erasure while paused
 
@@ -556,41 +549,9 @@ scenario where the current admin key is lost or compromised and cannot sign
 
 ## Post-Incident Recovery: Unpause All Contracts
 
----
+Only unpause after the root cause has been confirmed as fixed or mitigated.
 
-## Rehearse Routine Admin Rotation
-
-Use `scripts/rehearse-admin-rotation.sh` to rehearse the two-step
-`propose_admin` → `accept_admin` rotation procedure on a **disposable**
-local or testnet deployment before performing it against a real shared
-testnet or mainnet contract.
-
-This is the **routine, happy-path** counterpart to the tabletop exercise in
-[Emergency: Admin Key Loss / Compromise](#emergency-admin-key-loss--compromise)
-above. That exercise rehearses the failure scenario; this one rehearses the
-normal, successful procedure so operators have practised it at least once
-before they need to do it for real (e.g. onboarding a new platform operator,
-rotating keys after a team member leaves, or regular security hygiene).
-
-### When to run this
-
-- Before performing a routine admin rotation on a shared testnet for the
-  first time.
-- Before performing a rotation on mainnet.
-- Any time the rotation procedure in `ai.md` or `docs/DEPLOYMENT.md` is
-  updated — re-run to confirm the new steps still work end-to-end.
-- As part of onboarding a new operator who will be responsible for admin
-  rotations.
-
-### Prerequisites
-
-- `stellar-cli` installed at the pinned version (see `docs/CONTRIBUTING.md`).
-- A running local Soroban quickstart sandbox **or** testnet access with
-  funded accounts.
-- For local: start the sandbox first (see `docs/DEPLOYMENT.md` or the
-  `bindings-smoke-test` CI job for the exact `docker run` command).
-
-### Run the rehearsal
+### One-command unpause script
 
 Run the emergency unpause script:
 

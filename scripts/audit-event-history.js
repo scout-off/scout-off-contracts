@@ -68,7 +68,10 @@ function loadDotEnvContracts() {
     const eq = trimmed.indexOf("=");
     if (eq === -1) continue;
     const key = trimmed.slice(0, eq).trim();
-    const value = trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, "");
+    const value = trimmed
+      .slice(eq + 1)
+      .trim()
+      .replace(/^["']|["']$/g, "");
     if (!(key in process.env)) process.env[key] = value;
   }
 }
@@ -76,16 +79,15 @@ function loadDotEnvContracts() {
 function requireEnv(names) {
   const missing = names.filter((n) => !process.env[n]);
   if (missing.length > 0) {
-    throw new Error(`Missing required environment variable(s): ${missing.join(", ")}`);
+    throw new Error(
+      `Missing required environment variable(s): ${missing.join(", ")}`,
+    );
   }
 }
 
 // --- Event Source abstraction ------------------------------------------------
 
-const {
-  createEventSource,
-  checkRangeCoverage,
-} = require("./lib/event-source");
+const { createEventSource, checkRangeCoverage } = require("./lib/event-source");
 
 // --- Soroban Event Retrieval -------------------------------------------------
 
@@ -103,12 +105,22 @@ const {
  * @param {number}   [fromLedger=1]   — inclusive start ledger
  * @param {number}   [toLedger]  — inclusive end ledger (omit for latest)
  */
-async function fetchEvents(rpcUrl, contractId, fromLedger = 1, toLedger = undefined) {
+async function fetchEvents(
+  rpcUrl,
+  contractId,
+  fromLedger = 1,
+  toLedger = undefined,
+) {
   const { rpc, archival } = createEventSource({ rpcUrl });
 
   // Gap detection: refuse to proceed if the range is not fully covered.
   if (toLedger !== undefined) {
-    const coverage = await checkRangeCoverage(fromLedger, toLedger, rpc, archival);
+    const coverage = await checkRangeCoverage(
+      fromLedger,
+      toLedger,
+      rpc,
+      archival,
+    );
     if (!coverage.ok) {
       throw new Error(`Incomplete event range: ${coverage.message}`);
     }
@@ -116,7 +128,11 @@ async function fetchEvents(rpcUrl, contractId, fromLedger = 1, toLedger = undefi
 
   // Prefer archival source for older ranges; fall back to RPC.
   const source = archival ?? rpc;
-  return source.fetch([contractId], fromLedger, toLedger ?? Number.MAX_SAFE_INTEGER);
+  return source.fetch(
+    [contractId],
+    fromLedger,
+    toLedger ?? Number.MAX_SAFE_INTEGER,
+  );
 }
 
 // --- Event Reconstruction State Machine ---------------------------------------
@@ -166,7 +182,11 @@ class PlayerHistoryReconstructor {
         ledgerSeq: event.ledger_close_time,
       });
     } catch (err) {
-      this.addIssue("warning", "progress_update", `Parse error: ${err.message}`);
+      this.addIssue(
+        "warning",
+        "progress_update",
+        `Parse error: ${err.message}`,
+      );
     }
   }
 
@@ -183,7 +203,11 @@ class PlayerHistoryReconstructor {
         ledgerSeq: event.ledger_close_time,
       });
     } catch (err) {
-      this.addIssue("warning", "player_level_reset", `Parse error: ${err.message}`);
+      this.addIssue(
+        "warning",
+        "player_level_reset",
+        `Parse error: ${err.message}`,
+      );
     }
   }
 
@@ -201,7 +225,11 @@ class PlayerHistoryReconstructor {
         ledger: Number(event.ledger),
       });
     } catch (err) {
-      this.addIssue("warning", "milestone_approved", `Parse error: ${err.message}`);
+      this.addIssue(
+        "warning",
+        "milestone_approved",
+        `Parse error: ${err.message}`,
+      );
     }
   }
 
@@ -219,7 +247,11 @@ class PlayerHistoryReconstructor {
       dispute.disputedAt = Number(data.disputed_at);
       dispute.resolved = false;
     } catch (err) {
-      this.addIssue("warning", "milestone_disputed", `Parse error: ${err.message}`);
+      this.addIssue(
+        "warning",
+        "milestone_disputed",
+        `Parse error: ${err.message}`,
+      );
     }
   }
 
@@ -236,7 +268,11 @@ class PlayerHistoryReconstructor {
       dispute.resolved = true;
       dispute.upheld = data.upheld;
     } catch (err) {
-      this.addIssue("warning", "dispute_resolved", `Parse error: ${err.message}`);
+      this.addIssue(
+        "warning",
+        "dispute_resolved",
+        `Parse error: ${err.message}`,
+      );
     }
   }
 
@@ -254,7 +290,11 @@ class PlayerHistoryReconstructor {
         ledger: Number(event.ledger),
       });
     } catch (err) {
-      this.addIssue("warning", "trial_offer_logged", `Parse error: ${err.message}`);
+      this.addIssue(
+        "warning",
+        "trial_offer_logged",
+        `Parse error: ${err.message}`,
+      );
     }
   }
 
@@ -268,7 +308,11 @@ class PlayerHistoryReconstructor {
         this.trialOffers.get(index).status = "confirmed";
       }
     } catch (err) {
-      this.addIssue("warning", "trial_offer_confirmed", `Parse error: ${err.message}`);
+      this.addIssue(
+        "warning",
+        "trial_offer_confirmed",
+        `Parse error: ${err.message}`,
+      );
     }
   }
 
@@ -282,12 +326,21 @@ class PlayerHistoryReconstructor {
         this.trialOffers.get(index).status = "expired";
       }
     } catch (err) {
-      this.addIssue("warning", "trial_offer_expired", `Parse error: ${err.message}`);
+      this.addIssue(
+        "warning",
+        "trial_offer_expired",
+        `Parse error: ${err.message}`,
+      );
     }
   }
 
   parseLevel(levelStr) {
-    const levels = ["Unverified", "VerifiedIdentity", "PerformanceMilestones", "EliteTier"];
+    const levels = [
+      "Unverified",
+      "VerifiedIdentity",
+      "PerformanceMilestones",
+      "EliteTier",
+    ];
     const idx = levels.indexOf(levelStr);
     return idx === -1 ? null : idx;
   }
@@ -322,14 +375,25 @@ class PlayerHistoryReconstructor {
     return {
       playerId: this.playerId,
       levelProgression: this.levelProgression,
-      currentLevel: this.levelProgression.length > 0
-        ? this.levelProgression[this.levelProgression.length - 1].type === "progress_updated"
-          ? this.levelProgression[this.levelProgression.length - 1].newLevel
-          : this.levelProgression[this.levelProgression.length - 1].resetTo
-        : 0,
-      milestones: Array.from(this.milestones.entries()).map(([idx, m]) => ({ index: idx, ...m })),
-      disputes: Array.from(this.disputes.entries()).map(([idx, d]) => ({ index: idx, ...d })),
-      trialOffers: Array.from(this.trialOffers.entries()).map(([idx, t]) => ({ index: idx, ...t })),
+      currentLevel:
+        this.levelProgression.length > 0
+          ? this.levelProgression[this.levelProgression.length - 1].type ===
+            "progress_updated"
+            ? this.levelProgression[this.levelProgression.length - 1].newLevel
+            : this.levelProgression[this.levelProgression.length - 1].resetTo
+          : 0,
+      milestones: Array.from(this.milestones.entries()).map(([idx, m]) => ({
+        index: idx,
+        ...m,
+      })),
+      disputes: Array.from(this.disputes.entries()).map(([idx, d]) => ({
+        index: idx,
+        ...d,
+      })),
+      trialOffers: Array.from(this.trialOffers.entries()).map(([idx, t]) => ({
+        index: idx,
+        ...t,
+      })),
       issues: this.issues,
     };
   }
@@ -345,7 +409,13 @@ function getContractLevel(rpcUrl, progressId, playerId) {
 
 // --- Main Audit Logic --------------------------------------------------------
 
-async function auditPlayerHistory(rpcUrl, contractIds, playerId, pg, opts = {}) {
+async function auditPlayerHistory(
+  rpcUrl,
+  contractIds,
+  playerId,
+  pg,
+  opts = {},
+) {
   const reconstructor = new PlayerHistoryReconstructor(playerId);
   const fromLedger = opts.fromLedger ?? 1;
   const toLedger = opts.toLedger;
@@ -356,7 +426,12 @@ async function auditPlayerHistory(rpcUrl, contractIds, playerId, pg, opts = {}) 
   const events = [];
   for (const [name, id] of Object.entries(contractIds)) {
     try {
-      const contractEvents = await fetchEvents(rpcUrl, id, fromLedger, toLedger);
+      const contractEvents = await fetchEvents(
+        rpcUrl,
+        id,
+        fromLedger,
+        toLedger,
+      );
       for (const ev of contractEvents) {
         events.push({ ...ev, contractName: name });
       }
@@ -384,7 +459,7 @@ async function auditPlayerHistory(rpcUrl, contractIds, playerId, pg, opts = {}) 
     if (seq < lastLedger) {
       reorgWarnings.push(
         `Possible reorg: event[${i}] ledger ${seq} < previous ledger ${lastLedger} ` +
-        `(contract ${events[i].contractName}, type ${events[i].type})`,
+          `(contract ${events[i].contractName}, type ${events[i].type})`,
       );
     }
     lastLedger = seq;
@@ -399,7 +474,7 @@ async function auditPlayerHistory(rpcUrl, contractIds, playerId, pg, opts = {}) 
       "error",
       "reorg",
       `${reorgWarnings.length} out-of-order ledger sequence(s) detected — ` +
-      "event stream may contain a reorg; reconstructed state may be unreliable",
+        "event stream may contain a reorg; reconstructed state may be unreliable",
     );
   }
 
@@ -478,7 +553,9 @@ function printTextReport(auditResults) {
     console.log(`\n--- Player ${playerId} ---`);
 
     if (reconstructedState.issues.length > 0) {
-      const errors = reconstructedState.issues.filter((i) => i.severity === "error");
+      const errors = reconstructedState.issues.filter(
+        (i) => i.severity === "error",
+      );
       if (errors.length > 0) {
         console.log(`  Issues found: ${errors.length} error(s)`);
         for (const issue of errors) {
@@ -495,7 +572,9 @@ function printTextReport(auditResults) {
 
     if (indexerStateComparisons.level) {
       const match = indexerStateComparisons.level.match ? "✓" : "✗";
-      console.log(`  ${match} Indexer level: ${indexerStateComparisons.level.indexer}`);
+      console.log(
+        `  ${match} Indexer level: ${indexerStateComparisons.level.indexer}`,
+      );
     }
   }
 
@@ -546,10 +625,16 @@ async function main() {
   const results = [];
   for (const playerId of playerIds) {
     try {
-      const audit = await auditPlayerHistory(process.env.RPC_URL, contractIds, playerId, pg, {
-        fromLedger: args.fromLedger ?? undefined,
-        toLedger: args.toLedger ?? undefined,
-      });
+      const audit = await auditPlayerHistory(
+        process.env.RPC_URL,
+        contractIds,
+        playerId,
+        pg,
+        {
+          fromLedger: args.fromLedger ?? undefined,
+          toLedger: args.toLedger ?? undefined,
+        },
+      );
       results.push({ playerId, ...audit });
     } catch (err) {
       console.error(`Failed to audit player ${playerId}: ${err.message}`);
@@ -565,8 +650,8 @@ async function main() {
   }
 
   // Exit with error if any player had consistency issues
-  const hasIssues = results.some(
-    (r) => r.reconstructedState.issues.some((i) => i.severity === "error"),
+  const hasIssues = results.some((r) =>
+    r.reconstructedState.issues.some((i) => i.severity === "error"),
   );
   process.exit(hasIssues ? 1 : 0);
 }

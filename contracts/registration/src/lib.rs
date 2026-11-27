@@ -9,8 +9,8 @@ mod events;
 mod types;
 
 use types::{
-    ContractHealth, DataKey, PlayerSummary, ProgressLevel, RegistrationWiringState,
-    ScoutProfile, ScoutVerificationRecord, StoredPlayerProfile,
+    ContractHealth, DataKey, PlayerSummary, ProgressLevel, RegistrationWiringState, ScoutProfile,
+    ScoutVerificationRecord, StoredPlayerProfile,
 };
 // Re-exported so external integration tests (e.g. tests/integration_progress_sync.rs)
 // can construct register_player's `vitals` argument and read filter_players /
@@ -457,6 +457,34 @@ impl RegistrationContract {
         Ok(())
     }
 
+    /// Store the verification contract address that `deregister_player`
+    /// pushes erasure tombstones to (admin only, issue #1622). Re-settable.
+    pub fn set_verification_contract(env: Env, addr: Address) -> Result<(), ScoutChainError> {
+        let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        if !scoutchain_shared_types::verify_peer(&env, &addr, "verification", 0) {
+            return Err(ScoutChainError::InvalidPeerContract);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::VerificationContract, &addr);
+        events::wiring_updated(&env, &admin, "verification_contract", &addr, 0);
+        Ok(())
+    }
+
+    /// Store the scout_access contract address that `deregister_player`
+    /// pushes erasure tombstones to (admin only, issue #1622). Re-settable.
+    pub fn set_scout_access_contract(env: Env, addr: Address) -> Result<(), ScoutChainError> {
+        let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        if !scoutchain_shared_types::verify_peer(&env, &addr, "scout_access", 0) {
+            return Err(ScoutChainError::InvalidPeerContract);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::ScoutAccessContract, &addr);
+        events::wiring_updated(&env, &admin, "scout_access_contract", &addr, 0);
+        Ok(())
+    }
+
     /// Return the configured progress contract address, or `None` if the
     /// link has not been configured. Read-only and requires no auth.
     pub fn get_progress_contract(env: Env) -> Option<Address> {
@@ -826,14 +854,16 @@ impl RegistrationContract {
             .instance()
             .get::<DataKey, Address>(&DataKey::VerificationContract)
         {
-            verification_contract::Client::new(&env, &verification_addr).mark_player_erased(&player_id);
+            verification_contract::Client::new(&env, &verification_addr)
+                .mark_player_erased(&player_id);
         }
         if let Some(scout_access_addr) = env
             .storage()
             .instance()
             .get::<DataKey, Address>(&DataKey::ScoutAccessContract)
         {
-            scout_access_contract::Client::new(&env, &scout_access_addr).mark_player_erased(&player_id);
+            scout_access_contract::Client::new(&env, &scout_access_addr)
+                .mark_player_erased(&player_id);
         }
 
         events::player_deregistered(&env, player_id, &level, &region, &admin);
@@ -1773,7 +1803,7 @@ impl RegistrationContract {
 
         profile.verification = ScoutVerificationRecord {
             verified: true,
-            verified_by: Some(admin),
+            verified_by: Some(admin.clone()),
             verified_at: Some(env.ledger().timestamp()),
             evidence_ref: None,
             method: Some(String::from_str(&env, "admin_manual")),

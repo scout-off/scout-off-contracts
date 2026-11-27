@@ -359,9 +359,7 @@ fn purge_player_data_requires_admin() {
 
     let stranger = Address::generate(&env);
     assert_eq!(
-        client
-            .mock_auths(&[])
-            .try_purge_player_data(&1u64),
+        client.mock_auths(&[]).try_purge_player_data(&1u64),
         Err(Ok(VerificationError::Unauthorized))
     );
     let _ = stranger;

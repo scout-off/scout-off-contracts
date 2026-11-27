@@ -1397,33 +1397,6 @@ impl ProgressContract {
             }
         }
 
-        // On the final page, also drop the per-player commitment state: the
-        // Merkle frontier accumulator (#1368) and the migration cursor. The
-        // frontier only exists for players whose history postdates #1368, so
-        // its absence is expected and skipped silently.
-        if !more {
-            if env
-                .storage()
-                .persistent()
-                .has(&DataKey::HistoryFrontier(player_id))
-            {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::HistoryFrontier(player_id));
-                removed += 1;
-            }
-            if env
-                .storage()
-                .persistent()
-                .has(&DataKey::MigrationCursor(player_id))
-            {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::MigrationCursor(player_id));
-                removed += 1;
-            }
-        }
-
         events::player_data_purged(&env, &admin, player_id, removed, more);
         Ok((next_cursor, more))
     }
@@ -2224,7 +2197,8 @@ impl ProgressContract {
             .storage()
             .instance()
             .get::<DataKey, Address>(&DataKey::RegistrationContract);
-        let registration_addr = registration_addr.ok_or(ProgressError::RegistrationNotConfigured)?;
+        let registration_addr =
+            registration_addr.ok_or(ProgressError::RegistrationNotConfigured)?;
 
         registration_addr.require_auth();
 
@@ -2232,9 +2206,11 @@ impl ProgressContract {
         env.storage()
             .persistent()
             .set(&DataKey::Erased(player_id), &true);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::Erased(player_id), PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Erased(player_id),
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
 
         Ok(())
     }

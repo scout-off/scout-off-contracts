@@ -834,16 +834,16 @@ fn test_admin_rescue_orphan_trial_escrow_rejects_self_recipient() {
     });
 
     let contract_addr = h.scout_access.address.clone();
-    let result = h.scout_access.try_admin_rescue_orphan_trial_escrow(
-        &player_id,
-        &index,
-        &contract_addr,
-    );
+    let result =
+        h.scout_access
+            .try_admin_rescue_orphan_trial_escrow(&player_id, &index, &contract_addr);
     assert_eq!(result, Err(Ok(ScoutAccessError::InvalidInput)));
 
     // The escrow record must still be present.
     assert!(
-        h.scout_access.get_trial_escrow(&player_id, &index).is_some(),
+        h.scout_access
+            .get_trial_escrow(&player_id, &index)
+            .is_some(),
         "escrow record must not be removed when rescue is rejected"
     );
 
@@ -889,7 +889,9 @@ fn test_admin_rescue_orphan_trial_escrow_clears_state() {
         "trial_escrow_orphan_rescued event must be emitted"
     );
     assert!(
-        h.scout_access.get_trial_escrow(&player_id, &index).is_none(),
+        h.scout_access
+            .get_trial_escrow(&player_id, &index)
+            .is_none(),
         "escrow record must be removed after a successful rescue"
     );
 

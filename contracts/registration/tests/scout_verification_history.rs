@@ -30,7 +30,10 @@ fn verify_unverify_verify_keeps_three_entries_in_order() {
     assert_eq!(h.get(0).unwrap().verified_at, Some(100));
     assert!(!h.get(1).unwrap().verified);
     assert_eq!(h.get(1).unwrap().revoked_at, Some(200));
-    assert_eq!(h.get(1).unwrap().revoked_reason, Some(String::from_str(&env, "bad")));
+    assert_eq!(
+        h.get(1).unwrap().revoked_reason,
+        Some(String::from_str(&env, "bad"))
+    );
     assert!(h.get(2).unwrap().verified);
     assert_eq!(h.get(2).unwrap().verified_at, Some(300));
 

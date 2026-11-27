@@ -1,16 +1,18 @@
-import jwt, { type JwtPayload } from "jsonwebtoken";
-import type { RequestHandler } from "express";
+import { jwtVerify } from "jose";
+import { Request, Response, NextFunction } from "express";
+import { prisma } from "../db";
+import { config } from "../config";
 
-export interface AuthenticatedUser {
-  sub: string;
-  role: string;
-  jti: string;
-}
-
+// Extend the Express Request type so downstream handlers can access req.user
+// without casting.
 declare global {
   namespace Express {
     interface Request {
-      user?: AuthenticatedUser;
+      user?: {
+        sub: string;
+        role: string;
+        jti: string;
+      };
     }
   }
 }
@@ -29,24 +31,15 @@ export interface RequireAuthOptions {
 }
 
 export async function isTokenRevoked(jti: string): Promise<boolean> {
-  return Boolean(await prisma.revokedToken.findUnique({ where: { jti } }));
-}
-
-export async function isSessionRevoked(sid: string): Promise<boolean> {
-  const cached = sessionRevocationCache.get(sid);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.revoked;
+  if (!jti) {
+    return false;
   }
 
   const existingRevocation = await prisma.revokedToken.findUnique({
     where: { jti },
   });
-  const revoked = !session || session.revokedAt !== null;
-  sessionRevocationCache.set(sid, {
-    revoked,
-    expiresAt: Date.now() + SESSION_CACHE_TTL_MS,
-  });
-  return revoked;
+
+  return !!existingRevocation;
 }
 
 // RFC 6750: the auth scheme is case-insensitive; tolerate extra whitespace
@@ -129,12 +122,9 @@ export async function requireAuth(
       .json({ error: "Unauthorized - malformed authorization header" });
     return;
   }
-  return secret;
-}
 
   const token = match[1];
 
-  let secret: string;
   try {
     const payload = await verifyToken(token);
 
@@ -142,39 +132,13 @@ export async function requireAuth(
       res.status(401).json({ error: "Unauthorized - token has no jti claim" });
       return;
     }
-    payload = verified;
-  } catch {
-    res.status(401).json({ error: "Unauthorized - invalid token" });
-    return;
-  }
 
-    let payload: JwtPayload;
-    try {
-      const verified = jwt.verify(authHeader.slice(7), secret, {
-        algorithms: ["HS256"],
-      });
-      if (typeof verified === "string") {
-        res.status(401).json({ error: "Unauthorized" });
-        return;
-      }
-      payload = verified;
-    } catch {
-      res.status(401).json({ error: "Unauthorized" });
-      return;
-    }
+    const revoked = await isTokenRevoked(payload.jti);
 
-    if (
-      typeof payload.sub !== "string" ||
-      typeof payload.role !== "string" ||
-      typeof payload.jti !== "string" ||
-      payload.jti.length === 0
-    ) {
-      res.status(401).json({ error: "Unauthorized" });
-      return;
-    }
-
-    if (payload.role === UNKNOWN_ROLE && !allowUnknown) {
-      res.status(403).json({ error: "Forbidden - wallet not registered" });
+    if (revoked) {
+      res
+        .status(401)
+        .json({ error: "Unauthorized - token has been revoked" });
       return;
     }
 
@@ -187,24 +151,27 @@ export async function requireAuth(
       sub: payload.sub,
       role: payload.role,
       jti: payload.jti,
-      ...(typeof payload.sid === "string" ? { sid: payload.sid } : {}),
     };
+
     next();
   } catch {
     res.status(401).json({ error: "Unauthorized - invalid token" });
   }
-};
+}
 
-export function requireRole(roles: readonly string[]): RequestHandler {
-  return (req, res, next) => {
-    if (!req.user) {
-      res.status(401).json({ error: "Unauthorized" });
+export function requireRole(allowedRoles: string[]) {
+  return function (req: Request, res: Response, next: NextFunction): void {
+    if (!req.user || !req.user.role) {
+      res.status(401).json({ error: "Unauthorized - no user role" });
       return;
     }
+
     if (!allowedRoles.includes(req.user.role)) {
       res.status(403).json({ error: "Forbidden - insufficient role" });
       return;
     }
+
     next();
   };
 }
+

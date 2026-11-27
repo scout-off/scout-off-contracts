@@ -158,7 +158,9 @@ fn multiple_rounds_on_same_milestone_returns_expected_rounds() {
 
     // Advance past the cooldown so the milestone can be disputed again.
     let seq = s.env.ledger().sequence();
-    s.env.ledger().set_sequence_number(seq + DISPUTE_COOLDOWN + 1);
+    s.env
+        .ledger()
+        .set_sequence_number(seq + DISPUTE_COOLDOWN + 1);
 
     // Round 2: open and leave open.
     let round2 = open_dispute(&s);

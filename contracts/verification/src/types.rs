@@ -598,6 +598,10 @@ pub enum DataKey {
     /// Start timestamp of the current per-(validator, player) cap window
     /// (issue #1615). Absent for counts written before windows existed.
     ValidatorPlayerWindowStart(Address, u64),
+    /// O(1) count of distinct players in `ValidatorPlayers(wallet)`, read by
+    /// `get_validator_activity_report` (issue #1806). Absent for validators
+    /// written before the counter existed (the report falls back to the index).
+    ValidatorPlayerCount(Address),
     /// The next accepted cursor for a player's paged erasure. Absent before
     /// erasure starts and after it completes.
     PurgeCursor(u64),

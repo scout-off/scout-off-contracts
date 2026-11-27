@@ -3,7 +3,7 @@ import { prisma } from "./db";
 import { startCleanupJob } from "./jobs/cleanup";
 import { logger } from "./logger";
 
-const PORT = config.port;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 
@@ -102,35 +102,39 @@ export async function shutdown({
   exit(0);
 }
 
-const server = app.listen(PORT, () => {
-  logger.info(`ScoutChain backend listening on port ${PORT}`);
+// Only bind the port when run directly (node dist/server.js), so tests can
+// import `shutdown` without starting the HTTP server.
+if (require.main === module) {
+  const server = app.listen(PORT, () => {
+    logger.info(`ScoutChain backend listening on port ${PORT}`);
 
-  // Start the cleanup job
-  startCleanupJob();
-});
-
-// Sensible keep-alive/header timeouts. headersTimeout must be greater than
-// keepAliveTimeout so the server does not close connections prematurely.
-server.keepAliveTimeout = 65_000;
-server.headersTimeout = 66_000;
-
-let shuttingDown = false;
-
-function handleSignal(signal: string): void {
-  if (shuttingDown) {
-    // eslint-disable-next-line no-console
-    console.log(`Received ${signal} while already shutting down, ignoring.`);
-    return;
-  }
-  shuttingDown = true;
-
-  void shutdown({
-    server,
-    prisma,
-    signal,
-    timeoutMs: getShutdownTimeoutMs(),
+    // Start the cleanup job
+    startCleanupJob();
   });
-}
 
-process.on("SIGTERM", () => handleSignal("SIGTERM"));
-process.on("SIGINT", () => handleSignal("SIGINT"));
+  // Sensible keep-alive/header timeouts. headersTimeout must be greater than
+  // keepAliveTimeout so the server does not close connections prematurely.
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 66_000;
+
+  let shuttingDown = false;
+
+  function handleSignal(signal: string): void {
+    if (shuttingDown) {
+      // eslint-disable-next-line no-console
+      console.log(`Received ${signal} while already shutting down, ignoring.`);
+      return;
+    }
+    shuttingDown = true;
+
+    void shutdown({
+      server,
+      prisma,
+      signal,
+      timeoutMs: getShutdownTimeoutMs(),
+    });
+  }
+
+  process.on("SIGTERM", () => handleSignal("SIGTERM"));
+  process.on("SIGINT", () => handleSignal("SIGINT"));
+}

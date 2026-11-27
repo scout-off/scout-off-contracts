@@ -236,6 +236,10 @@ pub enum ScoutAccessError {
     /// The player has been erased via `registration.deregister_player`; all
     /// player-scoped writes are permanently blocked for this player_id.
     PlayerErased = 61,
+    // ── Erasure interlock (issue #1807) ──
+    /// `purge_player_data` was called for a player whose erasure has not been
+    /// started via `registration.begin_erasure` (or registration is unwired).
+    ErasureNotAuthorized = 62,
 }
 
 impl AdminError for ScoutAccessError {

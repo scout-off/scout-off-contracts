@@ -10,7 +10,7 @@ import { config } from "../config";
  * Get client IP address, respecting reverse proxies.
  * Uses req.ip when app.set("trust proxy") is enabled, otherwise falls back to socket address.
  */
-export function getClientIp(req: { ip: string; connection?: { remoteAddress?: string } }): string {
+export function getClientIp(req: { ip?: string; connection?: { remoteAddress?: string } }): string {
   return req.ip || (req.connection?.remoteAddress as string) || "unknown";
 }
 

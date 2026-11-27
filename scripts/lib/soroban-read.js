@@ -63,14 +63,25 @@ function encodeArgs(args) {
 // bigint -> Number when safe (the CLI prints plain JSON numbers), else string.
 function normalize(v) {
   if (typeof v === "bigint") {
-    return v <= BigInt(Number.MAX_SAFE_INTEGER) && v >= BigInt(Number.MIN_SAFE_INTEGER)
+    return v <= BigInt(Number.MAX_SAFE_INTEGER) &&
+      v >= BigInt(Number.MIN_SAFE_INTEGER)
       ? Number(v)
       : v.toString();
   }
   if (Array.isArray(v)) return v.map(normalize);
-  if (v instanceof Map) return Object.fromEntries([...v].map(([k, x]) => [String(k), normalize(x)]));
-  if (v && typeof v === "object" && !(v instanceof Uint8Array) && !Buffer.isBuffer(v)) {
-    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, normalize(x)]));
+  if (v instanceof Map)
+    return Object.fromEntries(
+      [...v].map(([k, x]) => [String(k), normalize(x)]),
+    );
+  if (
+    v &&
+    typeof v === "object" &&
+    !(v instanceof Uint8Array) &&
+    !Buffer.isBuffer(v)
+  ) {
+    return Object.fromEntries(
+      Object.entries(v).map(([k, x]) => [k, normalize(x)]),
+    );
   }
   return v;
 }
@@ -88,21 +99,29 @@ function createLimiter(max) {
     if (active >= max || queue.length === 0) return;
     active++;
     const { fn, resolve, reject } = queue.shift();
-    fn().then(resolve, reject).finally(() => {
-      active--;
+    fn()
+      .then(resolve, reject)
+      .finally(() => {
+        active--;
+        next();
+      });
+  };
+  return (fn) =>
+    new Promise((resolve, reject) => {
+      queue.push({ fn, resolve, reject });
       next();
     });
-  };
-  return (fn) => new Promise((resolve, reject) => {
-    queue.push({ fn, resolve, reject });
-    next();
-  });
 }
 
 function isRetryable(err) {
   const status = err && (err.status || (err.response && err.response.status));
   if (status) return status === 429 || status >= 500;
-  return Boolean(err && (err.code === "ECONNRESET" || err.code === "ETIMEDOUT" || err.code === "ECONNABORTED"));
+  return Boolean(
+    err &&
+      (err.code === "ECONNRESET" ||
+        err.code === "ETIMEDOUT" ||
+        err.code === "ECONNABORTED"),
+  );
 }
 
 async function withRetry(fn, { retries, baseDelayMs, sleep }) {
@@ -129,10 +148,15 @@ function createSorobanInvoker(opts = {}) {
   const servers = new Map();
   const serverFor = (network) => {
     if (opts.server) return opts.server;
-    const url = opts.rpcUrl || process.env.SOROBAN_RPC_URL || DEFAULT_RPC_URLS[network];
-    if (!url) throw new Error(`soroban-read: no RPC URL for network "${network}"`);
+    const url =
+      opts.rpcUrl || process.env.SOROBAN_RPC_URL || DEFAULT_RPC_URLS[network];
+    if (!url)
+      throw new Error(`soroban-read: no RPC URL for network "${network}"`);
     if (!servers.has(url)) {
-      servers.set(url, new sdk.rpc.Server(url, { allowHttp: url.startsWith("http://") }));
+      servers.set(
+        url,
+        new sdk.rpc.Server(url, { allowHttp: url.startsWith("http://") }),
+      );
     }
     return servers.get(url);
   };
@@ -140,9 +164,10 @@ function createSorobanInvoker(opts = {}) {
   return async function invoke(network, source, contractId, fn, args) {
     try {
       const scArgs = encodeArgs(args);
-      const sourcePk = source && sdk.StrKey.isValidEd25519PublicKey(source)
-        ? source
-        : sdk.Keypair.random().publicKey();
+      const sourcePk =
+        source && sdk.StrKey.isValidEd25519PublicKey(source)
+          ? source
+          : sdk.Keypair.random().publicKey();
       const tx = new sdk.TransactionBuilder(new sdk.Account(sourcePk, "0"), {
         fee: "100",
         networkPassphrase: PASSPHRASES[network] || PASSPHRASES.testnet,
@@ -151,9 +176,14 @@ function createSorobanInvoker(opts = {}) {
         .setTimeout(30)
         .build();
       const sim = await limit(() =>
-        withRetry(() => serverFor(network).simulateTransaction(tx), { retries, baseDelayMs, sleep })
+        withRetry(() => serverFor(network).simulateTransaction(tx), {
+          retries,
+          baseDelayMs,
+          sleep,
+        }),
       );
-      if (sdk.rpc.Api.isSimulationError(sim)) return { ok: false, error: sim.error };
+      if (sdk.rpc.Api.isSimulationError(sim))
+        return { ok: false, error: sim.error };
       return { ok: true, value: decodeResult(sim.result && sim.result.retval) };
     } catch (err) {
       return { ok: false, error: err.message || String(err) };
@@ -161,4 +191,12 @@ function createSorobanInvoker(opts = {}) {
   };
 }
 
-module.exports = { createSorobanInvoker, encodeArgs, encodeArg, decodeResult, createLimiter, withRetry, isRetryable };
+module.exports = {
+  createSorobanInvoker,
+  encodeArgs,
+  encodeArg,
+  decodeResult,
+  createLimiter,
+  withRetry,
+  isRetryable,
+};

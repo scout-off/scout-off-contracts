@@ -18,7 +18,13 @@ use soroban_sdk::{
 /// Standard test setup mirroring `admin_transfer_properties.rs`:
 /// register the contract, wire a registration stub, configure fees and
 /// register a Stellar asset contract for the escrow token.
-fn setup<'a>() -> (Env, ScoutAccessContractClient<'a>, Address, Address, Address) {
+fn setup<'a>() -> (
+    Env,
+    ScoutAccessContractClient<'a>,
+    Address,
+    Address,
+    Address,
+) {
     let env = Env::default();
     env.mock_all_auths();
 

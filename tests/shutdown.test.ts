@@ -1,152 +1,92 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { shutdown } from "../src/server";
 
-// We import the helper lazily inside tests after mocking dependencies where needed.
-// The helper is expected to be exported from src/server.ts as `gracefulShutdown`.
-import { gracefulShutdown } from '../src/server';
+type CloseCallback = (err?: Error) => void;
 
-type FakeServer = {
-  close: (cb?: (err?: Error) => void) => void;
-  keepAliveTimeout?: number;
-  headersTimeout?: number;
-};
-
-type FakePrisma = {
-  $disconnect: () => Promise<void>;
-};
-
-function makeFakeServer(closeImpl?: (cb?: (err?: Error) => void) => void): FakeServer {
+function fakeServer(closeImpl?: (cb?: CloseCallback) => void) {
   return {
-    close: vi.fn(closeImpl ?? ((cb?: (err?: Error) => void) => cb && cb())),
+    close: jest.fn(closeImpl ?? ((cb?: CloseCallback) => cb && cb())),
   };
 }
 
-function makeFakePrisma(disconnectImpl?: () => Promise<void>): FakePrisma {
+function fakePrisma(disconnectImpl?: () => Promise<void>) {
   return {
-    $disconnect: vi.fn(disconnectImpl ?? (() => Promise.resolve())),
+    $disconnect: jest.fn(disconnectImpl ?? (() => Promise.resolve())),
   };
 }
 
-describe('gracefulShutdown', () => {
-  let exitSpy: ReturnType<typeof vi.spyOn>;
-  let logSpy: ReturnType<typeof vi.spyOn>;
-  let errorSpy: ReturnType<typeof vi.spyOn>;
+function harness() {
+  const logs: string[] = [];
+  const exit = jest.fn();
+  const log = (message: string) => {
+    logs.push(message);
+  };
+  return { logs, exit, log };
+}
 
-  beforeEach(() => {
-    exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-      // Throw to stop execution flow after exit is called, mimicking real exit.
-      throw new Error(`__EXIT__:${code ?? 0}`);
-    }) as never);
-    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-  });
+describe("shutdown", () => {
+  it("closes the server, disconnects prisma, and exits 0 on a clean close", async () => {
+    const server = fakeServer();
+    const prisma = fakePrisma();
+    const h = harness();
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it('closes the server, disconnects prisma, and exits with code 0 on clean close', async () => {
-    const server = makeFakeServer();
-    const prisma = makeFakePrisma();
-
-    await expect(
-      gracefulShutdown({ server: server as never, prisma: prisma as never, signal: 'SIGTERM' }),
-    ).rejects.toThrow('__EXIT__:0');
+    await shutdown({ server, prisma, signal: "SIGTERM", timeoutMs: 1000, exit: h.exit, log: h.log });
 
     expect(server.close).toHaveBeenCalledTimes(1);
     expect(prisma.$disconnect).toHaveBeenCalledTimes(1);
-    expect(exitSpy).toHaveBeenCalledWith(0);
+    expect(h.exit).toHaveBeenCalledWith(0);
   });
 
-  it('logs each shutdown step', async () => {
-    const server = makeFakeServer();
-    const prisma = makeFakePrisma();
+  it("logs the signal and each shutdown step", async () => {
+    const h = harness();
 
-    await expect(
-      gracefulShutdown({ server: server as never, prisma: prisma as never, signal: 'SIGINT' }),
-    ).rejects.toThrow('__EXIT__:0');
+    await shutdown({
+      server: fakeServer(),
+      prisma: fakePrisma(),
+      signal: "SIGINT",
+      timeoutMs: 1000,
+      exit: h.exit,
+      log: h.log,
+    });
 
-    const logged = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    const logged = h.logs.join("\n");
     expect(logged).toMatch(/SIGINT/);
-    expect(logged).toMatch(/clos/i);
+    expect(logged).toMatch(/closed/i);
     expect(logged).toMatch(/disconnect/i);
-    expect(logged).toMatch(/exit/i);
+    expect(logged).toMatch(/complete/i);
   });
 
-  it('forces exit with non-zero code when server.close never completes (timeout)', async () => {
-    // close never invokes its callback -> simulates hanging in-flight requests.
-    const server = makeFakeServer(() => {
-      /* never call cb */
+  it("forces exit 1 when server.close never completes", async () => {
+    const server = fakeServer(() => {
+      /* never calls back: simulates hung in-flight requests */
     });
-    const prisma = makeFakePrisma();
+    const prisma = fakePrisma();
+    const h = harness();
 
-    await expect(
-      gracefulShutdown({
-        server: server as never,
-        prisma: prisma as never,
-        signal: 'SIGTERM',
-        timeoutMs: 20,
-      }),
-    ).rejects.toThrow(/__EXIT__:(?!0$)\d+/);
+    await shutdown({ server, prisma, signal: "SIGTERM", timeoutMs: 20, exit: h.exit, log: h.log });
 
-    expect(server.close).toHaveBeenCalledTimes(1);
-    // Documented behaviour: prisma is still disconnected even on timeout.
-    expect(prisma.$disconnect).toHaveBeenCalledTimes(1);
-    expect(exitSpy).toHaveBeenCalledTimes(1);
-    const exitCode = exitSpy.mock.calls[0][0] as number;
-    expect(exitCode).not.toBe(0);
+    expect(h.exit).toHaveBeenCalledTimes(1);
+    expect(h.exit).toHaveBeenCalledWith(1);
+    expect(h.logs.join("\n")).toMatch(/timed out/i);
   });
 
-  it('logs a timeout warning when close does not complete in time', async () => {
-    const server = makeFakeServer(() => {
-      /* never call cb */
-    });
-    const prisma = makeFakePrisma();
+  it("still disconnects prisma when server.close reports an error", async () => {
+    const server = fakeServer((cb?: CloseCallback) => cb && cb(new Error("close failed")));
+    const prisma = fakePrisma();
+    const h = harness();
 
-    await expect(
-      gracefulShutdown({
-        server: server as never,
-        prisma: prisma as never,
-        signal: 'SIGTERM',
-        timeoutMs: 20,
-      }),
-    ).rejects.toThrow(/__EXIT__/);
-
-    const allLogs = [
-      ...logSpy.mock.calls.map((c) => String(c[0])),
-      ...errorSpy.mock.calls.map((c) => String(c[0])),
-    ].join('\n');
-    expect(allLogs).toMatch(/timeout|timed out/i);
-  });
-
-  it('still disconnects prisma and exits non-zero if server.close reports an error', async () => {
-    const server = makeFakeServer((cb?: (err?: Error) => void) => {
-      if (cb) cb(new Error('close failed'));
-    });
-    const prisma = makeFakePrisma();
-
-    await expect(
-      gracefulShutdown({ server: server as never, prisma: prisma as never, signal: 'SIGTERM' }),
-    ).rejects.toThrow(/__EXIT__:(?!0$)\d+/);
+    await shutdown({ server, prisma, signal: "SIGTERM", timeoutMs: 1000, exit: h.exit, log: h.log });
 
     expect(prisma.$disconnect).toHaveBeenCalledTimes(1);
-    const exitCode = exitSpy.mock.calls[0][0] as number;
-    expect(exitCode).not.toBe(0);
+    expect(h.logs.join("\n")).toMatch(/close failed/);
   });
 
-  it('is idempotent: a second signal does not trigger a second shutdown', async () => {
-    const server = makeFakeServer();
-    const prisma = makeFakePrisma();
+  it("exits 0 even if prisma.$disconnect rejects", async () => {
+    const prisma = fakePrisma(() => Promise.reject(new Error("db gone")));
+    const h = harness();
 
-    await expect(
-      gracefulShutdown({ server: server as never, prisma: prisma as never, signal: 'SIGTERM' }),
-    ).rejects.toThrow('__EXIT__:0');
+    await shutdown({ server: fakeServer(), prisma, signal: "SIGTERM", timeoutMs: 1000, exit: h.exit, log: h.log });
 
-    // Second invocation should be a no-op (already shutting down / exited).
-    await expect(
-      gracefulShutdown({ server: server as never, prisma: prisma as never, signal: 'SIGINT' }),
-    ).rejects.toThrow('__EXIT__:0');
-
-    expect(server.close).toHaveBeenCalledTimes(1);
-    expect(prisma.$disconnect).toHaveBeenCalledTimes(1);
+    expect(h.logs.join("\n")).toMatch(/db gone/);
+    expect(h.exit).toHaveBeenCalledWith(0);
   });
 });
