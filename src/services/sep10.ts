@@ -4,6 +4,7 @@ import { SignJWT, decodeJwt } from "jose";
 import { WebAuth, Keypair, TransactionBuilder } from "@stellar/stellar-sdk";
 import { prisma } from "../db";
 import { config } from "../config";
+import { AuthError, wrapSdkAuth } from "./errors";
 import type { SigningKeys } from "../keys";
 
 interface Sep10TokenPayload {

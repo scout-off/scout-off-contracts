@@ -26,6 +26,8 @@ import {
 } from "./metrics";
 import { buildJwks } from "./jwks";
 import { listPlayers, getPlayer } from "./services/players";
+import { validate, AccountQuery, VerifyBody, RefreshBody, RevokeBody } from "./requestValidation";
+import { applyHttpHardening } from "./httpHardening";
 const app = express();
 
 // Health endpoints are registered before the JSON body parser and any
@@ -101,7 +103,7 @@ const pinoMiddleware = pinoHttp({
 });
 
 app.use(pinoMiddleware);
-app.use(express.json());
+applyHttpHardening(app);
 
 // Metrics endpoint must come before other routes to avoid being captured by request duration middleware
 app.use("/metrics", metricsAuthMiddleware);
@@ -159,6 +161,7 @@ app.get(
   "/auth",
   rateLimitMiddleware.getAuth,
   rateLimitMiddleware.getAuthAccount,
+  validate({ query: AccountQuery }),
   async (req: Request, res: Response) => {
   const requestId = (req as Request & { requestId?: string }).requestId;
   const account = req.query.account;
@@ -193,6 +196,7 @@ app.get(
 app.post(
   "/auth",
   rateLimitMiddleware.postAuth,
+  validate({ body: VerifyBody }),
   async (req: Request, res: Response) => {
   const requestId = (req as Request & { requestId?: string }).requestId;
   const { transaction, account } = req.body as {
@@ -245,7 +249,7 @@ app.post(
 });
 
 // Refresh endpoint — rotates the refresh token and re-derives the role.
-app.post("/auth/refresh", rateLimitMiddleware.postAuthRefresh, async (req: Request, res: Response) => {
+app.post("/auth/refresh", rateLimitMiddleware.postAuthRefresh, validate({ body: RefreshBody }), async (req: Request, res: Response) => {
   const requestId = (req as Request & { requestId?: string }).requestId;
   const { refreshToken } = req.body as { refreshToken?: string };
 
@@ -298,20 +302,10 @@ app.post(
     let jti: string;
     let exp: number | null = null;
 
-      let payload: JwtPayload;
-      try {
-        const verified = jwt.verify(token, dependencies.jwtSecret, {
-          algorithms: ["HS256"],
-        });
-        if (typeof verified === "string") {
-          res.status(400).json({ error: "Invalid token" });
-          return;
-        }
-        payload = verified;
-      } catch {
-        res.status(400).json({ error: "Invalid token" });
-        return;
-      }
+    try {
+      // Use the same asymmetric / migration verification logic as requireAuth.
+      const { signingKeys, allowHs256Migration, jwtSecret } = config;
+      let jtiValue: string | undefined;
 
       if (signingKeys) {
         const parts = token.split(".");
@@ -344,42 +338,14 @@ app.post(
         return res.status(500).json({ error: "No verification key available" });
       }
 
-      try {
-        await dependencies.database.query(
-          "INSERT INTO revoked_tokens (jti) VALUES ($1) ON CONFLICT (jti) DO NOTHING",
-          [payload.jti]
-        );
-        res.json({ revoked: true });
-      } catch (error) {
-        next(error);
+      if (!jtiValue) {
+        return res.status(400).json({ error: "Token does not contain a jti claim" });
       }
       jti = jtiValue;
     } catch {
       logger.warn({ requestId }, "POST /api/admin/tokens/revoke: invalid token");
       return res.status(400).json({ error: "Invalid token" });
     }
-  );
-
-  app.use(
-    "/api/evidence",
-    createEvidenceRouter({
-      database: dependencies.database,
-      grantChecker: dependencies.grantChecker,
-      masterKey: dependencies.masterKey,
-      authenticate,
-    })
-  );
-
-  app.use(
-    (
-      _error: unknown,
-      _req: Request,
-      res: Response,
-      _next: (error?: unknown) => void
-    ) => {
-      res.status(500).json({ error: "Internal server error" });
-    }
-  );
 
     // Store the token expiry so cleanup can properly track when to delete the revocation
     await prisma.revokedToken.create({
@@ -480,3 +446,4 @@ app.get(
 );
 
 export { app };
+export { createApp } from "./evidenceApp";

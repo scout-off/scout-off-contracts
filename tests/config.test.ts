@@ -18,6 +18,9 @@ const VALID_ASYMMETRIC = {
   STELLAR_NETWORK: "testnet",
 };
 
+/** Alias used by the issuer/audience/admin tests below. */
+const VALID = VALID_ASYMMETRIC;
+
 const LOCAL_PASSPHRASE = "Standalone Network ; February 2017";
 /** Minimal valid env using HS256 migration mode. */
 const VALID_MIGRATION = {
