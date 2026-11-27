@@ -1397,33 +1397,6 @@ impl ProgressContract {
             }
         }
 
-        // On the final page, also drop the per-player commitment state: the
-        // Merkle frontier accumulator (#1368) and the migration cursor. The
-        // frontier only exists for players whose history postdates #1368, so
-        // its absence is expected and skipped silently.
-        if !more {
-            if env
-                .storage()
-                .persistent()
-                .has(&DataKey::HistoryFrontier(player_id))
-            {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::HistoryFrontier(player_id));
-                removed += 1;
-            }
-            if env
-                .storage()
-                .persistent()
-                .has(&DataKey::MigrationCursor(player_id))
-            {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::MigrationCursor(player_id));
-                removed += 1;
-            }
-        }
-
         events::player_data_purged(&env, &admin, player_id, removed, more);
         Ok((next_cursor, more))
     }
