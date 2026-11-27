@@ -51,9 +51,25 @@ The initial v0.1.0 entry below retains the year-only date because no exact histo
   the monitor against testnet every 6 hours and uploads the report as an artifact.
   `docs/RUNBOOK.md` has a new section documenting how to respond to a deficit or surplus.
 
+- Contracts affected: `registration`, `scout_access`, `progress`, `verification`, `shared-types`
+- Summary: Added erasure tombstone mechanism (issue #1622). `registration.deregister_player` now cross-calls each wired contract's `mark_player_erased(player_id)` to write a local `Erased(player_id)` tombstone flag. All player-scoped write entrypoints in `progress`, `verification`, and `scout_access` check this flag and return `PlayerErased` error if set. New error codes: `PlayerErased` (registration: 22, progress: 30, verification: 66, scout_access: 61). Updated `docs/PLAYER_ERASURE.md` with the tombstone invariant.
+- Classification: `Non-breaking (MINOR)` — additive behavior with new error codes; existing entrypoints gain a pre-check but no signature changes.
 
+- Contracts affected: `registration`, `scout_access`, `progress`, `verification`, `shared-types`
+- Summary: Added erasure tombstone mechanism (issue #1622). `registration.deregister_player` now cross-calls each wired contract's `mark_player_erased(player_id)` to write a local `Erased(player_id)` tombstone flag. All player-scoped write entrypoints in `progress`, `verification`, and `scout_access` check this flag and return `PlayerErased` error if set. New error codes: `PlayerErased` (registration: 22, progress: 29, verification: 65, scout_access: 59). Updated `docs/PLAYER_ERASURE.md` with the tombstone invariant.
+- Classification: `Non-breaking (MINOR)` — additive behavior with new error codes; existing entrypoints gain a pre-check but no signature changes.
+
+- Contracts affected: `registration`, `scout_access`, `progress`, `verification`, `shared-types`
 - Summary: Added `registration.unverify_scout` / `is_scout_verified` and the `scout_unverified` event; `ScoutVerificationRecord` gains `revoked_at` and `revoked_reason` (#1608). scout_access re-checks verification for Pro/Elite on contact, batch contact, trial offers and renewal. Added `contract_kind()` to every contract and an on-chain `verify_peer` handshake in all wiring setters, with new `InvalidPeerContract` errors (#1610).
 - Classification: `Breaking (MAJOR)` — storage layout of `ScoutVerificationRecord` changes; wiring setters now reject non-ScoutChain addresses.
+
+- Contracts affected: `progress`, `verification`, `scout_access`, `registration`
+- Summary: Added player-data erasure across contracts (#1373). New admin entrypoints `progress.purge_player_data`, `verification.purge_player_data` and `scout_access.purge_player_data` erase a player's contract-held records (progress history and milestone state, verification records and attestations, scout_access contacts, grants, trial offers and subscriptions) and emit the `player_data_purged` event from each contract. Added scout deregistration via `registration.deregister_scout`, which removes a scout's registration record and emits the `scout_deregistered` event. See [docs/PLAYER_ERASURE.md](docs/PLAYER_ERASURE.md) for the erasure scope and operator procedure.
+- Classification: `Non-breaking (MINOR)` — new entrypoints and events only; no existing signature, error code or storage layout changes.
+
+- Contracts affected: `registration`
+- Summary: `registration.deregister_scout` (#1641) changes registration behaviour: a deregistered scout is no longer returned by scout lookups or accepted by downstream scout_access flows until re-registered, and deregistration emits `scout_deregistered`.
+- Classification: `Non-breaking (MINOR)` — additive entrypoint; existing registration entrypoints are unchanged.
 
 - Version: `v2.0.1`
 - Release date: `2026-10-23`

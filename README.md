@@ -1,8 +1,9 @@
 # ScoutChain
 
-[![Soroban Contract CI](https://github.com/your-org/scoutchain/actions/workflows/contract-ci.yml/badge.svg)](https://github.com/your-org/scoutchain/actions/workflows/contract-ci.yml)
+[![Soroban Contract CI](https://github.com/scout-off/scout-off-contracts/actions/workflows/contract-ci.yml/badge.svg)](https://github.com/scout-off/scout-off-contracts/actions/workflows/contract-ci.yml)
+[![CI](https://github.com/scout-off/scout-off-contracts/actions/workflows/ci.yml/badge.svg)](https://github.com/scout-off/scout-off-contracts/actions/workflows/ci.yml)
 
-Decentralized football talent scouting platform on Stellar — tamper-proof player profiles, on-chain progress verification, and direct scout-to-player connections powered by Soroban smart contracts.
+Core Soroban (Rust) smart contracts powering the Scouting Platform on the Stellar network. Manages decentralized talent identities, maps tamper-proof progress metrics, handles validator verification signatures, and governs scout platform access.
 
 ## Overview
 
@@ -18,7 +19,7 @@ Stellar is the backbone: transactions cost fractions of a cent and settle in 3�
 - **Scout Discovery**: Filter players by region, position, and verified progress tier
 - **Pay-to-Contact**: Scouts pay micro-fees in $XLM or platform token to unlock premium data or initiate contact
 - **Validator Network**: Local coaches, academy directors, and certified trainers act as trusted on-chain validators
-- **Wallet-Based Auth**: Players and scouts log in securely via Stellar wallets (Freighter, Albedo, or Lobstr) using SEP-10
+- **Wallet-Based Auth**: Players and scouts log in securely via Stellar wallets (Freighter, Albedo, or Lobstr) using SEP-10 — see the [backend wallet-login guide](docs/BACKEND_AUTH.md) for the full challenge/sign/verify/refresh flow
 - **Fractionalized Sponsorship** *(Future)*: Fans and local investors fund players via "Player Tokens" with transfer fee revenue sharing
 
 ## Architecture
@@ -45,10 +46,10 @@ graph TB
     end
 
     subgraph Contract["Smart Contracts (Soroban / Rust)"]
-        REG[registration.rs — Player & scout onboarding]
-        VERIFY[verification.rs — Milestone approvals]
-        PROGRESS[progress.rs — On-chain progress level updates]
-        SCOUT[scout_access.rs — Subscriptions & pay-to-contact]
+        REG[contracts/registration — Player & scout onboarding]
+        VERIFY[contracts/verification — Milestone approvals]
+        PROGRESS[contracts/progress — On-chain progress level updates]
+        SCOUT[contracts/scout_access — Subscriptions & pay-to-contact]
     end
 
     subgraph Storage["Decentralized Storage"]
@@ -82,12 +83,32 @@ graph TB
 
 ### Core Components
 
-- **registration.rs**: Handles player and scout onboarding, stores wallet address, IPFS content hashes, and basic vitals on-chain
-- **verification.rs**: Processes milestone approval requests from authorized validators and emits verification events
-- **progress.rs**: Manages the four-tier progress level system and updates player progress state on-chain
-- **scout_access.rs**: Handles scout subscriptions, pay-to-contact flows, and connection agreement logic
-- **storage.rs**: Persistent storage for player profiles, validator registry, and scout subscription records
-- **events.rs**: Event emission for off-chain indexing (new profiles, milestone approvals, scout contacts)
+Each contract is its own Rust crate under `contracts/` with the source split
+across `src/lib.rs` (contract entry points), `src/types.rs` (data structures),
+`src/errors.rs` (error enums), and `src/events.rs` (event helpers).
+
+- **`contracts/registration/`** — Player & scout onboarding: stores wallet
+  address, IPFS content hashes, basic vitals, and scout profile on-chain.
+  Key file: `src/lib.rs`
+- **`contracts/verification/`** — Validator registry and milestone
+  approval/attestation: authorises coaches and academies, processes milestone
+  evidence, and cross-calls the progress contract to advance player levels.
+  Key file: `src/lib.rs`
+- **`contracts/progress/`** — Four-tier level state machine: enforces valid
+  `Unverified → VerifiedIdentity → PerformanceMilestones → EliteTier`
+  transitions and maintains an immutable on-chain history.
+  Key file: `src/lib.rs`
+- **`contracts/scout_access/`** — Scout subscriptions, pay-to-contact flows,
+  trial offer escrow, and connection agreement logic. Cross-calls the progress
+  contract to advance players to Elite Tier on a confirmed trial offer.
+  Key file: `src/lib.rs`
+- **`contracts/shared-types/`** — Cross-contract types shared by all four
+  crates: `ProgressLevel` enum, admin/wiring helpers, safe-math utilities, and
+  CID validation logic.
+  Key file: `src/lib.rs`
+- **`contracts/chaos-tests/`** — Cross-contract chaos schedules: property-based
+  and adversarial tests exercising the full call graph under random ordering and
+  injected faults.
 
 ### Progress Level Model
 
@@ -97,8 +118,8 @@ Progress levels are configured per player and enforced on-chain by authorized va
 |-------|------|-------------|
 | 0 | Unverified | Player creates profile and uploads data |
 | 1 | Verified Identity | KYC passed or academy confirms active club membership |
-| 2 | Performance Milestones | Match footage or physical stats verified by approved third party |
-| 3 | Elite Tier | Scout feedback or trial offers logged on-chain |
+| 2 | Performance Milestones | Match footage or physical stats verified by approved third party; if `min_region_quorum` ≥ 2 is configured, approving validators must span at least that many distinct geographic regions |
+| 3 | Elite Tier | Scout feedback or trial offers logged on-chain; same region-quorum requirement applies if configured |
 
 ## Tech Stack
 
@@ -119,47 +140,116 @@ Progress levels are configured per player and enforced on-chain by authorized va
 
 ### Validator Functions
 
-- `approve_milestone(player_id, milestone, evidence_hash)` — Confirm a player achievement and trigger progress update (validator auth required)
-- `register_validator(wallet, credentials)` — Onboard a new coach, academy, or trainer as an authorized validator (admin auth required)
+- `approve_milestone(validator_wallet, player_id, description, evidence_hash, milestone_category: Option<String>)` — Confirm a player achievement and trigger progress update (validator auth required). When `milestone_category` is supplied it must match one of the calling validator's specialization tags, otherwise the call is rejected with `SpecializationMismatch`.
+- `register_validator(wallet, credentials, affiliation, specializations)` — Onboard a new coach, academy, or trainer as an authorized validator (admin auth required). `affiliation` is the canonical organization identifier used for diversity gating, while `specializations` is the optional list of category tags (for example `"physical-stats"` or `"identity-kyc"`) that gate milestone approval when `milestone_category` is set.
 - `revoke_validator(wallet)` — Remove a validator from the trusted registry (admin auth required)
 
 ### Scout Functions
 
 - `subscribe(scout_wallet, tier)` — Purchase a scout subscription to access filtered talent pool
-- `pay_to_contact(player_id, scout_wallet)` — Pay micro-fee to unlock premium data or initiate direct contact
-- `log_trial_offer(player_id, scout_wallet, details_hash)` — Record a trial offer on-chain, advancing player to Level 3
+- `pay_to_contact(scout_wallet, player_id)` — Pay micro-fee to unlock player contact information (scout auth required)
+- `log_trial_offer(scout_wallet, player_id, details_hash)` — Log a trial offer for Elite Tier advancement (Elite scout auth required)
 
-### Subscription Tier Access
+### Backend API Endpoints
+
+The backend service provides REST endpoints for player discovery and authentication:
+
+#### Authentication (SEP-10)
+
+- `GET /auth?account=...` — Request a SEP-10 challenge transaction
+- `POST /auth` — Submit signed challenge to receive access token
+- `POST /auth/refresh` — Refresh access token using refresh token
+
+#### Player Discovery (Scout-Only)
+
+- `GET /api/players?region=NG&position=FW&minLevel=2&cursor=...&limit=...` — Search players with filters and keyset pagination
+  - Requires valid JWT with `scout` or `admin` role
+  - Filters: `region` (ISO 3166-1 alpha-2), `position` (e.g., ST, FW, GK), `minLevel` (0-3)
+  - Pagination: opaque `cursor` for keyset pagination, `limit` (1-50, default 20)
+  - Tier visibility: wallet and IPFS hashes omitted for under-tier scouts
+  - Deactivated/erased players are excluded
+- `GET /api/players/:playerId` — Get single player profile
+  - Accessible to the player themselves (full data), scouts (tier-gated), or admins (full data)
+  - Returns 404 for deactivated or non-existent players
+
+#### Subscription Tier Access
+
+Player visibility is gated by subscription tier per the cross-doc consistency check:
+
+| ProgressLevel | Minimum Tier | Description |
+|---------------|--------------|-------------|
+| Unverified (0) | None | Public profile metadata only (no contact) |
+| VerifiedIdentity (1) | Basic | Basic scouts can view full profile |
+| PerformanceMilestones (2) | Pro | Pro scouts can view full profile |
+| EliteTier (3) | Elite | Elite scouts can view full profile |
+
+See `scripts/check-cross-doc-consistency.sh` for the automated consistency check between README.md and CONTRACT_REFERENCE.md.
+
+### Subscription Tier Access (On-Chain)
 
 Each tier controls which player progress levels a scout can view and what actions they can perform. These rules are enforced on-chain by the `scout_access` contract.
 
 | Tier | Accessible Player Levels | Pay-to-Contact | Trial Offer (`log_trial_offer`) |
 |------|--------------------------|----------------|---------------------------------|
-| **Basic** | Level 1 (VerifiedIdentity) and above | ❌ Not available | ❌ Not available |
-| **Pro** | Level 0–3 (all levels) | ✅ Available (contact fee applies) | ❌ Not available |
-| **Elite** | Level 0–3 (all levels) | ✅ Available (contact fee applies) | ✅ Available (advances player to Level 3) |
+| **Basic** | Level 0–1 (Unverified, VerifiedIdentity) | ❌ Not available | ❌ Not available |
+| **Pro** | Level 0–2 (Unverified, VerifiedIdentity, PerformanceMilestones) | ✅ Available (contact fee applies) | ❌ Not available |
+| **Elite** | Level 0–3 (all levels) | ✅ Available (contact fee applies) | ✅ Available (escrows a fee; advances player to Level 3 once the player calls `confirm_trial_offer`) |
 
 **Notes:**
 - A scout without any active subscription cannot call `pay_to_contact` — the contract returns `ScoutNotSubscribed` (code 6).
 - An expired subscription is treated the same as no subscription — renew via `subscribe` before contacting players.
 - `log_trial_offer` is restricted to **Elite** tier only; calling it with Basic or Pro returns `Unauthorized` (code 4).
-- Basic tier scouts can browse and filter players at Level 1 and above but cannot contact or make trial offers.
+- Basic tier scouts can browse and filter players at Level 1 (VerifiedIdentity) only — they cannot see Level 2 or Level 3 players, cannot contact players, and cannot make trial offers.
 - Subscription downgrade to a lower tier is blocked while the current subscription is active (`SubscriptionDowngradeNotAllowed`, code 12).
 
 ### Admin Functions
 
 - `initialize(admin, platform_token, fee_config)` — One-time contract setup
-- `update_fee_config(fee_config)` — Adjust subscription and contact fee rates (admin only)
+- `update_fee_config(fee_config)` — Adjust subscription and contact fee rates immediately, no delay (admin only)
+- `propose_fee_config(fee_config)` / `activate_fee_config()` — Propose a new fee configuration; increases require a 7-day timelock before `activate_fee_config` takes effect, while pure decreases activate immediately (admin only)
 - `withdraw_fees(to)` — Withdraw accumulated platform fees (admin only)
 - `pause_contract()` / `unpause_contract()` — Emergency circuit breaker (admin only)
+- `propose_admin(new_admin)` / `accept_admin()` — Rotate each contract's admin after the new address proves control
+- `verify_scout(scout_id)` — Mark a scout profile as verified, gating Sybil-resistant discovery (admin only)
+- `unverify_scout(scout_id)` — Revoke a scout's verified status (admin only). This also affects `scout_access` Pro/Elite gating: an unverified scout no longer satisfies the Pro-tier verification / Sybil-resistance lookups.
+- `deregister_scout(scout_id)` — GDPR erasure for a scout: permanently remove the scout profile and its on-chain data (admin only)
+- `purge_player_data(player_id, cursor) -> (u32, bool)` — GDPR erasure for a player, available on the `scout_access`, `verification`, and `progress` contracts (admin only). Processes one page of records starting at `cursor` and returns `(next_cursor, more)`; loop until `more == false`, always starting from `cursor = 0`. Erasure must be run in the order `scout_access` → `verification` → `progress` → `registration`. See [docs/PLAYER_ERASURE.md](docs/PLAYER_ERASURE.md) for the full procedure.
+- `set_diversity_config(required_distinct_affiliations, starting_milestone_index)` / `get_diversity_config()` — Configure (or read) the minimum distinct validator-affiliation count required before a milestone counts toward level advancement (admin only to set)
+- `set_min_region_quorum(min_regions)` — Set the minimum number of distinct validator regions required before Level-2/Level-3 advancement (admin only)
+- `set_milestone_threshold(threshold)` — Set the k-of-n distinct-validator threshold required to commit an attested milestone claim (admin only)
+- `set_voting_window_secs(window_secs)` — Set how long an attestation claim stays open for k-of-n voting before it expires (admin only)
+- `admin_rescue_orphan_trial_escrow(player_id, offer_index, to)` — Admin safety valve that releases an escrowed trial fee to `to` when the escrow's `TrialOffer` record no longer exists (admin only). Use this **instead of** `admin_refund_trial_escrow` when the offer record itself is gone: `admin_refund_trial_escrow` refunds a specific, still-identified stuck entry that retains its offer record, whereas `admin_rescue_orphan_trial_escrow` targets an orphaned escrow with no surviving `TrialOffer`. See [docs/TRIAL_ESCROW_IMPACT.md](docs/TRIAL_ESCROW_IMPACT.md) and [docs/RUNBOOK.md](docs/RUNBOOK.md) for the rescue procedure.
 
 ### Query Functions
 
 - `get_player(player_id)` — Full player profile with progress level and IPFS links
-- `get_progress_history(player_id)` — Tamper-proof timeline of milestone approvals
-- `filter_players(region, position, min_level)` — Scout discovery query
+- `get_progress_history(player_id)` — Tamper-proof timeline of milestone approvals, returned in full. For players with very long histories, use the paginated getters below instead.
+- `get_progress_history_page(player_id, offset, limit)` — Offset-based paginated history, `limit` capped at 50 entries per page
+- `get_history_page_with_cursor(player_id, cursor_snapshot, cursor_next_index, limit)` — Cursor-based paginated history that snapshots the entry count on the first call, so pages stay consistent even if `advance_level` is called concurrently; `limit` capped at 50 entries per page
+- `get_history_since_v2(player_id, since_timestamp, limit) -> HistorySince` — **Recommended** timestamp-based history query. Returns a `HistorySince` with two fields:
+  - `entries` — the matching history entries, newest first, up to `limit`
+  - `truncated` — `true` when more matching entries may exist beyond `limit` or beyond the 10-page scan cap; `false` when the result is complete
+  When `truncated` is `true`, page further with `get_history_page_with_cursor` (or raise `limit`) until you have everything — do not assume `entries` is the full set.
+- `get_history_since(player_id, since_timestamp, limit)` — **Superseded — prefer `get_history_since_v2`.** This variant silently truncates at `limit` or the 10-page scan cap and gives no signal that entries were dropped, so clients can miss history without noticing.
+- `filter_players(region, position, min_level, offset, limit)` — Paginated scout discovery query; returns a `FilterResult` with a `profiles` page and a `next_cursor` (pass it back as `offset` to continue, `0` means no more results)
+- `get_trial_offers_page(player_id, offset, limit)` — Offset-based paginated trial offers for a player; `limit` is capped at the contract's maximum page size and the returned page carries a `more` flag indicating whether further offers remain. This **replaces** `get_all_trial_offers`, which silently returns only the 20 oldest offers — use `get_trial_offers_page` whenever a player may have more than 20 offers.
 - `get_validators()` — Active validator registry
 - `health()` — On-chain health check
+
+### Verification Limits
+
+- `get_limits() -> VerificationLimits` — Returns the verification contract's compile-time protocol constants so clients can pre-validate input instead of hard-coding limits:
+
+| Field | Meaning | Current value |
+|-------|---------|---------------|
+| `max_validators` | Maximum number of registered validators | 100 |
+| `min_credentials_len` | Minimum credentials string length | 1 |
+| `max_credentials_len` | Maximum credentials string length | 256 |
+| `max_description_len` | Maximum milestone description length | 256 |
+| `max_specializations` | Maximum specialization tags per validator | 8 |
+| `max_dispute_rounds` | Maximum dispute rounds per milestone | 3 |
+
+**Client-side validation:** call `get_limits()` and validate against the returned values rather than hard-coding constants — the limits can change with a contract upgrade, and a stale hard-coded value will cause rejected transactions. See the bindings example at [`bindings/verification/examples/getLimits.ts`](bindings/verification/examples/getLimits.ts).
 
 ## Progress Verification Flow
 
@@ -175,9 +265,12 @@ Each tier controls which player progress levels a scout can view and what action
 
 ### Milestone Examples
 
-- "Scored 5 goals in Local Cup" → Level 2 milestone, approved by registered coach
-- "Top speed clocked at 32 km/h" → Level 2 milestone, approved by certified trainer
-- "Trial offer received from FC Example" → Level 3 milestone, logged by scout
+- "Scored 5 goals in Local Cup" → Level 2 milestone, approved by registered coach (untagged — any active validator)
+- "Top speed clocked at 32 km/h" → Level 2 milestone, approved by certified trainer (`milestone_category: "physical-stats"` — only validators tagged for physical-stats)
+- "Academy confirms active membership" → Level 1 milestone, approved by KYC agent (`milestone_category: "identity-kyc"` — only validators tagged for identity-kyc)
+- "Trial offer received from FC Example" → Level 3 milestone, logged by scout via `log_trial_offer` and confirmed by the player via `confirm_trial_offer`
+
+Validators are registered with an admin-set **affiliation** (canonical organization identifier, such as `"FC Example Academy"` or `"City Performance Lab"`) to gate diversity checks by distinct organizations. They also gain optional **specialization tags** (e.g. `"physical-stats"`, `"identity-kyc"`, `"match-performance"`) when registered. When `approve_milestone` is called with a `milestone_category`, the contract enforces that the validator holds a matching tag — preventing, for example, a pure identity-KYC agent from approving physical performance data. Untagged milestones (category omitted) remain open to any active validator, preserving backward compatibility.
 
 ## Player Lifecycle — Sequence Diagram
 
@@ -214,9 +307,22 @@ sequenceDiagram
     end
 
     rect rgb(255, 245, 235)
-        Note over Scout,Contract: Trial offer
+        Note over Scout,Contract: Trial offer — step 1: log
         Scout->>Contract: log_trial_offer(player_id, details_hash)
-        Contract-->>Player: progress updated to Level 3 (Elite Tier)
+        Contract->>Contract: escrow trial_offer_escrow_stroops from scout
+        Contract-->>Scout: trial index (trial_offer_logged event)
+    end
+
+    rect rgb(255, 245, 235)
+        Note over Player,Contract: Trial offer — step 2: confirm (player-initiated)
+        Player->>Contract: confirm_trial_offer(player_id, index)
+        alt now <= escrow.expires_at
+            Contract->>Contract: advance_level(player_id, index) [cross-contract call to progress]
+            Contract-->>Player: progress updated to Level 3 (trial_offer_confirmed event)
+        else now > escrow.expires_at
+            Contract->>Scout: refund escrowed fee
+            Contract-->>Player: refund committed (trial_offer_expired event)
+        end
     end
 ```
 
@@ -239,7 +345,7 @@ sequenceDiagram
        │
        ▼
 ┌──────────────┐
-│  Level 3     │  ← Scout feedback or trial offer logged (Elite Tier)
+│  Level 3     │  ← Trial offer logged by scout, then confirmed by player before expiry (Elite Tier)
 └──────────────┘
 ```
 
@@ -249,13 +355,13 @@ sequenceDiagram
 |------|----|---------|
 | Level 0 | Level 1 | Validator calls `approve_milestone` — identity confirmed |
 | Level 1 | Level 2 | Validator calls `approve_milestone` — performance stats verified |
-| Level 2 | Level 3 | Scout calls `log_trial_offer` — trial or feedback recorded |
+| Level 2 | Level 3 | Scout calls `log_trial_offer` (escrows a fee), then the **player** calls `confirm_trial_offer` before the escrow expires — trial or feedback recorded. A confirmation after expiry commits a refund to the scout and emits `trial_offer_expired`; the level does not advance. |
 
 ## Security Features
 
-1. **Tamper-Proof History**: Every milestone approval is an immutable on-chain transaction — scouts see exactly when and how a player progressed
+1. **Tamper-Proof History — independently verifiable, not just asserted**: Every milestone approval is an immutable on-chain transaction, and the progress contract additionally maintains a cryptographic Merkle commitment (`get_progress_root`) over each player's full history. Any caller — a light client, an off-chain indexer, a dispute-resolution process — can call `verify_history_proof` to check that a specific historical entry is genuinely part of the on-chain record, entirely on-chain, without trusting whichever Soroban RPC node served the query. See [Merkle history commitment](docs/CONTRACT_REFERENCE.md#merkle-history-commitment) for the construction.
 2. **Authorized Validators Only**: Only admin-registered validators can approve milestones, preventing self-reported fake stats
-3. **Atomic Fee Settlement**: Scout contact fees and token transfers settle in a single transaction
+3. **Atomic Fee Settlement**: Scout contact fees and token transfers settle in a single transaction. Every token-transfer call site (`subscribe`, `pay_to_contact`, `log_trial_offer` escrow, `confirm_trial_offer` expiry-refund, `withdraw_fees`, `refund_subscription`) is enumerated and proven atomic in [`contracts/scout_access/tests/atomic_fee_settlement.rs`](contracts/scout_access/tests/atomic_fee_settlement.rs) — if the XLM transfer fails, no storage mutation from that function persists.
 4. **Authorization Checks**: All state-changing operations require proper Stellar account authorization
 5. **Overflow Protection**: Safe arithmetic throughout all fee calculations
 6. **Circuit Breaker**: Admin can pause the contract in an emergency without losing state
@@ -263,7 +369,7 @@ sequenceDiagram
 ## Repository Structure
 
 ```
-scoutchain-contracts/
+scout-off-contracts/
 ├── contracts/
 │   ├── registration/       # Player & scout on-chain identity
 │   ├── verification/       # Validator registry & milestone approvals
@@ -307,6 +413,8 @@ cp .env.example .env
 
 This runs all five steps automatically: build → deploy → initialize → generate bindings → seed demo data. Contract IDs are saved to `.env.contracts`, TypeScript bindings to `bindings/`, and test account addresses to `testnet/.accounts`.
 
+If `setup-testnet.sh` fails partway through, keep the generated `.env.contracts` file from the deploy step and resume manually from the failed step below. For example, if initialization failed after deployment, run `./scripts/initialize.sh testnet`, then continue with `./scripts/generate-bindings.sh testnet` and `./testnet/seed.sh`.
+
 ### Manual setup
 
 #### 1. Prerequisites
@@ -337,8 +445,9 @@ cp .env.example .env
 
 ```bash
 ./scripts/initialize.sh testnet
-# Initializes all four contracts and wires the verification → progress
-# cross-contract link so approve_milestone advances levels atomically
+# Initializes all four contracts and establishes all eight cross-contract
+# wiring links (see "Cross-Contract Wiring" below) so approve_milestone and
+# confirm_trial_offer advance levels atomically
 ```
 
 #### 5. Generate TypeScript bindings
@@ -353,12 +462,27 @@ cp .env.example .env
 
 ```bash
 ./testnet/seed.sh
-# Creates funded test player, scout, and validator on testnet
+# Creates funded test player, two scouts, and two validators on testnet
 ```
+
+> **Note on Funding**: Seeded demo accounts require a minimum balance of ~15 XLM to cover Stellar base reserves, registration, subscription purchases (up to 7 XLM for Elite tier), and pay-to-contact fees (0.1 XLM). Friendbot's standard testnet funding of 10,000 XLM per account is comfortably sufficient for the full demo flow.
 
 ## Cross-Contract Wiring
 
-`approve_milestone` in the verification contract cross-calls `advance_level` in the progress contract atomically — both state changes happen in the same Stellar transaction. This is wired up by `initialize.sh` automatically:
+The four contracts hold **eight** peer-address pointers between them. `initialize.sh` establishes all eight automatically, and `./scripts/verify-cross-contract-wiring.sh <network>` checks them. The canonical list is in [`docs/WIRING_REGISTRY_DESIGN.md`](docs/WIRING_REGISTRY_DESIGN.md); `ai.md` carries the same table with the exact `stellar contract invoke` commands.
+
+| # | Link | Purpose |
+|---|------|---------|
+| 1 | `verification` → `progress` | `approve_milestone` calls `advance_level` |
+| 2 | `verification` → `registration` | dispute-milestone wallet-to-`player_id` binding check |
+| 3 | `registration` → `progress` | `filter_players` resolves player levels at query time |
+| 4 | `progress` → `verification` | whitelists verification as an `advance_level` caller |
+| 5 | `progress` → `registration` | `progress` calls `set_player_level` on registration |
+| 6 | `progress` → `scout_access` | whitelists scout_access as an `advance_level` caller |
+| 7 | `scout_access` → `progress` | `confirm_trial_offer` calls `advance_level` for Level 3 |
+| 8 | `scout_access` → `registration` | Pro-tier scout verification / Sybil gating lookups |
+
+For example, the verification → progress link:
 
 ```bash
 stellar contract invoke \
@@ -367,7 +491,56 @@ stellar contract invoke \
   --progress_contract $PROGRESS_CONTRACT_ID
 ```
 
-Without this step, milestones are recorded but player levels do not advance.
+Without the full wiring, milestones and trial offers are recorded but player levels do not advance.
+
+### `contract_kind()` and the wiring handshake
+
+Every contract exposes `contract_kind() -> Symbol`, which identifies the kind of
+contract at that address:
+
+| Contract | `contract_kind()` returns |
+|----------|---------------------------|
+| `contracts/registration` | `"registration"` |
+| `contracts/verification` | `"verification"` |
+| `contracts/progress` | `"progress"` |
+| `contracts/scout_access` | `"scout_access"` |
+
+Each `set_*_contract` setter performs an on-chain **wiring handshake** before
+storing the peer address: it calls `contract_kind()` on the candidate address
+and rejects it when the returned symbol does not match the expected peer kind.
+The setters that check the handshake are:
+
+| Contract | Setter | Expected peer kind |
+|----------|--------|--------------------|
+| `registration` | `set_progress_contract` | `"progress"` |
+| `verification` | `set_progress_contract`, `update_progress_contract` | `"progress"` |
+| `verification` | `set_registration_contract` | `"registration"` |
+| `progress` | `set_verification_contract` | `"verification"` |
+| `progress` | `set_registration_contract` | `"registration"` |
+| `progress` | `set_scout_access_contract` | `"scout_access"` |
+| `scout_access` | `set_progress_contract`, `update_progress_contract` | `"progress"` |
+| `scout_access` | `set_registration_contract` | `"registration"` |
+
+On a mismatch the setter fails with the contract's `InvalidPeerContract` error
+variant and the address is **not** stored:
+
+| Contract | Error variant | Code |
+|----------|---------------|------|
+| `registration` | `ScoutChainError::InvalidPeerContract` | 19 |
+| `verification` | `VerificationError::InvalidPeerContract` | 44 |
+| `progress` | `ProgressError::InvalidPeerContract` | 11 |
+| `scout_access` | `ScoutAccessError::InvalidPeerContract` | 24 |
+
+The same `InvalidPeerContract` error is returned when the candidate address is
+not a ScoutChain contract at all (for example a plain Stellar account, a token
+contract, or a typo'd contract ID) — the `contract_kind()` call fails or returns
+an unexpected symbol, and the setter rejects the address. This catches
+mis-wiring at configuration time rather than as an opaque failure on the first
+cross-contract call.
+
+See [`docs/WIRING_REGISTRY_DESIGN.md`](docs/WIRING_REGISTRY_DESIGN.md) for the
+canonical link list and [`docs/CONTRACT_REFERENCE.md`](docs/CONTRACT_REFERENCE.md)
+for the full setter reference.
 
 ## TypeScript Bindings
 
@@ -380,29 +553,82 @@ import { Client as ProgressClient }     from "@scoutchain/bindings-progress";
 
 See `bindings/README.md` for usage details.
 
+## Backend Auth Session Response
+
+Both session-issuing endpoints — `POST /auth` (SEP-10 login) and `POST /auth/refresh` — return the same JSON shape:
+
+```json
+{
+  "token": "<access token>",
+  "refreshToken": "<refresh token>",
+  "expiresIn": 900,
+  "refreshExpiresIn": 604800
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `token` | Access token to send as `Authorization: Bearer <token>` on API calls |
+| `refreshToken` | Token to exchange at `POST /auth/refresh` for a new session |
+| `expiresIn` | Access-token lifetime in seconds |
+| `refreshExpiresIn` | Refresh-token lifetime in seconds (default 7 days, configurable via `REFRESH_TOKEN_TTL_SECONDS`) |
+
+Clients should use `refreshExpiresIn` to proactively re-authenticate before the refresh token lapses, rather than discovering expiry through a `401 invalid_refresh_token` response.
+
 ## Database Schema
 
-`migrations/001_initial_schema.sql` creates the nine PostgreSQL tables the backend event indexer needs:
+The `migrations/` directory contains the PostgreSQL migration files the backend event indexer needs. **Run every file in numeric order** — skipping any migration leaves tables, columns, or indexes missing and causes silent indexer errors at runtime.
+
+`migrations/001_initial_schema.sql` creates the fourteen base PostgreSQL tables:
 
 | Table | Purpose |
 |-------|---------|
 | `players` | Cached player profiles, indexed by region/position/level for fast filtering |
+| `player_level_history` | Audit trail of level changes, tagged by source (`advance` vs admin `reset`) |
 | `scouts` | Scout profiles |
 | `validators` | Trusted validator registry |
+| `validator_history` | Audit trail of validator restore and wallet-transfer events |
 | `milestones` | Approved milestone records per player |
+| `milestone_disputes` | Player-filed milestone disputes and their resolution status |
 | `scout_subscriptions` | Active subscription records |
+| `fee_config_history` | Audit trail of scout_access fee configuration changes |
 | `contact_records` | Pay-to-contact audit log |
 | `trial_offers` | On-chain trial offer records |
 | `fee_withdrawals` | Platform fee withdrawal audit log |
+| `admin_transfers` | Audit trail of admin rotations across contracts |
 | `indexer_cursor` | Horizon event stream checkpoint (single row) |
 
-Run it against your backend PostgreSQL instance:
+Subsequent migrations add additional tables and columns:
+
+| Migration | What it adds |
+|-----------|-------------|
+| `002_cursor_upsert_helper.sql` | `advance_indexer_cursor()` helper function |
+| `003_diagnostic_events.sql` | `diagnostic_events` table |
+| `004_scout_subscriptions_auto_renew.sql` | `auto_renew` column on `scout_subscriptions` |
+| `005_evidence_access_grants.sql` | `evidence_access_grants` table |
+| `006_dispute_jury.sql` | Jury columns on `milestone_disputes`; `dispute_votes` table |
+| `007_milestone_flags.sql` | `milestone_flags` and `revocation_records` tables |
+| `008_session_management.sql` | Session families, refresh-token rotation, and access-token revocation tables |
+
+Run all migrations against your backend PostgreSQL instance:
 
 ```bash
 psql $DATABASE_URL -f migrations/001_initial_schema.sql
+psql $DATABASE_URL -f migrations/002_cursor_upsert_helper.sql
+psql $DATABASE_URL -f migrations/003_diagnostic_events.sql
+psql $DATABASE_URL -f migrations/004_scout_subscriptions_auto_renew.sql
+psql $DATABASE_URL -f migrations/005_evidence_access_grants.sql
+psql $DATABASE_URL -f migrations/006_dispute_jury.sql
+psql $DATABASE_URL -f migrations/007_milestone_flags.sql
+psql $DATABASE_URL -f migrations/008_session_management.sql
 ```
 
+All migrations are idempotent and safe to re-run against an already-migrated database. See `migrations/README.md` for apply-order notes and file reference.
+See [docs/AUTH_SESSIONS.md](docs/AUTH_SESSIONS.md) for auth session behavior and endpoint details.
 
+To verify this database's copy of on-chain state hasn't drifted from the
+contracts, see [`scripts/reconcile-indexer.js`](scripts/reconcile-indexer.js)
+and [docs/INDEXER.md](docs/INDEXER.md).
 
 1. **Player Onboarding**
    - Connect Freighter wallet via SEP-10
@@ -421,8 +647,8 @@ psql $DATABASE_URL -f migrations/001_initial_schema.sql
    - Views tamper-proof progress history before committing to a trial
 
 4. **Trial & Elite Tier**
-   - Scout logs a trial offer on-chain via `log_trial_offer`
-   - Player advances to Level 3 (Elite Tier)
+   - Scout logs a trial offer on-chain via `log_trial_offer`, escrowing the trial fee
+   - Player calls `confirm_trial_offer` before the escrow expires to release the fee and advance to Level 3 (Elite Tier); a late confirmation refunds the scout instead
    - Connection agreement recorded as an immutable on-chain event
 
 5. **Admin / Validator Management**
@@ -439,6 +665,9 @@ Copy `.env.example` to `.env` and fill in all required values before running any
 | `DEPLOYER_SECRET` | Stellar secret key used to deploy and invoke contracts |
 | `ADMIN_ADDRESS` | Stellar G-address that will own all four contracts |
 | `XLM_TOKEN_ADDRESS` | Native XLM token contract address on the target network |
+| `STELLAR_NETWORK` | `testnet`, `mainnet` or `local` (default: `testnet`); unknown values are rejected. `local` requires `NETWORK_PASSPHRASE` |
+| `HORIZON_URL` | Stellar Horizon endpoint |
+| `SOROBAN_RPC_URL` | Soroban RPC endpoint |
 | `STELLAR_NETWORK` | Target network: `testnet` or `mainnet` (default: `testnet`) |
 | `HORIZON_URL` | Stellar Horizon endpoint for the target network |
 | `SOROBAN_RPC_URL` | Soroban RPC endpoint for the target network |
@@ -460,8 +689,8 @@ When deploying to mainnet, **always verify** `config/mainnet.json` has been upda
 
 1. Test the full deployment flow on testnet first
 2. Verify all addresses in `.env` are correct for mainnet
-3. Confirm `ADMIN_ADDRESS` is the intended account — ownership cannot be transferred after initialization
-4. Double-check the `XLM_TOKEN_ADDRESS` matches the mainnet address (not testnet)
+3. Confirm `ADMIN_ADDRESS` is the intended account; later rotations use the two-step `propose_admin` + `accept_admin` flow on each contract
+4. Double-check the `XLM_TOKEN_ADDRESS` matches the mainnet address (not testnet). The `scout_access.initialize` call now probes `xlm_token` by invoking `decimals()` on it and returns `InvalidInput` if the address is not a deployed token contract, so a wrong address (testnet SAC on mainnet, a typo, a plain account, or a non-token contract) is caught at deploy time rather than surfacing later as an opaque failure on the first `subscribe()` call.
 
 ## Testing
 
@@ -473,40 +702,50 @@ cargo test --workspace
 cargo test --workspace -- --nocapture
 
 # Lint and format check
-cargo clippy --workspace -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
-Contract test coverage:
+Rather than maintaining a hand-curated checklist here, refer directly to the test suites in each contract's source tree. Each directory contains the full, up-to-date coverage picture:
 
-- ✅ Player registration, duplicate prevention, profile updates
-- ✅ Scout registration
-- ✅ Validator registration, revocation, and active state checks
-- ✅ Milestone approval — happy path, multiple milestones per player
-- ✅ Revoked validator cannot approve milestones
-- ✅ Unregistered validator cannot approve milestones
-- ✅ Progress level sequence (Unverified → VerifiedIdentity → PerformanceMilestones → EliteTier)
-- ✅ Cannot exceed EliteTier
-- ✅ Progress history entries recorded per level change
-- ✅ Scout subscription — Basic, Pro, Elite tiers with XLM fee settlement
-- ✅ Pay-to-contact with active subscription
-- ✅ Duplicate contact prevention
-- ✅ Contact without subscription fails
-- ✅ Subscription expiry enforcement
-- ✅ Trial offer logging (Elite only)
-- ✅ Trial offer rejected for non-Elite tier
-- ✅ Fee accumulation and admin withdrawal
-- ✅ Pause / unpause circuit breaker
+| Directory | What it covers |
+|-----------|----------------|
+| `contracts/registration/src/lib.rs` (inline tests) | Player registration, scout registration, duplicate prevention, profile updates, admin initialization, field-validation guards |
+| `contracts/verification/src/lib.rs` (inline tests) | Validator registry CRUD, milestone approval happy path, revoked/unregistered validator guards, evidence-hash storage, validator-cap enforcement |
+| `contracts/progress/src/lib.rs` (inline tests) | Four-tier level state machine (Unverified → VerifiedIdentity → PerformanceMilestones → EliteTier), invalid-transition rejection, progress history recording, dispute-resolution level reset |
+| `contracts/scout_access/src/lib.rs` (inline tests) | Scout subscriptions (Basic / Pro / Elite) with XLM fee settlement, pay-to-contact flow, duplicate-contact prevention, subscription-expiry enforcement, trial offer logging (Elite only), trial offer rejection for non-Elite, fee accumulation and admin withdrawal, pause / unpause circuit breaker, subscription downgrade guard, auto-renewal logic |
+| `contracts/scout_access/tests/` | Integration tests for the full trial-offer flow across contract boundaries |
+| `tests/` | Cross-contract event emission tests |
+
+> **Note:** The workspace has known compile-blockers tracked in the "get the workspace green" umbrella issue. Test items that depend on features not yet merged should be treated as **not currently running** until that issue is resolved. Do not rely on this README as a statement of passing coverage — run `cargo test --workspace` and inspect the output directly.
 
 ## MVP Scope
 
-The initial testnet MVP focuses on a single end-to-end flow:
+The contracts shipped on testnet cover the following capabilities. This section reflects what is **currently implemented** in the contract source. It aligns with the Features list above and the checked items in the Roadmap below.
 
-1. One player registers a profile → contract stores identity and IPFS links at Level 0
-2. One validator approves a milestone → progress updates to Level 1 or 2 on-chain
-3. One scout pays to contact the player → fee settles in XLM, contact details unlocked
+### Shipped contract features
 
-Secondary features (fractionalized sponsorship, oracle integrations, advanced filtering) ship in subsequent milestones.
+- **Player & scout registration** — on-chain identity, IPFS hash storage, duplicate prevention, field validation
+- **Validator registry** — admin-controlled register / revoke lifecycle, credential storage, validator-cap enforcement
+- **Four-tier progress levels** — Unverified → VerifiedIdentity → PerformanceMilestones → EliteTier state machine with immutable on-chain history
+- **Milestone approval** — validators confirm achievements with on-chain evidence hashes; cross-contract call atomically advances player level
+- **Scout subscriptions** — Basic / Pro / Elite tiers with XLM fee settlement, expiry enforcement, downgrade guard, and auto-renewal
+- **Pay-to-contact** — scouts pay a micro-fee to unlock contact details; duplicate-contact prevention; fee accumulation
+- **Trial offer logging** — Elite-tier scouts record trial offers on-chain, advancing the player to Level 3 (EliteTier)
+- **Admin controls** — fee-config management, fee withdrawal, and a contract-level circuit breaker (pause / unpause) on all four contracts
+- **Event emission** — structured events for off-chain indexing on every state-changing operation
+- **Deployment tooling** — build, deploy, initialize, cross-contract wiring, TypeScript binding generation, and one-command testnet setup
+- **Backend schema** — PostgreSQL migration for the event-indexer backend
+
+### Not yet started (future milestones)
+
+The following are tracked in the Roadmap but have **no contract code today**:
+
+- Fractionalized Player Token sponsorship model
+- Decentralized oracle integration for physical stats
+- Mobile-first Flutter frontend
+- Security audit
+- Mainnet launch
 
 ## Roadmap
 
@@ -529,7 +768,7 @@ Secondary features (fractionalized sponsorship, oracle integrations, advanced fi
 - [x] Network config files (testnet + mainnet)
 - [x] Cross-repo `ai.md` integration guide
 - [ ] Scout subscription and pay-to-contact flow (backend + frontend)
-- [ ] Trial offer logging UI and Level 3 advancement (backend + frontend)
+- [ ] Trial offer logging UI and Level 3 advancement (backend + frontend) — contract-side trial-offer escrow/confirmation is already shipped; remaining work is the backend/frontend UI layer.
 - [ ] Decentralized oracle integration for physical stats
 - [ ] Fractionalized Player Token sponsorship model
 - [ ] Mobile-first Flutter frontend
@@ -540,7 +779,7 @@ Secondary features (fractionalized sponsorship, oracle integrations, advanced fi
 
 - `soroban-sdk = "25.3.1"` — Soroban smart contract SDK (all four contracts)
 - `stellar-cli` — Stellar CLI for deployment and contract invocation
-- `wasm32-unknown-unknown` — Rust compilation target for Soroban WASM output
+- `wasm32v1-none` — Rust compilation target for Soroban WASM output
 
 Frontend and backend dependencies live in their respective repos (`scoutchain-frontend`, `scoutchain-backend`).
 
@@ -565,6 +804,12 @@ Each contract defines its own error enum. The same numeric code can mean differe
 | 11 | `Overflow` | Counter or fee arithmetic overflowed | Use amounts within safe range |
 | 12 | `ScoutNotFound` | Invalid `scout_id` | Verify the `scout_id` from the registration transaction |
 | 13 | `InvalidInput` | Field too long, bad hash count, or empty value | Check field length limits in the function docs |
+| 14 | `PendingAdminNotSet` | `accept_admin` called without a proposal | Call `propose_admin` first |
+| 15 | `PlayerCapReached` | Player registration cap reached | Hard stop; no retry — the platform is full |
+| 16 | `RegistrationCooldown` | Caller attempted to register again before the cooldown period elapsed | Wait for the cooldown window to pass, then retry |
+| 17 | `PlayerRecordEvicted` | `restore_player_record` targeted a player entry whose archival grace period has fully elapsed | Unrecoverable; the record was evicted, not merely archived |
+| 18 | `ScoutRecordEvicted` | `restore_scout_record` targeted a scout entry that has been fully evicted | Unrecoverable; the record was evicted, not merely archived |
+| 19 | `InvalidPeerContract` | A `set_*_contract` setter was given an address whose `contract_kind()` does not match the expected peer kind (or is not a ScoutChain contract) | Pass the contract ID of the correct contract kind; see "Cross-Contract Wiring" |
 
 ### `VerificationError` (verification contract)
 
@@ -584,6 +829,36 @@ Each contract defines its own error enum. The same numeric code can mean differe
 | 12 | `ProgressCallFailed` | Cross-contract `advance_level` failed | Verify the progress contract is deployed and wired |
 | 13 | `Overflow` | Milestone counter overflowed | Contact admin |
 | 14 | `MilestoneNotFound` | Index out of range | Verify index against `get_milestone_count` |
+| 15 | `ValidatorCapReached` | 100-validator platform limit reached | Contract upgrade required to raise the cap; contact admin |
+| 16 | `DuplicateEvidence` | Evidence hash already used in a prior `approve_milestone` call | Use a unique evidence CID for each milestone approval |
+| 17 | `MilestoneLimitExceeded` | Validator has already approved 5 milestones for this player | A different validator must approve further milestones for this player |
+| 18 | `DisputeAlreadyResolved` | Dispute was already resolved and cannot be resolved again | No action; the dispute's outcome is final |
+| 19 | `PendingAdminNotSet` | `accept_admin` called before an admin transfer was proposed | Call `propose_admin` first |
+| 20 | `ApproveMilestonePaused` | `approve_milestone` is paused independently of the whole-contract pause | Wait for admin to unpause the function |
+| 21 | `SpecializationMismatch` | `milestone_category` provided but the validator is not tagged for that category | Use a validator whose `specializations` includes the required category, or omit the category |
+| 22 | `InvalidAttestation` | The ed25519 signature over the attestation payload failed verification, or its contract/network binding does not match this instance | Re-sign the payload with the registered attestation key for the correct contract and network |
+| 23 | `AttestationKeyNotFound` | No attestation public key has been registered for this validator | Call `register_attestation_key` first |
+| 24 | `InvalidNonce` | Attestation nonce is not strictly greater than the last accepted nonce | Query `get_attestation_nonce` and resubmit with a higher nonce |
+| 25 | `RegistrationCooldown` | Validator registration attempted before the cooldown window elapsed | Wait for the cooldown window to pass, then retry |
+| 26 | `DuplicateAttestation` | The same active validator has already attested to this exact `(player_id, evidence_hash)` claim in its current voting round | Wait for the round to resolve, or use a different validator |
+| 27 | `TooManyPendingVotes` | This validator already has the maximum concurrent open (sub-threshold, unexpired) attestation votes outstanding | Wait for one of the validator's pending votes to resolve (commit or expire) before opening another |
+| 28 | `ThresholdModeRequiresAttestation` | `approve_milestone` or `submit_attested_milestone` was called while `get_milestone_threshold() > 1` | Use `attest_milestone` — k-of-n mode has no single-signature bypass once the threshold is `>= 2` |
+| 29 | `RegistrationCallFailed` | Cross-contract call to the registration contract failed | Verify the registration contract is deployed and wired |
+| 30 | `MigrationNotActive` | Migration window is not currently active on this contract | Admin must call `open_migration_window` before seeding state |
+| 31 | `MilestoneAlreadyExists` | A `Milestone` already exists at `(player_id, milestone_index)` with different content | Identical replays are no-ops; a conflicting replay must target a different index |
+| 32 | `DisputeAlreadyExists` | A `MilestoneDispute` already exists at `(player_id, milestone_index)` with different content | Identical replays are no-ops; a conflicting replay must target a different index |
+| 33 | `ValidatorRecordEvicted` | `restore_validator_record` targeted a validator entry whose archival grace period has fully elapsed | Unrecoverable; the record was evicted, not merely marked inactive |
+| 34 | `MilestoneRecordEvicted` | `restore_milestone_record` targeted a milestone entry that has been fully evicted | Unrecoverable |
+| 35 | `NotEligibleToReReview` | `rereview_milestone` called by a wallet that is not a currently-active validator (**not** 32/33 — see notes on issue #1197) | Only active, non-revoked validators may clear a pending re-review flag |
+| 36 | `MilestoneNotFlagged` | `rereview_milestone` called on a milestone that is not currently flagged as pending re-review (**not** 32/33 — see notes on issue #1197) | No action; the flag either never existed or was already cleared by a prior call |
+| 37 | `DisputeRequiresJury` | `resolve_dispute` called on a dispute that requires jury resolution | Use `tally_dispute` to finalize jury-required disputes |
+| 38 | `NotJuryDispute` | `cast_dispute_vote` or `tally_dispute` called on a dispute not routed to the jury path | Use `resolve_dispute` for non-jury disputes |
+| 39 | `VotingWindowClosed` | `cast_dispute_vote` called after the voting window has closed | The dispute must now be finalized via `tally_dispute` |
+| 40 | `ConflictOfInterest` | `cast_dispute_vote` called by the validator who originally approved the disputed milestone | That validator cannot vote on this dispute; a different juror must vote |
+| 41 | `AlreadyVoted` | `cast_dispute_vote` called by a validator who has already voted on this dispute | No action; one vote per validator per dispute |
+| 42 | `VotingWindowOpen` | `tally_dispute` called before the voting window closes, with the vote count tied at or above quorum | Wait for the voting window to close before tallying a tied vote |
+| 43 | `QuorumNotReached` | `tally_dispute` called before the voting window closes and the required quorum of votes has not yet been reached | Wait for more votes or for the voting window to close |
+| 44 | `InvalidPeerContract` | A `set_*_contract` / `update_progress_contract` setter was given an address whose `contract_kind()` does not match the expected peer kind (or is not a ScoutChain contract) | Pass the contract ID of the correct contract kind; see "Cross-Contract Wiring" |
 
 ### `ProgressError` (progress contract)
 
@@ -597,6 +872,9 @@ Each contract defines its own error enum. The same numeric code can mean differe
 | 6 | `AlreadyAtMaxLevel` | Player is already at `EliteTier` | No further advancement possible |
 | 7 | `PlayerNotFound` | History index out of range | Verify index against `get_history_count` |
 | 8 | `Overflow` | History counter overflowed | Contact admin |
+| 9 | `RegistrationCallFailed` | Cross-contract call to registration contract failed | Verify the registration contract is deployed and wired |
+| 10 | `PendingAdminNotSet` | `accept_admin` called without a prior `propose_admin` | Call `propose_admin` first, then have the proposed address call `accept_admin` |
+| 11 | `InvalidPeerContract` | A `set_*_contract` setter was given an address whose `contract_kind()` does not match the expected peer kind (or is not a ScoutChain contract) | Pass the contract ID of the correct contract kind; see "Cross-Contract Wiring" |
 
 ### `ScoutAccessError` (scout_access contract)
 
@@ -606,7 +884,7 @@ Each contract defines its own error enum. The same numeric code can mean differe
 | 2 | `NotInitialized` | Operation before `initialize` | Admin must call `initialize` first |
 | 3 | `ContractPaused` | Circuit breaker is active | Wait for admin to call `unpause_contract` |
 | 4 | `Unauthorized` | Wrong account or non-Elite tier for trial offer | Confirm account and subscription tier |
-| 5 | `InsufficientFee` | Zero accumulated fees on withdrawal | Ensure fees have been collected before withdrawing |
+| 5 | `InsufficientFee` | Scout underpaid a subscription or contact fee | Send a payment that matches `FeeConfig` exactly |
 | 6 | `ScoutNotSubscribed` | No subscription record found | Call `subscribe` with a valid tier and fee |
 | 7 | `SubscriptionExpired` | Subscription past `expires_at` | Renew subscription via `subscribe` |
 | 8 | `AlreadyContacted` | Duplicate `pay_to_contact` for same player | Contact is already unlocked |
@@ -618,18 +896,49 @@ Each contract defines its own error enum. The same numeric code can mean differe
 | 15 | `InvalidInput` | Zero or negative fee field in `FeeConfig` | All fee fields and `sub_duration_secs` must be > 0 |
 | 16 | `NoFeesToWithdraw` | No accumulated fees to withdraw | Ensure fees have been collected before withdrawing |
 | 17 | `UpgradeTooSoon` | `subscribe` called before minimum interval elapsed | Wait at least 1 hour between subscribe calls |
+| 18 | `ContactQuotaExceeded` | Scout has hit the platform-wide contact quota for the current period | Wait for the quota window to reset or contact admin |
+| 19 | `TrialOfferRateLimited` | Scout sent a trial offer to the same player within the cooldown window | Wait for the cooldown period to expire before retrying |
+| 20 | `ProContactLimitReached` | Pro-tier scout has reached the `pro_contact_limit` contacts for the current subscription period | Upgrade to Elite (no limit applies) or wait for subscription to renew |
+| 21 | `PendingAdminNotSet` | `accept_admin` called before an admin transfer was proposed | Call `propose_admin` first, then have the proposed address call `accept_admin` |
+| 22 | `TrialOfferAlreadyConfirmed` | `confirm_trial_offer` called twice for the same offer | No action; the offer was already confirmed |
+| 23 | `TrialOfferExpired` | Legacy error code retained for compatibility; expiry confirmation now commits the refund and returns success | Log a new trial offer after the refund event |
+| 24 | `InvalidPeerContract` | A `set_*_contract` / `update_progress_contract` setter was given an address whose `contract_kind()` does not match the expected peer kind (or is not a ScoutChain contract) | Pass the contract ID of the correct contract kind; see "Cross-Contract Wiring" |
 
 ## Events
 
+Comprehensive event reference is available in [`ai.md`](ai.md#events-reference). Below is a summary of the main events:
+
 | Event | Emitted When |
 |-------|-------------|
+| `contract_initialized` | Contract initialization completes (registration, verification, progress, or scout_access) |
 | `player_registered` | New player profile created on-chain |
+| `validator_registered` | New validator registered in the verification contract |
 | `milestone_approved` | Validator confirms a player achievement |
+| `milestone_disputed` | Player files a dispute against an approved milestone |
+| `dispute_resolved` | Admin resolves a milestone dispute |
+| `validator_revoked` | Validator is deactivated by admin |
+| `validator_restored` | Validator account is re-activated |
+| `validator_transferred` | Validator wallet address is transferred to a new address |
 | `progress_updated` | Player advances to a new level |
-| `scout_subscribed` | Scout purchases a talent access subscription |
+| `player_level_reset` | Admin resets player progress level (dispute resolution only) |
+| `scout_subscribed` | Scout purchases a talent access subscription (**deprecated**, removed in v3.0.0; emitted alongside `subscription_created` or `subscription_renewed`) |
+| `subscription_created` | Scout purchases their very first subscription |
+| `subscription_renewed` | Scout renews or upgrades an existing subscription |
+| `subscription_refunded` | Scout subscription refunded (e.g., downgrade or expiry) |
 | `player_contacted` | Scout pays to unlock player contact details |
-| `trial_offer_logged` | Scout records a trial offer, advancing player to Level 3 |
+| `trial_offer_logged` | Scout records a trial offer and escrows the trial fee (does not advance the level) |
+| `trial_offer_confirmed` | Player confirms a pending trial offer before its expiry window closes, releasing the escrow and advancing the player to Level 3 |
+| `trial_offer_expired` | Trial offer confirmation window elapsed; escrowed fee refunded to scout |
+| `fee_config_updated` | Admin updates subscription or contact fee rates |
 | `fees_withdrawn` | Admin withdraws accumulated platform fees |
+| `contract_paused` | Admin pauses the contract (circuit breaker activated) |
+| `contract_unpaused` | Admin unpauses the contract (circuit breaker deactivated) |
+| `admin_transfer_proposed` | Current admin proposes a replacement address |
+| `admin_transferred` | Pending admin accepts control |
+| `dispute_vote_cast` | A validator casts a vote on a jury-required milestone dispute |
+| `dispute_tallied` | A jury dispute is closed with a final verdict (upheld or overturned) |
+| `evidence_access_granted` | An `EvidenceAccessGrant` is issued to a scout via `pay_to_contact` / `batch_contact_players` |
+| `evidence_access_revoked` | Admin revokes a scout's `EvidenceAccessGrant` via `admin_revoke_evidence_access` |
 
 ## Why Stellar
 
@@ -643,15 +952,17 @@ MIT
 
 ## Documentation
 
+- [docs/BACKEND_AUTH.md](docs/BACKEND_AUTH.md) — backend wallet-login (SEP-10) guide with sequence diagram, request/response examples and error codes
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — full deployment guide including mainnet checklist
 - [docs/CONTRACT_REFERENCE.md](docs/CONTRACT_REFERENCE.md) — complete function reference for all four contracts
 - [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) — PR checklist and contribution guidelines
-- [docs/GLOSSARY.md](docs/GLOSSARY.md) — definitions of all domain-specific terms (scout, validator, milestone, CID, etc.)
+- [docs/GLOSSARY.md](docs/GLOSSARY.md) — definitions of all domain-specific terms (scout, validator, milestone, CID, wiring handshake, etc.)
 - [ai.md](ai.md) — cross-repo integration guide for AI assistants and new team members
 
 ## Support
 
-- GitHub Issues: [Create an issue](https://github.com/your-org/scoutchain/issues)
+- GitHub Issues: [Create an issue](https://github.com/scout-off/scout-off-contracts/issues)
+- **Security Reports**: See [SECURITY.md](SECURITY.md) for our security policy and private vulnerability reporting process
 - Stellar Discord: https://discord.gg/stellar
 - Stellar Developers: https://developers.stellar.org
 
@@ -661,7 +972,58 @@ See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for the full guide.
 
 Quick checklist:
 - All contract tests pass: `cargo test --workspace`
-- Zero clippy warnings: `cargo clippy --workspace -- -D warnings`
+- Zero clippy warnings: `cargo clippy --workspace --all-targets -- -D warnings`
 - Formatting clean: `cargo fmt --all -- --check`
 - New functions have tests and are documented in [docs/CONTRACT_REFERENCE.md](docs/CONTRACT_REFERENCE.md)
 - Validator authorization logic changes require explicit review from a second team member
+
+## Handsoff notes
+
+<!-- handsoff-issue-1654 -->
+- #1654: scout_access: evidence-access grants are valid for 90 days but their storage TTL covers only ~30 days and is never extended on read
+
+<!-- handsoff-issue-1656 -->
+- #1656: registration: get_player_count's doc comment is attached to get_scout_verification
+
+<!-- handsoff-issue-1666 -->
+- #1666: registration: add direct unit tests for canonicalize_region / canonicalize_position / canonicalize_nationality
+
+<!-- handsoff-issue-1674 -->
+- #1674: scout_access: remove the unreachable `effective_limit == 0` branch in get_player_access_grants
+
+<!-- handsoff-issue-1668 -->
+- #1668: progress: set_registration_contract has a merged/misplaced doc comment and skips the instance-TTL bump its siblings perform
+
+<!-- handsoff-issue-1671 -->
+- #1671: progress: extract the duplicated registration-sync block from advance_level and reset_player_level
+
+<!-- handsoff-issue-1672 -->
+- #1672: scout_access: add_to_tier_index is marked #[allow(dead_code)] but is used
+
+<!-- handsoff-issue-1673 -->
+- #1673: scout_access: admin_seed_fee_config / admin_seed_fee_config_history redefine the history cap locally
+
+<!-- handsoff-issue-1663 -->
+- #1663: shared-types: AdminError docs describe shared propose_admin/accept_admin helpers that don't exist
+
+<!-- handsoff-issue-1664 -->
+- #1664: shared-types: validate_cid docs claim dag-json ('bagu…') CIDs are accepted, but the code requires a 'baf' prefix
+
+<!-- handsoff-issue-1665 -->
+- #1665: shared-types: add exact length-boundary tests for validate_cid
+
+<!-- handsoff-issue-1642 -->
+- #1642: all contracts: record the previous WASM hash on upgrade and expose an upgrade history for rollback runbooks
+
+<!-- handsoff-issue-1653 -->
+- #1653: registration: deactivating a player doesn't affect verification or scout_access eligibility for disputes and grants
+
+<!-- handsoff-issue-1678 -->
+- #1678: scout_access: renew_if_due's doc claims all subscribe() protections apply, but several are skipped
+
+<!-- handsoff-issue-1681 -->
+- #1681: verification: remove the redundant `has(ProgressContract)` check inside its own else-branch in commit_approved_milestone
+
+## Wallet login (SEP-10)
+
+Wallets discover the server key and auth endpoint at /.well-known/stellar.toml, request a challenge with GET /auth, and submit the signed challenge with POST /auth. Multisig accounts are verified against their medium threshold, and client_domain wallet attribution is supported. Full flow, error codes and config: [docs/SEP10_WALLET_LOGIN.md](docs/SEP10_WALLET_LOGIN.md).

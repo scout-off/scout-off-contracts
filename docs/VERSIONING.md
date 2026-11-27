@@ -10,7 +10,19 @@ ScoutChain contracts follow [Semantic Versioning 2.0.0](https://semver.org/) —
 | **MINOR** | Backward-compatible addition — new function, new event, new error code appended at end of enum |
 | **PATCH** | Backward-compatible fix — bug fix, gas optimisation, documentation update in source |
 
-The current version of all four contracts is **v0.1.0**.
+The current workspace version of all four contracts is **v2.0.0**. Contract-specific
+releases in the Version History table may describe changes that were deployed to
+only one contract, but the shared workspace version remains the build-time value
+reported by every contract's `version()` function.
+
+> **Note:** `Cargo.toml` `[workspace.package].version` is the build-time source of truth; keep the Version History table below in sync with every Cargo version bump.
+
+> **Bindings packages:** the TypeScript binding packages under `bindings/` are
+> versioned in lockstep with the workspace version.
+> `scripts/generate-bindings.sh` derives the version from `Cargo.toml` and
+> rewrites each generated `package.json` after generation (the CLI overwrites
+> the scaffold with its own placeholder version), so a workspace version bump
+> automatically propagates to the bindings on the next regeneration.
 
 Each contract exposes a `version()` function that returns its current version string:
 
@@ -46,7 +58,7 @@ A change is **non-breaking** (MINOR or PATCH) if:
 
 ## Upgrade Checklist
 
-The upgrade procedure is implemented in `scripts/upgrade.sh` (see [docs/DEPLOYMENT.md — Upgrading a Deployed Contract](docs/DEPLOYMENT.md#upgrading-a-deployed-contract) for manual steps).
+The upgrade procedure is implemented in `scripts/upgrade.sh` (see [DEPLOYMENT.md — Upgrading a Deployed Contract](DEPLOYMENT.md#upgrading-a-deployed-contract) for manual steps).
 
 ```bash
 ./scripts/upgrade.sh <network> <contract_name> <new_wasm_path>
@@ -58,9 +70,15 @@ The upgrade procedure is implemented in `scripts/upgrade.sh` (see [docs/DEPLOYME
 
 - [ ] Read all BREAKING CHANGES listed in the release notes for the target version
 - [ ] Snapshot current on-chain state that lives in **instance** storage (fee config, initialized flag, contract links) — these survive the WASM swap but must be re-verified
-- [ ] Check `version()` on all four contracts to confirm the baseline version before upgrade
+- [ ] Check `version()` on all four contracts to confirm the baseline version before upgrade. Each contract should return the expected deployed workspace version (currently `2.0.0`, from `CARGO_PKG_VERSION`, with no `v` prefix).
 - [ ] Run `cargo test --workspace` against the new code locally
-- [ ] Test the full upgrade flow on testnet before touching mainnet
+- [ ] Rehearse the upgrade locally with the storage-survival harness — **no testnet fees required.** For each contract it deploys v1, seeds representative state, calls `upgrade()`, and asserts every row of the "What survives an upgrade" table in `docs/DEPLOYMENT.md` (persistent state unchanged; instance `Initialized`/`Paused` flags intact; cross-contract links re-wirable), including the `verification` `AlreadyConfigured` re-wire quirk. Run:
+  - `cargo test -p scoutchain-registration  --test upgrade_rehearsal`
+  - `cargo test -p scoutchain-verification  --test upgrade_rehearsal`
+  - `cargo test -p scoutchain-progress      --test upgrade_rehearsal`
+  - `cargo test -p scoutchain-scout-access  --test upgrade_rehearsal`
+  - (or all at once: `cargo test --workspace --test upgrade_rehearsal`)
+- [ ] Test the full upgrade flow on testnet before touching mainnet (only after the local rehearsal above passes, so testnet transaction fees are spent on a flow you already know survives an upgrade)
 
 ### During upgrade (per contract)
 
@@ -72,18 +90,25 @@ The upgrade procedure is implemented in `scripts/upgrade.sh` (see [docs/DEPLOYME
 
 - [ ] Call `version()` on each upgraded contract to confirm the expected new version
 - [ ] Re-verify instance storage (fee config, contract links) — re-apply if values were wiped
+- [ ] Verify cross-contract wiring: `./scripts/verify-cross-contract-wiring.sh <network>`
 - [ ] Re-run cross-contract wiring if any contract was re-deployed from scratch: `./scripts/initialize.sh <network>`
 - [ ] Regenerate TypeScript bindings: `./scripts/generate-bindings.sh <network>`
 - [ ] Update backend and frontend repos with the new bindings
 
 ---
 
+## Storage Layout CI Gate
+
+The `storage-layout-compat` job in `contract-ci.yml` runs `scripts/check-storage-layout-compat.sh origin/<base> HEAD` on every PR to `main`/`develop`. It covers `DataKey` and every `#[contracttype]` in the four contracts' `types.rs` and in `shared-types/src/lib.rs`, and fails on any layout-breaking change.
+
+To acknowledge an intentional break, commit `docs/breaking-change-ack-<PR number>.md` describing what changed and the data migration plan (see `docs/breaking-change-ack-1396-1397.md`). When that file exists the job passes `--acknowledge-breaking-change`.
+
 ## v0.1.0 → v0.x.0 Migration Notes
 
 This is the initial release. No prior on-chain state exists. The migration path from v0.1.0 to any future v0.x.0 (minor, backward-compatible) release is:
 
 1. **Build the new WASM** for the changed contract(s).
-2. **Install and upgrade** each changed contract using the procedure in [DEPLOYMENT.md](docs/DEPLOYMENT.md#upgrading-a-deployed-contract).
+2. **Install and upgrade** each changed contract using the procedure in [DEPLOYMENT.md](DEPLOYMENT.md#upgrading-a-deployed-contract).
 3. **Re-verify instance storage** — fee config and contract links are in instance storage and must be confirmed after each WASM swap.
 4. **Re-wire cross-contract links** if any contract address changed (i.e., a contract was re-deployed rather than upgraded in-place).
 5. **Regenerate bindings** and redeploy the backend/frontend.
@@ -94,12 +119,132 @@ All persistent-storage keys in v0.1.0 use the `DataKey` enum defined in each con
 
 ### Error code compatibility (v0.1.0 baseline)
 
-Error code assignments for v0.1.0 are fixed as documented in [docs/CONTRACT_REFERENCE.md](docs/CONTRACT_REFERENCE.md). Future minor releases may only **append** new error codes at the end of each enum. SDK consumers should handle unknown error codes gracefully (treat them as unexpected errors and surface to the user).
+Error code assignments for v0.1.0 are fixed as documented in [CONTRACT_REFERENCE.md](CONTRACT_REFERENCE.md). Future minor releases may only **append** new error codes at the end of each enum. SDK consumers should handle unknown error codes gracefully (treat them as unexpected errors and surface to the user).
+
+> **Known gap:** `ScoutAccessError` code 13 is intentionally reserved and will never be assigned. See `contracts/scout_access/src/errors.rs` for the inline explanation.
 
 ---
 
 ## Version History
 
-| Version | Date | Summary |
-|---------|------|---------|
-| v0.1.0 | 2025 | Initial release — all four contracts with full test coverage |
+### Format & Entry Guidelines
+
+When adding new entries to the Version History table:
+- **Contract Scope**: All four contracts (`registration`, `verification`, `progress`, `scout_access`) were initially released together at `v0.1.0`. Future releases may update all contracts in lockstep or target specific contracts individually. Specify the scope in the **Version** column (e.g., `v0.2.0 (all)` or `v0.2.0 (verification)`).
+- **SemVer Bump Type**: Explicitly classify each change as `MAJOR` (breaking storage/API change), `MINOR` (backward-compatible feature/event/error addition), or `PATCH` (backward-compatible bug fix/gas optimization) in the **Type** column.
+- **Summary**: Provide a concise summary of changes, explicitly calling out breaking changes if `MAJOR`.
+- **Cross-reference**: Every entry must mirror the corresponding entry in [CHANGELOG.md](../CHANGELOG.md) — keep both files in sync.
+
+> **Enforced by CI:** The `abi-diff` job fails any MAJOR/MINOR ABI change unless
+> it also adds a matching Version History row in this table alongside the
+> corresponding `CHANGELOG.md` entry.
+
+| Version | Date | Type | Summary |
+|---------|------|------|---------|
+| v0.1.0 (all) | 2025 | MINOR | Initial release — all four contracts with full test coverage |
+| v0.2.0 (scout_access) | 2026-07-28 | MAJOR | BREAKING: `ContactQuotaExceeded` (18) deprecated; `batch_contact_players` now returns `ProContactLimitReached` (20) for Pro-tier quota exceeded; error code 18 slot reserved |
+| v0.2.0 (verification) | 2026-07-29 | MINOR | Added `attest_milestone` k-of-n threshold consensus for milestone approval (new fns, 3 error codes appended: 26-28, retroactive vote invalidation on validator revocation); `approve_milestone` unchanged by default (`threshold = 1`) |
+| v0.3.0 (scout_access) | 2026-08-18 | MINOR | Added escrow-backed trial offers: `log_trial_offer` now charges `trial_offer_escrow_stroops`, `expire_trial_offers(limit)` sweeps stale entries after `trial_offer_expiry_secs`, and `admin_refund_trial_escrow` provides a targeted recovery path for individual stuck escrows. |
+| v0.3.0 (all) | 2026-08-18 | MINOR | Completed cross-contract wiring observability rollout (issue #1041): `get_wiring_state()` on all four contracts, per-link re-wiring epoch + `wiring_updated` event on every setter, verification's legacy first-call-only guards preserved unchanged. All new storage keys additive — see CHANGELOG.md for the full summary |
+| v0.3.1 (scout_access) | 2026-08-18 | MINOR | Implemented `EvidenceAccessGrant` confidential-evidence access tracking: `pay_to_contact` and `batch_contact_players` record a grant, `has_evidence_access` / `get_evidence_access_grant` / `get_player_access_grants` expose it, and `admin_revoke_evidence_access` makes a grant non-active without deleting the historical record. |
+| v0.4.0 (verification) | 2026-08-19 | MAJOR | BREAKING: Added dispute-jury escalation for high-impact milestone disputes. `MilestoneDispute` grows with `impact_score`, `jury_required`, `quorum`, `votes_for`, `votes_against`, and `voting_deadline`; `set_jury_config`, `cast_dispute_vote`, and `tally_dispute` add the full jury flow, while low-impact disputes remain admin-resolved. Requires migration for existing stored disputes. |
+| v1.0.0 (verification) | 2026-08-19 | MAJOR | BREAKING: `revoke_validator` and `batch_revoke_validators` parameter lists changed — explicit `RevocationSeverity` enum replaces magic-string severity inference. Added for-cause cascade sweep (`run_cascade_sweep`, `continue_revocation_cascade`), `is_milestone_flagged`, `rereview_milestone`, `get_revocation_record`. New error codes 32 (`NotEligibleToReReview`) and 33 (`MilestoneNotFlagged`). New events: `milestone_flagged`, `milestone_flag_cleared`, `revocation_cascade_complete`, `revocation_cascade_continued`. See CHANGELOG.md and docs/VALIDATOR_REVOCATION_REREVIEW.md for full details. |
+| v1.1.0 (all) | 2026-08-20 | MINOR | Added unauthenticated scalar peer-address getters (issue #1116) for six of the platform's eight cross-contract wiring links (see `docs/WIRING_REGISTRY_DESIGN.md` for the full list); each returns `None` until configured and leaves the aggregate wiring-state APIs unchanged. |
+<!-- Template / Example for future entries: -->
+<!-- | v0.2.0 (verification) | YYYY-MM-DD | MINOR | Added batch verification helper functions | -->
+<!-- | v1.0.0 (all) | YYYY-MM-DD | MAJOR | BREAKING: Updated storage key layout across all contracts | -->
+
+---
+
+## Storage Schema Versioning (progress contract)
+
+SemVer describes the *published contract version*. It does not by itself tell an
+operator whether deployed storage still matches what the running WASM expects,
+which is what a schema version records.
+
+The `progress` contract keeps a separate storage layout version in
+`DataKey::SchemaVersion`, and exposes it as `CODE_SCHEMA_VERSION` in
+`contracts/progress/src/types.rs`.
+
+### When to bump
+
+Bump `CODE_SCHEMA_VERSION` **only** when the storage *layout* changes:
+
+| Change | Bump? |
+|--------|-------|
+| A new `DataKey` variant is added | **Yes** |
+| A stored field changes type or meaning | **Yes** |
+| A new entrypoint writes keys of its own | No � older readers ignore unknown keys |
+| A new query function is added | No |
+| A fix that does not alter the layout | No |
+
+### Reading the version
+
+`schema_version()` returns the version recorded in storage, and returns `0` when
+the key is absent. An absent key means the contract predates versioning, so a
+deployment that has never been migrated reads as *behind* the code rather than
+as current.
+
+```bash
+stellar contract invoke --id $PROGRESS_CONTRACT_ID -- schema_version
+```
+
+### Running a migration
+
+`migrate(target_version, max_items)` is admin-only, bounded, and resumable:
+
+- **Bounded** � it does at most `max_items` units of work per call, so a
+  migration that cannot fit in one transaction can be spread across several.
+- **Resumable** � progress is recorded in `DataKey::MigrationCursor`, so a
+  repeated call continues rather than restarting.
+- **Idempotent** � calling it when storage is already at `target_version`
+  reports `complete` and rewrites nothing, so a retried script is harmless.
+- **Refuses downgrades** � a target below the stored version returns
+  `SchemaVersionTooNew` instead of discarding data the current code expects.
+- **Rejects unknown targets** � a target above `CODE_SCHEMA_VERSION` returns
+  `UnknownSchemaTarget`.
+- **No-op on `max_items == 0`** � zero would otherwise advance the stored
+  version without doing any work, silently marking the migration complete.
+
+Each call that changes the version emits `schema_migrated(from, to)`.
+
+The current migration is v0 ? v1, which backfills `DataKey::HistoryVec` from
+the already-correct `DataKey::HistoryEntry(player, index)` keys. It is a copy,
+not a recomputation, so history values are preserved exactly.
+
+`scripts/upgrade.sh` drives the loop and then verifies through `schema_version`.
+
+## `scripts/upgrade.sh` usage
+
+`./scripts/upgrade.sh --contract <id> --wasm <path> --source <identity>` (`--source` defaults to `$UPGRADE_SOURCE`). The WASM is uploaded once; if the upgraded contract exposes no `schema_version`, migration is skipped and the script exits 0.
+
+---
+
+## Deprecations
+
+| Item | Contract | Deprecated in | Removal target | Replacement |
+|------|----------|---------------|----------------|-------------|
+| `scout_subscribed` event | scout_access | v2.0.0 | **v3.0.0** | `subscription_created`, `subscription_renewed`, `subscription_auto_renewed` |
+
+### `scout_subscribed` (legacy subscription event)
+
+Every `subscribe` and `renew_if_due` currently emits two events: one of the
+new `subscription_created` / `subscription_renewed` / `subscription_auto_renewed`
+events and the legacy `scout_subscribed` event. The duplicate costs every
+subscriber extra fees and doubles indexer work, so it is on a fixed timeline:
+
+1. **v2.x (now)** — `scout_subscribed` is deprecated but still emitted.
+   Consumers should migrate to the new events. The new events carry
+   `(tier, subscribed_at, expires_at)`; the paid amount previously in
+   `scout_subscribed.fee_paid` can be derived from `get_fee_config()` for the tier.
+2. **v3.0.0** — `scout_subscribed` stops being emitted. Removing an event is a
+   breaking change under this policy, so it ships only with a MAJOR bump.
+
+In-repo consumer status:
+
+| Consumer | Status |
+|----------|--------|
+| `docs/INDEXER.md` (`scout_subscriptions` table) | Migrated to the new events |
+| `scripts/audit-event-history.js` | Does not consume `scout_subscribed` |
+| `scripts/reconcile-indexer.js` | Reads `get_subscription` / `get_subscribers_by_tier`, not events |
+| `bindings/` examples | Do not reference `scout_subscribed` |

@@ -1,0 +1,62 @@
+{
+  "1": [
+    {
+      "comment": "Round 1 — happy path: 2-of-3 threshold met, milestone committed",
+      "type": "attestation_recorded",
+      "data": { "player_id": 1, "round": 1, "validator": "GABC1", "threshold": 2, "timestamp": 1000 }
+    },
+    {
+      "type": "attestation_recorded",
+      "data": { "player_id": 1, "round": 1, "validator": "GABC2", "threshold": 2, "timestamp": 1010 }
+    },
+    {
+      "type": "milestone_approved",
+      "data": { "player_id": 1, "round": 1, "milestone_index": 1 }
+    },
+    {
+      "comment": "Round 2 — window expires before threshold; then a late vote arrives (should be flagged POST_EXPIRY_VOTE)",
+      "type": "attestation_recorded",
+      "data": { "player_id": 1, "round": 2, "validator": "GABC1", "threshold": 2, "timestamp": 2000 }
+    },
+    {
+      "type": "attestation_window_expired",
+      "data": { "player_id": 1, "round": 2, "timestamp": 2500 }
+    },
+    {
+      "comment": "Late vote after expiry — should be flagged as POST_EXPIRY_VOTE",
+      "type": "attestation_recorded",
+      "data": { "player_id": 1, "round": 2, "validator": "GABC2", "threshold": 2, "timestamp": 2600 }
+    },
+    {
+      "comment": "Round 3 — one vote from a revoked validator; threshold 2; should flag REVOKED_VALIDATOR_VOTE_COUNTED",
+      "type": "attestation_recorded",
+      "data": { "player_id": 1, "round": 3, "validator": "GABC_REVOKED", "threshold": 2, "timestamp": 3000 }
+    },
+    {
+      "type": "attestation_recorded",
+      "data": { "player_id": 1, "round": 3, "validator": "GABC3", "threshold": 2, "timestamp": 3010 }
+    },
+    {
+      "comment": "Round 4 — votes invalidated mid-round, then re-vote and commit",
+      "type": "attestation_recorded",
+      "data": { "player_id": 1, "round": 4, "validator": "GABC1", "threshold": 2, "timestamp": 4000 }
+    },
+    {
+      "type": "validator_pending_votes_invalidated",
+      "data": { "player_id": 1, "round": 4 }
+    },
+    {
+      "type": "attestation_recorded",
+      "data": { "player_id": 1, "round": 4, "validator": "GABC1", "threshold": 2, "timestamp": 4100 }
+    },
+    {
+      "type": "attestation_recorded",
+      "data": { "player_id": 1, "round": 4, "validator": "GABC2", "threshold": 2, "timestamp": 4110 }
+    },
+    {
+      "type": "milestone_approved",
+      "data": { "player_id": 1, "round": 4, "milestone_index": 2 }
+    }
+  ],
+  "_revokedValidators": ["GABC_REVOKED"]
+}
