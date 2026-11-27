@@ -123,7 +123,7 @@ This document defines the persistent storage TTL policy for the scout-off-contra
 | `ProgressContract` | 518,400 | Address of Progress contract for cross-contract level updates. Extended on `set_progress_contract` write and `get_progress_contract` read. |
 | `RegistrationContract` | 518,400 | Address of Registration contract for cross-contract scout checks. Extended on `set_registration_contract` write and `get_registration_contract` read. |
 | `TrialOfferLastSent(scout, player_id)` | 518,400 | Rate-limit cooldown timestamp. Extended on `log_trial_offer` write. |
-| `TierSubscribers(tier)` | 518,400 | Subscriber list index per tier. Extended in `add_to_tier_index` and `remove_from_tier_index` write operations. |
+| `TierSubscribers(tier)` | 518,400 | Subscriber list index per tier. Extended in `add_to_tier_index` and `remove_from_tier_index` write operations, and on every `get_subscribers_by_tier` read when the list is non-empty (read-side keep-alive, matching the other scout_access getters). |
 | `ProContactCount(scout)` | 518,400 | Pro-tier contact quota tracking. Extended on contact operations (`pay_to_contact`/`log_trial_offer`) and `get_pro_contact_count` read. |
 | `PlayerContacts(player_id)` | 518,400 | Inbound scout contact index for a player. Extended on `pay_to_contact`/`log_trial_offer` writes and `get_player_contacts` read. |
 | `ScoutTrialOffers(scout)` | 518,400 | Index of trial offers logged by a scout. Extended on `log_trial_offer` write and `get_scout_trial_offers` read. |

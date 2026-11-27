@@ -250,3 +250,52 @@ The following correctness fixes shipped on `fix/1015-indexer-correctness`:
   every function this script calls.
 - [README.md — Database Schema](../README.md#database-schema) — the
   Postgres schema this script reconciles against.
+
+---
+
+## Archival Event Source
+
+### Why it is needed
+
+The Soroban RPC `getEvents` endpoint retains events for a limited window
+(typically a few days).  Bootstrapping the indexer after an outage or
+performing a full from-genesis audit will silently produce incomplete results
+if `fromLedger` predates the oldest retained ledger.
+
+### Configuration
+
+Set the following environment variables before running any audit or indexer
+bootstrap that covers historical ledgers:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GALEXIE_ARCHIVE_URL` | Yes (for archive) | Base URL of the Galexie / data-lake JSONL archive |
+| `GALEXIE_API_KEY` | No | Bearer token for authenticated archive buckets |
+
+When `GALEXIE_ARCHIVE_URL` is not set, `audit-event-history.js` will refuse to
+audit ranges that start before the RPC retention window and exit non-zero with
+an explanatory message rather than silently producing a partial report.
+
+### Archive format
+
+The archive is an HTTP(S) endpoint that serves:
+
+- `<base>/index.json` — JSON array of partition descriptors:
+  ```json
+  [
+    { "file": "part-0001.jsonl", "firstLedger": 1, "lastLedger": 999 },
+    { "file": "part-1000.jsonl", "firstLedger": 1000, "lastLedger": 1999 }
+  ]
+  ```
+- `<base>/<partition-file>.jsonl` — newline-delimited JSON records, one per
+  event, each with at minimum:
+  ```json
+  { "ledger_sequence": 500, "contract_id": "C...", "event_type": "contract", "close_time": "...", "data": {} }
+  ```
+
+Galexie exports `LedgerCloseMeta` files in a compatible format.  Hubble /
+BigQuery exports need a thin transform layer to match the above schema.
+
+### Re-index from archive
+
+See [RUNBOOK.md — Re-index from Archive](#re-index-from-archive).

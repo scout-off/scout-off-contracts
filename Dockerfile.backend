@@ -1,0 +1,36 @@
+# Production image for the Node/Express SEP-10 backend.
+# Build: docker build -f Dockerfile.backend -t scoutchain-backend .
+
+# --- deps: full dependency install (lockfile if present) ---
+FROM node:20-slim AS deps
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY package.json package-lock.json* ./
+COPY prisma ./prisma
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+# --- build: prisma generate + tsc (emits dist/server.js) ---
+FROM deps AS build
+COPY tsconfig.json tsconfig.docker.json ./
+COPY src ./src
+RUN npx prisma generate && npx tsc -p tsconfig.docker.json
+
+# --- runtime: production deps + compiled output + Prisma client/engines ---
+FROM node:20-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+ENV NODE_ENV=production
+WORKDIR /app
+COPY package.json package-lock.json* ./
+COPY prisma ./prisma
+RUN if [ -f package-lock.json ]; then npm ci --omit=dev --ignore-scripts; else npm install --omit=dev --ignore-scripts; fi \
+    && npm cache clean --force
+COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=build /app/dist ./dist
+RUN chown -R node:node /app
+USER node
+EXPOSE 3000
+# The server has no dedicated liveness route; any HTTP response (here a 400 from
+# GET /auth without an account) proves the process is serving requests.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/auth').then(()=>process.exit(0),()=>process.exit(1))"
+CMD ["node", "dist/server.js"]
