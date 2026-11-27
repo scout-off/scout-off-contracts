@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ScoutChain — post-deploy health check
 # Calls health() on every deployed contract and asserts initialized: true, paused: false.
-# Usage: ./scripts/health-check.sh [testnet|mainnet|local]
+# Usage: ./scripts/health-check.sh [testnet|mainnet|local] [--strict]
 # Requires .env.contracts to exist (written by deploy.sh).
 set -euo pipefail
 
@@ -18,6 +18,8 @@ for arg in "$@"; do
       ;;
   esac
 done
+# shellcheck source=network.sh
+source "$(dirname "$0")/network.sh" "$NETWORK"
 # `stellar contract invoke` requires a --source-account even for read-only
 # calls. Any funded account works for a simulation-only read; callers set
 # STELLAR_SOURCE_ACCOUNT (an identity name or secret key), falling back to

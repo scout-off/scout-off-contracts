@@ -40,13 +40,12 @@ function challengeHash(tx: { hash(): Buffer }): string {
   return tx.hash().toString("hex");
 }
 
-/** Access-token lifetime in seconds: ACCESS_TOKEN_TTL_SECONDS, capped at 15 minutes. */
+/**
+ * Access-token lifetime in seconds, validated and clamped to the 15-minute
+ * ceiling (#1606) by `loadConfig`.
+ */
 export function accessTokenTtlSeconds(): number {
-  const configured = Number(process.env.ACCESS_TOKEN_TTL_SECONDS);
-  if (!Number.isFinite(configured) || configured <= 0) {
-    return MAX_ACCESS_TOKEN_TTL_SECONDS;
-  }
-  return Math.min(Math.floor(configured), MAX_ACCESS_TOKEN_TTL_SECONDS);
+  return config.accessTokenTtlSeconds;
 }
 
 export function refreshTokenTtlSeconds(role?: string): number {

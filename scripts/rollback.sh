@@ -6,6 +6,9 @@
 #        ./scripts/rollback.sh --snapshot <file> [testnet|mainnet|local]
 set -euo pipefail
 
+# shellcheck source=scripts/network.sh
+source "$(dirname "$0")/network.sh" "${1:-}"
+
 SNAPSHOT=".env.contracts.snapshot"
 SNAPSHOT_DIR=".env.contracts.snapshots"
 

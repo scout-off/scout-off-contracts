@@ -26,6 +26,8 @@ export interface Config {
   stellarNetwork: StellarNetwork;
   networkPassphrase: string;
   adminAddress?: string;
+  accessTokenTtlSeconds: number;
+  refreshTokenTtlSeconds: number;
   /**
    * Refresh-token lifetime (in seconds) for wallets whose role is `unknown`,
    * i.e. wallets that have not registered as admin/validator/scout/player.
@@ -53,18 +55,11 @@ export interface JwtPayload {
   aud?: string | string[];
 }
 
-export interface JwtPayload {
-  sub: string;
-  role: string;
-  iat?: number;
-  exp?: number;
-  jti?: string;
-  iss?: string;
-  aud?: string | string[];
-}
-
 const MIN_JWT_SECRET_BYTES = 32;
 
+export const DEFAULT_ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
+export const DEFAULT_REFRESH_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
+export const MAX_ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const DEFAULT_UNKNOWN_REFRESH_TOKEN_TTL_SECONDS = 60 * 60; // 1 hour
 const MAX_UNKNOWN_REFRESH_TOKEN_TTL_SECONDS = 24 * 60 * 60; // 24 hours
 
@@ -141,6 +136,39 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (!networkIsSupported) {
     errors.push(`STELLAR_NETWORK must be one of: ${SUPPORTED_NETWORKS.join(", ")}`);
   }
+
+  const positiveInteger = (name: string, defaultValue: number): number => {
+    const raw = env[name]?.trim();
+    if (!raw) {
+      return defaultValue;
+    }
+    if (!/^\d+$/.test(raw)) {
+      errors.push(`${name} must be a positive integer (seconds), got "${raw}"`);
+      return defaultValue;
+    }
+    const value = Number(raw);
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      errors.push(`${name} must be a positive integer (seconds), got "${raw}"`);
+      return defaultValue;
+    }
+    return value;
+  };
+
+  const accessTokenTtlSeconds = positiveInteger(
+    "ACCESS_TOKEN_TTL_SECONDS",
+    DEFAULT_ACCESS_TOKEN_TTL_SECONDS,
+  );
+  if (accessTokenTtlSeconds > MAX_ACCESS_TOKEN_TTL_SECONDS) {
+    errors.push(
+      `ACCESS_TOKEN_TTL_SECONDS must not exceed ${MAX_ACCESS_TOKEN_TTL_SECONDS} seconds ` +
+        `(15 minutes); values above the ceiling are rejected, not clamped`,
+    );
+  }
+
+  const refreshTokenTtlSeconds = positiveInteger(
+    "REFRESH_TOKEN_TTL_SECONDS",
+    DEFAULT_REFRESH_TOKEN_TTL_SECONDS,
+  );
 
   const unknownTtlRaw = env.UNKNOWN_REFRESH_TOKEN_TTL_SECONDS?.trim();
   let unknownRefreshTokenTtlSeconds = DEFAULT_UNKNOWN_REFRESH_TOKEN_TTL_SECONDS;
@@ -270,6 +298,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     stellarNetwork: network as StellarNetwork,
     networkPassphrase,
     adminAddress,
+    accessTokenTtlSeconds,
+    refreshTokenTtlSeconds,
     trustProxy,
     getAuthIpLimit,
     getAuthAccountLimit,

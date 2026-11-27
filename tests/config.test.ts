@@ -237,94 +237,70 @@ describe("loadConfig", () => {
       ).toThrow(/must be a hostname/);
     });
   });
-});
 
-describe("accessTokenTtlSeconds", () => {
-  const ORIGINAL_ENV = process.env;
+  describe("token TTLs", () => {
+    it("applies defaults when unset", () => {
+      const config = loadConfig(VALID);
+      expect(config.accessTokenTtlSeconds).toBe(900);
+      expect(config.refreshTokenTtlSeconds).toBe(604800);
+    });
 
-  beforeEach(() => {
-    process.env = { ...ORIGINAL_ENV };
-    delete process.env.ACCESS_TOKEN_TTL_SECONDS;
-  });
+    it("parses valid custom values", () => {
+      const config = loadConfig({
+        ...VALID,
+        ACCESS_TOKEN_TTL_SECONDS: "300",
+        REFRESH_TOKEN_TTL_SECONDS: "3600",
+      });
+      expect(config.accessTokenTtlSeconds).toBe(300);
+      expect(config.refreshTokenTtlSeconds).toBe(3600);
+    });
 
-  afterEach(() => {
-    process.env = ORIGINAL_ENV;
-  });
+    it("rejects a non-numeric ACCESS_TOKEN_TTL_SECONDS", () => {
+      expect(() =>
+        loadConfig({ ...VALID, ACCESS_TOKEN_TTL_SECONDS: "15m" })
+      ).toThrow(/ACCESS_TOKEN_TTL_SECONDS must be a positive integer/);
+    });
 
-  it("defaults to 900 when unset", () => {
-    expect(accessTokenTtlSeconds()).toBe(900);
-  });
+    it("rejects a non-numeric REFRESH_TOKEN_TTL_SECONDS", () => {
+      expect(() =>
+        loadConfig({ ...VALID, REFRESH_TOKEN_TTL_SECONDS: "7d" })
+      ).toThrow(/REFRESH_TOKEN_TTL_SECONDS must be a positive integer/);
+    });
 
-  it("parses a valid value", () => {
-    process.env.ACCESS_TOKEN_TTL_SECONDS = "60";
-    expect(accessTokenTtlSeconds()).toBe(60);
-  });
+    it("rejects a zero ACCESS_TOKEN_TTL_SECONDS", () => {
+      expect(() =>
+        loadConfig({ ...VALID, ACCESS_TOKEN_TTL_SECONDS: "0" })
+      ).toThrow(/ACCESS_TOKEN_TTL_SECONDS must be a positive integer/);
+    });
 
-  it("clamps values above the 15-minute ceiling to 900", () => {
-    process.env.ACCESS_TOKEN_TTL_SECONDS = "3600";
-    expect(accessTokenTtlSeconds()).toBe(900);
-  });
+    it("rejects a zero REFRESH_TOKEN_TTL_SECONDS", () => {
+      expect(() =>
+        loadConfig({ ...VALID, REFRESH_TOKEN_TTL_SECONDS: "0" })
+      ).toThrow(/REFRESH_TOKEN_TTL_SECONDS must be a positive integer/);
+    });
 
-  it("falls back to the default for non-numeric values", () => {
-    process.env.ACCESS_TOKEN_TTL_SECONDS = "abc";
-    expect(accessTokenTtlSeconds()).toBe(900);
-  });
+    it("rejects a negative ACCESS_TOKEN_TTL_SECONDS", () => {
+      expect(() =>
+        loadConfig({ ...VALID, ACCESS_TOKEN_TTL_SECONDS: "-60" })
+      ).toThrow(/ACCESS_TOKEN_TTL_SECONDS must be a positive integer/);
+    });
 
-  it("falls back to the default for zero", () => {
-    process.env.ACCESS_TOKEN_TTL_SECONDS = "0";
-    expect(accessTokenTtlSeconds()).toBe(900);
-  });
+    it("rejects a negative REFRESH_TOKEN_TTL_SECONDS", () => {
+      expect(() =>
+        loadConfig({ ...VALID, REFRESH_TOKEN_TTL_SECONDS: "-60" })
+      ).toThrow(/REFRESH_TOKEN_TTL_SECONDS must be a positive integer/);
+    });
 
-  it("falls back to the default for negative values", () => {
-    process.env.ACCESS_TOKEN_TTL_SECONDS = "-5";
-    expect(accessTokenTtlSeconds()).toBe(900);
-  });
+    it("rejects an ACCESS_TOKEN_TTL_SECONDS above the 15-minute ceiling", () => {
+      expect(() =>
+        loadConfig({ ...VALID, ACCESS_TOKEN_TTL_SECONDS: "901" })
+      ).toThrow(/ACCESS_TOKEN_TTL_SECONDS must not exceed 900 seconds/);
+    });
 
-  it("floors fractional values", () => {
-    process.env.ACCESS_TOKEN_TTL_SECONDS = "90.7";
-    expect(accessTokenTtlSeconds()).toBe(90);
-  });
-});
-
-describe("refreshTokenTtlSeconds", () => {
-  const ORIGINAL_ENV = process.env;
-
-  beforeEach(() => {
-    process.env = { ...ORIGINAL_ENV };
-    delete process.env.REFRESH_TOKEN_TTL_SECONDS;
-  });
-
-  afterEach(() => {
-    process.env = ORIGINAL_ENV;
-  });
-
-  it("defaults to 604800 when unset", () => {
-    expect(refreshTokenTtlSeconds()).toBe(604800);
-  });
-
-  it("parses a valid value", () => {
-    process.env.REFRESH_TOKEN_TTL_SECONDS = "60";
-    expect(refreshTokenTtlSeconds()).toBe(60);
-  });
-
-  it("falls back to the default for non-numeric values", () => {
-    process.env.REFRESH_TOKEN_TTL_SECONDS = "abc";
-    expect(refreshTokenTtlSeconds()).toBe(604800);
-  });
-
-  it("falls back to the default for zero", () => {
-    process.env.REFRESH_TOKEN_TTL_SECONDS = "0";
-    expect(refreshTokenTtlSeconds()).toBe(604800);
-  });
-
-  it("falls back to the default for negative values", () => {
-    process.env.REFRESH_TOKEN_TTL_SECONDS = "-5";
-    expect(refreshTokenTtlSeconds()).toBe(604800);
-  });
-
-  it("floors fractional values", () => {
-    process.env.REFRESH_TOKEN_TTL_SECONDS = "90.7";
-    expect(refreshTokenTtlSeconds()).toBe(90);
+    it("accepts an ACCESS_TOKEN_TTL_SECONDS at the 15-minute ceiling", () => {
+      const config = loadConfig({ ...VALID, ACCESS_TOKEN_TTL_SECONDS: "900" });
+      expect(config.accessTokenTtlSeconds).toBe(900);
+    });
   });
 });
 

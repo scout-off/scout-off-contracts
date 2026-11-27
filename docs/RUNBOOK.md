@@ -212,15 +212,25 @@ See [PLAYER_ERASURE.md](PLAYER_ERASURE.md) for the full procedure.
 
 ```bash
 # 1. Pause only approve_milestone while investigation continues
+./scripts/emergency-pause.sh --function approve_milestone
+
+# 2. Continue validator operations (registration, revocation)
+# 3. The script prints health() for the verification contract to confirm state
+# 4. Once investigation complete, unpause
+./scripts/emergency-unpause.sh --function approve_milestone
+```
+
+The script prints the resulting `health()` field(s) after the call, so no
+separate `health` invocation is needed. If you need to run the calls by hand
+(e.g. the script is unavailable), the equivalent manual commands are:
+
+```bash
 stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
   -- pause_approve_milestone
 
-# 2. Continue validator operations (registration, revocation)
-# 3. Query health to confirm state
 stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
   -- health
 
-# 4. Once investigation complete, unpause
 stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
   -- unpause_approve_milestone
 ```
@@ -241,15 +251,25 @@ stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
 
 ```bash
 # 1. Pause only pay_to_contact while investigation continues
+./scripts/emergency-pause.sh --function pay_to_contact
+
+# 2. Continue scout operations (subscribe, renew, read state)
+# 3. The script prints health() for the scout_access contract to confirm state
+# 4. Once investigation complete, unpause
+./scripts/emergency-unpause.sh --function pay_to_contact
+```
+
+The script prints the resulting `health()` field(s) after the call, so no
+separate `health` invocation is needed. If you need to run the calls by hand
+(e.g. the script is unavailable), the equivalent manual commands are:
+
+```bash
 stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
   -- pause_pay_to_contact
 
-# 2. Continue scout operations (subscribe, renew, read state)
-# 3. Query health to confirm state
 stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
   -- health
 
-# 4. Once investigation complete, unpause
 stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
   -- unpause_pay_to_contact
 ```
