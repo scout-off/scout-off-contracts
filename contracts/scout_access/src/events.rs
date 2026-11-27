@@ -1,298 +1,31 @@
-// Events not yet migrated to #[contractevent] keep the legacy
-// `env.events().publish` call so their wire format (topics and positional
-// data) stays unchanged for indexers.
-#![allow(deprecated)]
+#![allow(deprecated, dead_code)]
+use crate::types::SubscriptionTier;
+use soroban_sdk::{Address, Env, Symbol};
 
-use crate::types::{FeeConfig, SubscriptionTier};
-use soroban_sdk::{contractevent, Address, BytesN, Env, Symbol};
+pub const CONTRACT_INITIALIZED: &str = "contract_initialized";
+pub const SCOUT_SUBSCRIBED: &str = "scout_subscribed";
+pub const PLAYER_CONTACTED: &str = "player_contacted";
+pub const TRIAL_OFFER_LOGGED: &str = "trial_offer_logged";
+pub const TRIAL_OFFER_CONFIRMED: &str = "trial_offer_confirmed";
+pub const TRIAL_OFFER_EXPIRED: &str = "trial_offer_expired";
+pub const TRIAL_ESCROW_ADMIN_REFUNDED: &str = "trial_escrow_admin_refunded";
+pub const FEES_WITHDRAWN: &str = "fees_withdrawn";
+pub const ADMIN_TRANSFERRED: &str = "admin_transferred";
+pub const ADMIN_TRANSFER_PROPOSED: &str = "admin_transfer_proposed";
+pub const CONTRACT_PAUSED: &str = "contract_paused";
+pub const CONTRACT_UNPAUSED: &str = "contract_unpaused";
+pub const SUBSCRIPTION_REFUNDED: &str = "subscription_refunded";
+pub const PROGRESS_CONTRACT_UPDATED: &str = "progress_contract_updated";
+pub const REGISTRATION_CONTRACT_UPDATED: &str = "registration_contract_updated";
+pub const FEE_CONFIG_PROPOSED: &str = "fee_config_proposed";
+pub const FEE_CONFIG_UPDATED: &str = "fee_config_updated";
+pub const FEE_CONFIG_DELAY_BYPASSED: &str = "fee_config_delay_bypassed";
+pub const WIRING_UPDATED: &str = "wiring_updated";
+pub const PLAYER_PURGE_STARTED: &str = "player_purge_started";
+pub const PLAYER_DATA_PURGED: &str = "player_data_purged";
+pub const PLAYER_PURGE_COMPLETED: &str = "player_purge_completed";
 
-// ── Typed contract events (issue #1370) ──────────────────────────────────────
-
-/// Emitted by `initialize` / `__constructor`.
-pub const CONTRACT_UPGRADED: &str = "contract_upgraded";
-pub const MIGRATION_WINDOW_CLOSED: &str = "migration_window_closed";
-pub const MIGRATION_WINDOW_OPENED: &str = "migration_window_opened";
-
-#[contractevent]
-pub struct ContractInitialized {
-    #[topic]
-    pub admin: Address,
-}
-
-/// Emitted by `subscribe` (legacy, alongside `SubscriptionCreated` or `SubscriptionRenewed`).
-#[contractevent]
-pub struct ScoutSubscribed {
-    #[topic]
-    pub scout: Address,
-    pub tier: SubscriptionTier,
-    pub fee_paid: i128,
-}
-
-/// Emitted by `subscribe` when the scout purchases their first subscription.
-#[contractevent]
-pub struct SubscriptionCreated {
-    #[topic]
-    pub scout: Address,
-    pub tier: SubscriptionTier,
-    pub subscribed_at: u64,
-    pub expires_at: u64,
-}
-
-/// Emitted by `subscribe` when the scout renews or upgrades an existing subscription.
-#[contractevent]
-pub struct SubscriptionRenewed {
-    #[topic]
-    pub scout: Address,
-    pub tier: SubscriptionTier,
-    pub subscribed_at: u64,
-    pub expires_at: u64,
-}
-
-/// Emitted when a subscription is refunded.
-#[contractevent]
-pub struct SubscriptionRefunded {
-    #[topic]
-    pub scout: Address,
-    pub admin: Address,
-    pub amount: i128,
-}
-
-/// Emitted by `pay_to_contact`.
-#[contractevent]
-pub struct PlayerContacted {
-    #[topic]
-    pub scout: Address,
-    pub player_id: u64,
-    pub fee_paid: i128,
-}
-
-/// Emitted by `log_trial_offer` (escrows a fee; does not advance the level).
-#[contractevent]
-pub struct TrialOfferLogged {
-    #[topic]
-    pub scout: Address,
-    pub player_id: u64,
-}
-
-/// Emitted by `confirm_trial_offer` (player confirms before expiry).
-#[contractevent]
-pub struct TrialOfferConfirmed {
-    #[topic]
-    pub scout: Address,
-    pub player_id: u64,
-    pub index: u32,
-}
-
-/// Emitted when a trial offer confirmation window elapses; escrow refunded.
-#[contractevent]
-pub struct TrialOfferExpired {
-    #[topic]
-    pub scout: Address,
-    pub player_id: u64,
-    pub index: u32,
-}
-
-/// Emitted when an admin refunds a trial escrow directly.
-#[contractevent]
-pub struct TrialEscrowAdminRefunded {
-    #[topic]
-    pub to: Address,
-    pub player_id: u64,
-    pub index: u32,
-    pub amount: i128,
-}
-
-/// Emitted when an admin rescues an orphan trial escrow (no `TrialOffer`
-/// record) to an admin-chosen address.
-#[contractevent]
-pub struct TrialEscrowOrphanRescued {
-    #[topic]
-    pub to: Address,
-    pub player_id: u64,
-    pub index: u32,
-    pub amount: i128,
-}
-
-/// Emitted by `withdraw_fees`.
-#[contractevent]
-pub struct FeesWithdrawn {
-    #[topic]
-    pub admin: Address,
-    pub to: Address,
-    pub amount: i128,
-    pub timestamp: u64,
-}
-
-/// Emitted by `propose_admin`.
-#[contractevent]
-pub struct AdminTransferProposed {
-    #[topic]
-    pub old_admin: Address,
-    pub new_admin: Address,
-}
-
-/// Emitted by `accept_admin`.
-#[contractevent]
-pub struct AdminTransferred {
-    #[topic]
-    pub old_admin: Address,
-    pub new_admin: Address,
-}
-
-/// Emitted by `pause_contract`.
-#[contractevent]
-pub struct ContractPaused {
-    #[topic]
-    pub admin: Address,
-}
-
-/// Emitted by `unpause_contract`.
-#[contractevent]
-pub struct ContractUnpaused {
-    #[topic]
-    pub admin: Address,
-}
-
-/// Emitted by `pause_pay_to_contact`.
-#[contractevent]
-pub struct PayToContactPaused {
-    #[topic]
-    pub admin: Address,
-}
-
-/// Emitted by `unpause_pay_to_contact`.
-#[contractevent]
-pub struct PayToContactUnpaused {
-    #[topic]
-    pub admin: Address,
-}
-
-/// Emitted by `set_progress_contract`.
-#[contractevent]
-pub struct ProgressContractUpdated {
-    #[topic]
-    pub admin: Address,
-    pub progress_contract: Address,
-}
-
-/// Emitted by `set_registration_contract`.
-#[contractevent]
-pub struct RegistrationContractUpdated {
-    #[topic]
-    pub admin: Address,
-    pub registration_contract: Address,
-}
-
-/// Emitted by every `set_*_contract` wiring call.
-#[contractevent]
-pub struct WiringUpdated {
-    #[topic]
-    pub admin: Address,
-    #[topic]
-    pub link: soroban_sdk::Symbol,
-    pub new_address: Address,
-    pub new_epoch: u32,
-}
-
-/// Emitted by `propose_fee_config`.
-#[contractevent]
-pub struct FeeConfigProposed {
-    #[topic]
-    pub admin: Address,
-    pub proposed_config: FeeConfig,
-    pub proposed_at: u64,
-}
-
-/// Emitted by `update_fee_config` and `activate_fee_config`.
-#[contractevent]
-pub struct FeeConfigUpdated {
-    #[topic]
-    pub admin: Address,
-    pub old_config: FeeConfig,
-    pub new_config: FeeConfig,
-}
-
-/// Emitted alongside `FeeConfigUpdated` when `update_fee_config` bypasses the delay.
-#[contractevent]
-pub struct FeeConfigDelayBypassed {
-    #[topic]
-    pub admin: Address,
-    pub old_config: FeeConfig,
-    pub new_config: FeeConfig,
-}
-
-/// Emitted when confirm_trial_offer is skipped because the progress contract
-/// address has not been configured.
-#[contractevent]
-pub struct ProgressContractNotSet {
-    #[topic]
-    pub player_id: u64,
-}
-
-/// Emitted just before a `ProgressCallFailed` error is returned.
-#[contractevent]
-pub struct ProgressCallFailed {
-    #[topic]
-    pub player_id: u64,
-    pub error_code: u32,
-}
-
-/// Emitted by `set_auto_renew`.
-#[contractevent]
-pub struct AutoRenewSet {
-    #[topic]
-    pub scout: Address,
-    pub enabled: bool,
-}
-
-/// Emitted when `renew_if_due` successfully renews a scout's subscription.
-#[contractevent]
-pub struct SubscriptionAutoRenewed {
-    #[topic]
-    pub scout: Address,
-    pub tier: SubscriptionTier,
-    pub subscribed_at: u64,
-    pub expires_at: u64,
-}
-
-/// Emitted by `restore_subscription_record`.
-#[contractevent]
-pub struct SubscriptionRecordRestored {
-    #[topic]
-    pub admin: Address,
-    pub scout: Address,
-}
-
-/// Emitted by `pay_to_contact` / `batch_contact_players` when a grant is issued.
-#[contractevent]
-pub struct EvidenceAccessGranted {
-    #[topic]
-    pub scout: Address,
-    pub player_id: u64,
-    pub tier: SubscriptionTier,
-}
-
-/// Emitted by `admin_revoke_evidence_access`.
-#[contractevent]
-pub struct EvidenceAccessRevoked {
-    #[topic]
-    pub scout: Address,
-    pub player_id: u64,
-    pub admin: Address,
-}
-
-/// Emitted by `purge_player_data` (GDPR erasure, issue #1373).
-#[contractevent]
-pub struct PlayerDataPurged {
-    #[topic]
-    pub admin: Address,
-    pub player_id: u64,
-    pub entries_removed: u32,
-    pub more: bool,
-}
-
-// ── Emit helpers ─────────────────────────────────────────────────────────────
-
+/// topics: (event_name, admin)  data: admin
 pub fn contract_initialized(env: &Env, admin: &Address) {
     ContractInitialized {
         admin: admin.clone(),
@@ -743,5 +476,41 @@ pub fn migration_window_closed(env: &Env, admin: &Address) {
     env.events().publish(
         (Symbol::new(env, MIGRATION_WINDOW_CLOSED), admin.clone()),
         (),
+    );
+}
+
+// ── Player erasure events (issue #1781) ──────────────────────────────────────
+
+/// Emitted on the **first** page of `purge_player_data` for a player.
+/// topics: (event_name, admin)  data: player_id
+pub fn player_purge_started(env: &Env, admin: &Address, player_id: u64) {
+    env.events().publish(
+        (Symbol::new(env, PLAYER_PURGE_STARTED), admin.clone()),
+        player_id,
+    );
+}
+
+/// Emitted on **every** page (including start and completion pages).
+/// topics: (event_name, admin)  data: (player_id, entries_removed, next_cursor, more)
+pub fn player_data_purged(
+    env: &Env,
+    admin: &Address,
+    player_id: u64,
+    entries_removed: u32,
+    next_cursor: u32,
+    more: bool,
+) {
+    env.events().publish(
+        (Symbol::new(env, PLAYER_DATA_PURGED), admin.clone()),
+        (player_id, entries_removed, next_cursor, more),
+    );
+}
+
+/// Emitted on the **last** page of `purge_player_data` when no data remains.
+/// topics: (event_name, admin)  data: player_id
+pub fn player_purge_completed(env: &Env, admin: &Address, player_id: u64) {
+    env.events().publish(
+        (Symbol::new(env, PLAYER_PURGE_COMPLETED), admin.clone()),
+        player_id,
     );
 }

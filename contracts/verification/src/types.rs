@@ -1,6 +1,22 @@
 pub use scoutchain_shared_types::{ContractHealth, WiringLink};
 use soroban_sdk::{contracttype, Address, BytesN, String, Vec};
 
+/// On-chain erasure progress for one player on this contract.
+///
+/// Returned by `get_purge_status`. Answers "is player X fully erased here?"
+/// without event-log replay.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PurgeStatus {
+    /// Whether purge_player_data has been called at least once for this player.
+    pub started: bool,
+    /// The stored cursor position (next batch to remove).
+    /// Only meaningful while `started && !completed`.
+    pub cursor: u32,
+    /// Whether all player data has been removed from this contract.
+    pub completed: bool,
+}
+
 /// Convenience aggregate returned by `get_validator_activity_report`.
 ///
 /// Bundles the data from four individual queries into one call:
@@ -590,24 +606,17 @@ pub enum DataKey {
     /// from which the next `continue_revocation_cascade` call should resume.
     /// Absent when no cascade is in progress or when the sweep is complete.
     RevocationCascadeCursor(Address),
-    /// Prior `RevocationRecord` entries preserved when a Routine revocation
-    /// is escalated to ForCause (issue #1393). The current record remains
-    /// under `RevocationRecord(wallet)`; this list holds superseded ones so
-    /// the original reason/timestamp are never silently lost.
-    RevocationHistory(Address),
-    /// Start timestamp of the current per-(validator, player) cap window
-    /// (issue #1615). Absent for counts written before windows existed.
-    ValidatorPlayerWindowStart(Address, u64),
-    /// The next accepted cursor for a player's paged erasure. Absent before
-    /// erasure starts and after it completes.
-    PurgeCursor(u64),
 
-    /// Tombstone flag set by `registration.deregister_player` via
-    /// `mark_player_erased`. Once set, all player-scoped writes are permanently
-    /// blocked for this player_id. This is the push-model erasure guard —
-    /// registration pushes the tombstone to each contract rather than each
-    /// contract pulling from registration on every write (issue #1622).
-    Erased(u64),
+    // ── Player erasure (issue #1781) ──
+    /// Stored cursor for an in-progress or completed purge of `player_id`.
+    /// Written on the first `purge_player_data` call and updated on every
+    /// subsequent page. The value is the *next* cursor position to process;
+    /// `0` while not yet started (key absent), advancing by one per page.
+    PurgeCursor(u64),
+    /// Marker written (value: `true`) after the final `purge_player_data`
+    /// page removes all remaining entries for `player_id`. Stored with a
+    /// long TTL so auditors can confirm erasure without replaying events.
+    PurgeCompleted(u64),
 }
 
 /// Snapshot of both cross-contract peer address pointers held by the

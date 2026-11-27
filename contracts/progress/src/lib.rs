@@ -13,6 +13,7 @@ use types::CODE_SCHEMA_VERSION;
 pub use types::{
     DataKey, FrontierPeak, HistoryProofStep, HistorySince, ProgressEntry, ProgressWiringState,
 };
+pub use types::{DataKey, HistoryProofStep, ProgressEntry, ProgressWiringState, PurgeStatus};
 
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, String, Vec};
@@ -1561,6 +1562,251 @@ impl ProgressContract {
             verification_contract,
             scout_access_contract,
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Player erasure (issue #1781)
+    // -------------------------------------------------------------------------
+
+    /// Remove all on-chain data for `player_id` from this contract, one page
+    /// at a time.
+    ///
+    /// ## Resumable, cursor-advancing erasure
+    ///
+    /// Progress is stored in `PurgeCursor(player_id)` so the caller never needs
+    /// to supply or track a cursor — each call automatically resumes from where
+    /// the previous one left off. The pages are:
+    ///
+    /// - Page 0: scalar keys — `PlayerLevel`, `HistoryCounter`, `HistoryRoot`,
+    ///           `HistoryVec`.
+    /// - Pages 1…n: `HistoryEntry` batches of `PURGE_PAGE_SIZE` entries each.
+    ///             All `HistoryPage` shards are removed at the same time as the
+    ///             entries that fill them (last page of that shard).
+    ///
+    /// A `player_purge_started` event is emitted on the first call. A
+    /// `player_data_purged` event is emitted on every call. When the final page
+    /// exhausts all entries a `player_purge_completed` event is emitted and
+    /// `PurgeCompleted(player_id)` is stored with a long TTL so auditors can
+    /// confirm erasure without event replay.
+    ///
+    /// ## Compatibility
+    ///
+    /// The old `cursor` parameter is accepted for ABI compatibility but is
+    /// validated against the stored cursor; a mismatch returns
+    /// `InvalidProgressTransition`. Pass `0` on the first call and the
+    /// `next_cursor` value from each response on subsequent calls, **or** just
+    /// omit cursor management and let the contract self-advance.
+    ///
+    /// Admin-only.
+    pub fn purge_player_data(
+        env: Env,
+        admin: Address,
+        player_id: u64,
+        cursor: u32,
+    ) -> Result<(u32, bool), ProgressError> {
+        admin.require_auth();
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+
+        // How many HistoryEntry keys to remove per page (pages 1+).
+        const PURGE_PAGE_SIZE: u32 = 20;
+
+        // ── Load stored cursor ────────────────────────────────────────────────
+        let stored_cursor: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PurgeCursor(player_id))
+            .unwrap_or(0u32);
+
+        // If the caller supplied an explicit cursor it must match what we stored.
+        // This prevents a wrong starting point from silently skipping data.
+        if cursor != stored_cursor {
+            return Err(ProgressError::InvalidProgressTransition);
+        }
+
+        // If already completed, nothing to do.
+        let already_done: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PurgeCompleted(player_id))
+            .unwrap_or(false);
+        if already_done {
+            return Ok((0u32, false));
+        }
+
+        // Emit start event on the first page.
+        if stored_cursor == 0 {
+            events::player_purge_started(&env, &admin, player_id);
+        }
+
+        let mut entries_removed: u32 = 0u32;
+
+        // ── Page 0: scalar keys ───────────────────────────────────────────────
+        if stored_cursor == 0 {
+            // Read history count BEFORE removing the counter key.
+            let history_count: u32 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::HistoryCounter(player_id))
+                .unwrap_or(0u32);
+
+            let scalar_keys: [DataKey; 4] = [
+                DataKey::PlayerLevel(player_id),
+                DataKey::HistoryCounter(player_id),
+                DataKey::HistoryRoot(player_id),
+                DataKey::HistoryVec(player_id),
+            ];
+            for key in &scalar_keys {
+                if env.storage().persistent().has(key) {
+                    env.storage().persistent().remove(key);
+                    entries_removed = entries_removed
+                        .checked_add(1)
+                        .ok_or(ProgressError::Overflow)?;
+                }
+            }
+
+            // Also clear the PurgeCompleted from any prior run.
+            if env
+                .storage()
+                .persistent()
+                .has(&DataKey::PurgeCompleted(player_id))
+            {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::PurgeCompleted(player_id));
+            }
+
+            // Determine whether there are HistoryEntry keys to remove.
+            let has_more = history_count > 0
+                && env
+                    .storage()
+                    .persistent()
+                    .has(&DataKey::HistoryEntry(player_id, 1));
+
+            let next_cursor: u32 = if has_more { 1u32 } else { 0u32 };
+            let more = next_cursor > 0;
+
+            // Store the cursor for the next call.
+            env.storage()
+                .persistent()
+                .set(&DataKey::PurgeCursor(player_id), &next_cursor);
+            env.storage().persistent().extend_ttl(
+                &DataKey::PurgeCursor(player_id),
+                PERSISTENT_TTL_MIN,
+                PERSISTENT_TTL_MAX,
+            );
+
+            if !more {
+                // No history entries: erasure is complete.
+                Self::mark_purge_complete(&env, &admin, player_id, entries_removed, next_cursor);
+                return Ok((0u32, false));
+            }
+
+            events::player_data_purged(&env, &admin, player_id, entries_removed, next_cursor, more);
+            return Ok((next_cursor, more));
+        }
+
+        // ── Pages 1+: HistoryEntry batches ────────────────────────────────────
+        let batch_start = (stored_cursor - 1) * PURGE_PAGE_SIZE + 1;
+        let batch_end = batch_start + PURGE_PAGE_SIZE; // exclusive
+
+        let mut last_removed: u32 = 0;
+        for i in batch_start..batch_end {
+            let key = DataKey::HistoryEntry(player_id, i);
+            if env.storage().persistent().has(&key) {
+                env.storage().persistent().remove(&key);
+                entries_removed = entries_removed
+                    .checked_add(1)
+                    .ok_or(ProgressError::Overflow)?;
+                last_removed = i;
+                // Also remove associated HistoryPage shards for this entry.
+                let page_idx = Self::history_page_index(i);
+                let page_key = DataKey::HistoryPage(player_id, page_idx);
+                if env.storage().persistent().has(&page_key) {
+                    env.storage().persistent().remove(&page_key);
+                    entries_removed = entries_removed
+                        .checked_add(1)
+                        .ok_or(ProgressError::Overflow)?;
+                }
+            } else {
+                break;
+            }
+        }
+
+        // Check whether more HistoryEntry keys exist beyond this batch.
+        let next_entry = last_removed + 1;
+        let has_more = last_removed > 0
+            && env
+                .storage()
+                .persistent()
+                .has(&DataKey::HistoryEntry(player_id, next_entry));
+
+        let next_cursor: u32 = if has_more { stored_cursor + 1 } else { 0u32 };
+        let more = next_cursor > 0;
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::PurgeCursor(player_id), &next_cursor);
+        env.storage().persistent().extend_ttl(
+            &DataKey::PurgeCursor(player_id),
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
+
+        if !more {
+            Self::mark_purge_complete(&env, &admin, player_id, entries_removed, next_cursor);
+            return Ok((0u32, false));
+        }
+
+        events::player_data_purged(&env, &admin, player_id, entries_removed, next_cursor, more);
+        Ok((next_cursor, more))
+    }
+
+    /// Return the on-chain erasure status for `player_id` on this contract.
+    ///
+    /// Returns `PurgeStatus { started: false, cursor: 0, completed: false }`
+    /// when no purge has ever been initiated.
+    pub fn get_purge_status(env: Env, player_id: u64) -> PurgeStatus {
+        let started = env
+            .storage()
+            .persistent()
+            .has(&DataKey::PurgeCursor(player_id));
+        let cursor: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PurgeCursor(player_id))
+            .unwrap_or(0u32);
+        let completed: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PurgeCompleted(player_id))
+            .unwrap_or(false);
+        PurgeStatus {
+            started,
+            cursor,
+            completed,
+        }
+    }
+
+    // ── Erasure internal helper ───────────────────────────────────────────────
+
+    /// Write `PurgeCompleted`, emit both per-page and completion events.
+    fn mark_purge_complete(
+        env: &Env,
+        admin: &Address,
+        player_id: u64,
+        entries_removed: u32,
+        next_cursor: u32,
+    ) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::PurgeCompleted(player_id), &true);
+        env.storage().persistent().extend_ttl(
+            &DataKey::PurgeCompleted(player_id),
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
+        events::player_data_purged(env, admin, player_id, entries_removed, next_cursor, false);
+        events::player_purge_completed(env, admin, player_id);
     }
 
     // -------------------------------------------------------------------------

@@ -210,6 +210,12 @@ pub enum DataKey {
     /// Re-wiring epoch for `DataKey::ProgressContract`, bumped by every
     /// `set_progress_contract` call.
     ProgressContractEpoch,
+    /// Address of the verification contract (optional). Used by
+    /// `get_erasure_status` to cross-call `get_purge_status` on that contract.
+    VerificationContract,
+    /// Address of the scout_access contract (optional). Used by
+    /// `get_erasure_status` to cross-call `get_purge_status` on that contract.
+    ScoutAccessContract,
     /// Explicit player level override used for admin-seeded players or
     /// progress updates that should be visible to reads even before a progress
     /// contract is wired.
@@ -285,4 +291,37 @@ impl RegistrationWiringState {
     pub fn is_fully_wired(&self) -> bool {
         self.progress_contract.is_configured()
     }
+}
+
+/// Aggregate erasure status across all three purging contracts.
+///
+/// Returned by `registration.get_erasure_status(player_id)`. Each field is
+/// a `PurgeStatus` from the respective contract (or the zero-value
+/// `{ started: false, cursor: 0, completed: false }` when the cross-contract
+/// call is unavailable). `fully_erased` is `true` iff all three contracts
+/// have reported `completed: true`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ErasureStatus {
+    /// Erasure status as reported by the `progress` contract.
+    pub progress: PurgeStatus,
+    /// Erasure status as reported by the `verification` contract.
+    pub verification: PurgeStatus,
+    /// Erasure status as reported by the `scout_access` contract.
+    pub scout_access: PurgeStatus,
+    /// `true` iff all three contracts have `completed: true`.
+    pub fully_erased: bool,
+}
+
+/// Per-contract erasure progress for one player.
+///
+/// Mirrors `PurgeStatus` on the purging contracts; replicated here so the
+/// registration contract can expose the aggregate type without a dependency
+/// on the other contracts' types.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PurgeStatus {
+    pub started: bool,
+    pub cursor: u32,
+    pub completed: bool,
 }

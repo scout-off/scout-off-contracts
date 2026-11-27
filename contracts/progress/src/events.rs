@@ -6,7 +6,14 @@
 use scoutchain_shared_types::ProgressLevel;
 use soroban_sdk::{contractevent, Address, BytesN, Env, Symbol};
 
-// ── Typed contract events (issue #1370) ──────────────────────────────────────
+pub const ADMIN_TRANSFERRED: &str = "admin_transferred";
+pub const ADMIN_TRANSFER_PROPOSED: &str = "admin_transfer_proposed";
+pub const PROGRESS_UPDATED: &str = "progress_updated";
+pub const PLAYER_LEVEL_RESET: &str = "player_level_reset";
+pub const WIRING_UPDATED: &str = "wiring_updated";
+pub const PLAYER_PURGE_STARTED: &str = "player_purge_started";
+pub const PLAYER_DATA_PURGED: &str = "player_data_purged";
+pub const PLAYER_PURGE_COMPLETED: &str = "player_purge_completed";
 
 /// Emitted by `advance_level` and `reset_player_level`.
 pub const CONTRACT_UPGRADED: &str = "contract_upgraded";
@@ -225,9 +232,38 @@ pub fn contract_upgraded(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>)
     );
 }
 
-/// Emitted by `migrate` when the stored schema version advances.
-/// topics: (event_name,)  data: (from_version: u32, to_version: u32)
-pub fn schema_migrated(env: &Env, from: u32, to: u32) {
-    env.events()
-        .publish((Symbol::new(env, SCHEMA_MIGRATED),), (from, to));
+// ── Player erasure events (issue #1781) ──────────────────────────────────────
+
+/// Emitted on the **first** page of `purge_player_data` for a player.
+/// topics: (event_name, admin)  data: player_id
+pub fn player_purge_started(env: &Env, admin: &Address, player_id: u64) {
+    env.events().publish(
+        (Symbol::new(env, "player_purge_started"), admin.clone()),
+        player_id,
+    );
+}
+
+/// Emitted on **every** page (including start and completion pages).
+/// topics: (event_name, admin)  data: (player_id, entries_removed, next_cursor, more)
+pub fn player_data_purged(
+    env: &Env,
+    admin: &Address,
+    player_id: u64,
+    entries_removed: u32,
+    next_cursor: u32,
+    more: bool,
+) {
+    env.events().publish(
+        (Symbol::new(env, "player_data_purged"), admin.clone()),
+        (player_id, entries_removed, next_cursor, more),
+    );
+}
+
+/// Emitted on the **last** page of `purge_player_data` when no data remains.
+/// topics: (event_name, admin)  data: player_id
+pub fn player_purge_completed(env: &Env, admin: &Address, player_id: u64) {
+    env.events().publish(
+        (Symbol::new(env, "player_purge_completed"), admin.clone()),
+        player_id,
+    );
 }

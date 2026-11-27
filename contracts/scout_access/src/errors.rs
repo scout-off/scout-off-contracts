@@ -144,98 +144,10 @@ pub enum ScoutAccessError {
     /// which no `EvidenceAccessGrant` record exists.
     GrantNotFound = 38,
 
-    // ── Scout deactivation ──
-    /// The scout has been deactivated by the registration admin and cannot
-    /// use paid services (subscribe, pay_to_contact, log_trial_offer).
-    ScoutDeactivated = 39,
-
-    // ── Tier access enforcement (issue #1357) ──
-    /// `pay_to_contact` or `batch_contact_players` called by a Basic-tier scout,
-    /// or by a Pro-tier scout attempting to contact a Level-3 player.
-    /// Basic tier has no contact entitlement; Pro tier is capped at Level 2.
-    TierNotPermitted = 41,
-
-    /// `revoke_evidence_access` attempted to revoke a grant that was already
-    /// revoked (by admin or player).
-    ///
-    /// DEPRECATED: both revoke paths are now idempotent and return `Ok(())`
-    /// when the grant is already revoked (issue #1675). Retained to reserve
-    /// slot 42 and avoid reassignment.
-    GrantAlreadyRevoked = 42,
-    /// `revoke_evidence_access` caller's wallet does not own the `player_id`
-    /// passed to the function, or the player is not registered.
-    ///
-    /// DEPRECATED: superseded by `NotPlayerOwner` (50) for ownership
-    /// mismatches and `RegistrationContractNotSet` (44) for unwired
-    /// registration (issue #1675). Retained to reserve slot 43.
-    PlayerNotVerified = 43,
-
-    /// Registration contract is not wired; Pro/Elite subscriptions require it.
-    /// (Originally shipped as a duplicate `28`; renumbered so it no longer
-    /// collides with `AutoRenewNotEnabled`.)
-    RegistrationContractNotSet = 44,
-    /// `open_migration_window` was called after the window was permanently
-    /// closed by `close_migration_window`.
-    MigrationWindowSealed = 45,
-    /// The registration contract is wired but has no scout profile for this
-    /// wallet (never registered, or erased via `deregister_scout`). Fails
-    /// closed so a deregistered scout cannot keep acting (issue #1641).
-    ScoutNotRegistered = 46,
-    /// `log_trial_offer` was called while `trial_offer_escrow_stroops` is 0
-    /// (trial offers disabled).
-    TrialOffersDisabled = 47,
-    /// The payment token's `decimals()` is not 7; fee bounds assume XLM stroops.
-    UnsupportedTokenDecimals = 48,
-    /// Wiring target failed the `contract_kind`/`version` handshake (#1610).
-    InvalidPeerContract = 49,
-
-    /// `revoke_evidence_access` caller's wallet does not own the `player_id`
-    /// passed to the function (ownership mismatch). Distinct from
-    /// `RegistrationContractNotSet` (44), which signals an unwired
-    /// registration contract (issue #1675).
-    NotPlayerOwner = 50,
-
-    /// Progress contract is not wired; `confirm_trial_offer` requires it to
-    /// advance the player's level. This is a deployment-wiring problem, not
-    /// invalid caller input (issue #1676).
-    ProgressContractNotSet = 51,
-
-    // ── Player contactability (issue #1645) ──
-    /// The target player has been deactivated by the registration admin and
-    /// is no longer discoverable; contacts and trial offers are rejected
-    /// without charging the scout.
-    PlayerDeactivated = 52,
-    /// The target player is not registered (unknown `player_id`). Closes #301.
-    PlayerNotFound = 53,
-
-    // ── Evidence-access renewal (issue #1607) ──
-    /// `renew_evidence_access` was called while the grant is still active.
-    GrantNotExpired = 54,
-    /// `reinstate_evidence_access` was called on a grant that is not revoked.
-    GrantNotRevoked = 55,
-    /// `reinstate_evidence_access` cannot undo an admin takedown.
-    GrantAdminRevoked = 56,
-    /// `renew_evidence_access` requires an existing `ContactRecord` for the pair.
-    ContactNotFound = 57,
-
-    // ── Migration seeding (issue #1679) ──
-    /// `admin_seed_trial_offer` was called with a `trial_index` that is not
-    /// exactly `TrialCounter + 1` for the target player. Mirrors progress's
-    /// `InvalidHistoryIndex` for the same contiguity violation.
-    InvalidTrialIndex = 58,
-
-    // ── Player erasure (issue #1824) ──
-    /// `purge_player_data` found an unexpired, non-zero `TrialEscrow` for the
-    /// player. The escrow must be refunded or allowed to expire before the
-    /// player's data can be erased.
-    TrialEscrowOutstanding = 59,
-    /// `purge_player_data` was called with a cursor other than the next
-    /// expected cursor for this player.
-    InvalidPurgeCursor = 60,
-    // ── Player erasure tombstone ──
-    /// The player has been erased via `registration.deregister_player`; all
-    /// player-scoped writes are permanently blocked for this player_id.
-    PlayerErased = 61,
+    // ── Player erasure (issue #1781) ──
+    /// The supplied cursor does not match the stored purge cursor for this player.
+    /// This prevents skipping data by passing a wrong starting position.
+    PurgeCursorMismatch = 39,
 }
 
 impl AdminError for ScoutAccessError {

@@ -7,9 +7,8 @@ use types::{FeeConfigProposal, ProContactPeriod, ScoutAccessWiringState};
 
 pub use errors::ScoutAccessError;
 pub use types::{
-    ContactRecord, DataKey, EvidenceAccessGrant, FeeConfig, FeeConfigHistoryEntry,
-    ScoutContactsPage, Subscription, SubscriptionTier, TrialEscrow, TrialOffer, TrialOfferEntry,
-    TrialOfferPage,
+    ContactRecord, DataKey, EvidenceAccessGrant, FeeConfig, FeeConfigHistoryEntry, PurgeStatus,
+    ScoutContactsPage, Subscription, SubscriptionTier, TrialEscrow, TrialOffer,
 };
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env, String, Vec};
@@ -3365,8 +3364,254 @@ impl ScoutAccessContract {
             _ => return Err(ScoutAccessError::ErasureNotAuthorized),
         }
 
-        const PAGE_SIZE: u32 = 50;
-        let mut removed: u32 = 0;
+    // -------------------------------------------------------------------------
+    // Player erasure (issue #1781)
+    // -------------------------------------------------------------------------
+
+    /// Remove all on-chain scout-contact and subscription data for `player_id`
+    /// from this contract, one page at a time.
+    ///
+    /// Pages:
+    /// - Page 0: `PlayerContacts(player_id)`, `EvidenceAccessGrantCount(player_id)`.
+    /// - Pages 1…n: `EvidenceAccessGrant` and `EvidenceAccessGrantPage` batches
+    ///   of `PURGE_PAGE_SIZE` entries each (keyed by scout address in the page).
+    ///
+    /// Also removes `ContactRecord(player_id, scout)` for each scout found in
+    /// `PlayerContacts` during page 0.
+    ///
+    /// A `player_purge_started` event is emitted on the first call.
+    /// `player_data_purged` is emitted every call. `player_purge_completed`
+    /// is emitted — and `PurgeCompleted` stored — when erasure finishes.
+    ///
+    /// Admin-only. The supplied `cursor` must equal the stored cursor.
+    pub fn purge_player_data(
+        env: Env,
+        admin: Address,
+        player_id: u64,
+        cursor: u32,
+    ) -> Result<(u32, bool), ScoutAccessError> {
+        admin.require_auth();
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+
+        const PURGE_PAGE_SIZE: u32 = 20;
+
+        let stored_cursor: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PurgeCursor(player_id))
+            .unwrap_or(0u32);
+
+        if cursor != stored_cursor {
+            return Err(ScoutAccessError::PurgeCursorMismatch);
+        }
+
+        let already_done: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PurgeCompleted(player_id))
+            .unwrap_or(false);
+        if already_done {
+            return Ok((0u32, false));
+        }
+
+        if stored_cursor == 0 {
+            events::player_purge_started(&env, &admin, player_id);
+        }
+
+        let mut entries_removed: u32 = 0u32;
+
+        if stored_cursor == 0 {
+            // Read grant count BEFORE removing any keys.
+            let grant_count: u32 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::EvidenceAccessGrantCount(player_id))
+                .unwrap_or(0u32);
+
+            // Remove ContactRecord entries for each scout who contacted this player.
+            let contacts: Vec<Address> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::PlayerContacts(player_id))
+                .unwrap_or_else(|| Vec::new(&env));
+            for i in 0..contacts.len() {
+                if let Some(scout) = contacts.get(i) {
+                    let cr_key = DataKey::ContactRecord(player_id, scout);
+                    if env.storage().persistent().has(&cr_key) {
+                        env.storage().persistent().remove(&cr_key);
+                        entries_removed = entries_removed
+                            .checked_add(1)
+                            .ok_or(ScoutAccessError::Overflow)?;
+                    }
+                }
+            }
+
+            // Remove scalar player-scoped keys.
+            let scalar_keys: [DataKey; 2] = [
+                DataKey::PlayerContacts(player_id),
+                DataKey::EvidenceAccessGrantCount(player_id),
+            ];
+            for key in &scalar_keys {
+                if env.storage().persistent().has(key) {
+                    env.storage().persistent().remove(key);
+                    entries_removed = entries_removed
+                        .checked_add(1)
+                        .ok_or(ScoutAccessError::Overflow)?;
+                }
+            }
+
+            if env
+                .storage()
+                .persistent()
+                .has(&DataKey::PurgeCompleted(player_id))
+            {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::PurgeCompleted(player_id));
+            }
+
+            // Check if there are paged grant records to remove.
+            let page_count = grant_count
+                .checked_add(ACCESS_GRANT_PAGE_SIZE - 1)
+                .unwrap_or(grant_count)
+                / ACCESS_GRANT_PAGE_SIZE;
+            let has_more = page_count > 0
+                && env
+                    .storage()
+                    .persistent()
+                    .has(&DataKey::EvidenceAccessGrantPage(player_id, 0));
+
+            let next_cursor: u32 = if has_more { 1u32 } else { 0u32 };
+            let more = next_cursor > 0;
+
+            env.storage()
+                .persistent()
+                .set(&DataKey::PurgeCursor(player_id), &next_cursor);
+            env.storage().persistent().extend_ttl(
+                &DataKey::PurgeCursor(player_id),
+                PERSISTENT_TTL_MIN,
+                PERSISTENT_TTL_MAX,
+            );
+
+            if !more {
+                Self::sa_mark_purge_complete(&env, &admin, player_id, entries_removed, next_cursor);
+                return Ok((0u32, false));
+            }
+
+            events::player_data_purged(&env, &admin, player_id, entries_removed, next_cursor, more);
+            return Ok((next_cursor, more));
+        }
+
+        // Pages 1+: EvidenceAccessGrantPage batches.
+        let batch_start = (stored_cursor - 1) * PURGE_PAGE_SIZE;
+        let batch_end = batch_start + PURGE_PAGE_SIZE;
+
+        let mut last_removed_page: u32 = 0;
+        let mut removed_any = false;
+        for page_idx in batch_start..batch_end {
+            let page_key = DataKey::EvidenceAccessGrantPage(player_id, page_idx);
+            if env.storage().persistent().has(&page_key) {
+                // Remove individual EvidenceAccessGrant records in this page.
+                let scouts: Vec<Address> = env
+                    .storage()
+                    .persistent()
+                    .get(&page_key)
+                    .unwrap_or_else(|| Vec::new(&env));
+                for i in 0..scouts.len() {
+                    if let Some(scout) = scouts.get(i) {
+                        let grant_key = DataKey::EvidenceAccessGrant(player_id, scout);
+                        if env.storage().persistent().has(&grant_key) {
+                            env.storage().persistent().remove(&grant_key);
+                            entries_removed = entries_removed
+                                .checked_add(1)
+                                .ok_or(ScoutAccessError::Overflow)?;
+                        }
+                    }
+                }
+                env.storage().persistent().remove(&page_key);
+                entries_removed = entries_removed
+                    .checked_add(1)
+                    .ok_or(ScoutAccessError::Overflow)?;
+                last_removed_page = page_idx;
+                removed_any = true;
+            } else {
+                break;
+            }
+        }
+
+        let next_page = last_removed_page + 1;
+        let has_more = removed_any
+            && env
+                .storage()
+                .persistent()
+                .has(&DataKey::EvidenceAccessGrantPage(player_id, next_page));
+
+        let next_cursor: u32 = if has_more { stored_cursor + 1 } else { 0u32 };
+        let more = next_cursor > 0;
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::PurgeCursor(player_id), &next_cursor);
+        env.storage().persistent().extend_ttl(
+            &DataKey::PurgeCursor(player_id),
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
+
+        if !more {
+            Self::sa_mark_purge_complete(&env, &admin, player_id, entries_removed, next_cursor);
+            return Ok((0u32, false));
+        }
+
+        events::player_data_purged(&env, &admin, player_id, entries_removed, next_cursor, more);
+        Ok((next_cursor, more))
+    }
+
+    /// Return the on-chain erasure status for `player_id` on this contract.
+    pub fn get_purge_status(env: Env, player_id: u64) -> PurgeStatus {
+        let started = env
+            .storage()
+            .persistent()
+            .has(&DataKey::PurgeCursor(player_id));
+        let cursor: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PurgeCursor(player_id))
+            .unwrap_or(0u32);
+        let completed: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PurgeCompleted(player_id))
+            .unwrap_or(false);
+        PurgeStatus {
+            started,
+            cursor,
+            completed,
+        }
+    }
+
+    fn sa_mark_purge_complete(
+        env: &Env,
+        admin: &Address,
+        player_id: u64,
+        entries_removed: u32,
+        next_cursor: u32,
+    ) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::PurgeCompleted(player_id), &true);
+        env.storage().persistent().extend_ttl(
+            &DataKey::PurgeCompleted(player_id),
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
+        events::player_data_purged(env, admin, player_id, entries_removed, next_cursor, false);
+        events::player_purge_completed(env, admin, player_id);
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal helpers
+    // -------------------------------------------------------------------------
 
         // Counters are kept alive until the final page (#1784).
         let trial_count: u32 = env

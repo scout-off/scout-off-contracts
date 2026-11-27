@@ -7,6 +7,27 @@ pub use scoutchain_shared_types::{ProgressLevel, WiringLink};
 /// [`DataKey::SchemaVersion`].
 pub const CODE_SCHEMA_VERSION: u32 = 1;
 
+/// On-chain erasure progress for one player on one contract.
+///
+/// Returned by `get_purge_status`. All three fields together answer
+/// "is player X fully erased here?" without event-log replay.
+///
+/// - `started`   – `true` once the first `purge_player_data` page runs.
+/// - `cursor`    – next key-batch index to remove; `0` on the first call,
+///                 advances to `1`, `2` … until exhausted.
+/// - `completed` – `true` once the last page has run and no entries remain.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PurgeStatus {
+    /// Whether purge_player_data has been called at least once for this player.
+    pub started: bool,
+    /// The stored cursor position (next batch to remove).
+    /// Only meaningful while `started && !completed`.
+    pub cursor: u32,
+    /// Whether all player data has been removed from this contract.
+    pub completed: bool,
+}
+
 /// One step of a Merkle inclusion proof for [`ProgressEntry`] history
 /// commitments (see [`DataKey::HistoryRoot`]).
 ///
@@ -245,14 +266,15 @@ pub enum DataKey {
     /// Re-wiring epoch for [`DataKey::ScoutAccessContract`], bumped by
     /// every `set_scout_access_contract` call.
     ScoutAccessContractEpoch,
-    /// The next accepted cursor for a player's paged erasure. Absent before
-    /// erasure starts and after it completes.
-    PurgeCursor(u64),
 
-    /// Tombstone flag set by `registration.deregister_player` via
-    /// `mark_player_erased`. Once set, all player-scoped writes are permanently
-    /// blocked for this player_id. This is the push-model erasure guard —
-    /// registration pushes the tombstone to each contract rather than each
-    /// contract pulling from registration on every write (issue #1622).
-    Erased(u64),
+    // ── Player erasure (issue #1781) ──
+    /// Stored cursor for an in-progress or completed purge of `player_id`.
+    /// Written on the first `purge_player_data` call and updated on every
+    /// subsequent page. The value is the *next* cursor position to process;
+    /// `0` while not yet started (key absent), advancing by one per page.
+    PurgeCursor(u64),
+    /// Marker written (value: `true`) after the final `purge_player_data`
+    /// page removes all remaining entries for `player_id`. Stored with a
+    /// long TTL so auditors can confirm erasure without replaying events.
+    PurgeCompleted(u64),
 }

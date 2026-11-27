@@ -18,12 +18,7 @@ use types::{
 pub use types::{FilterResult, PlayerProfile};
 
 pub use errors::ScoutChainError;
-pub use types::{MigrationAuthorization, MigrationRole, PlayerStatus, ScoutStatus};
-// `PlayerVitals` is an *input* type of the public `register_player` function, so
-// it must be nameable by external callers (integration tests, generated
-// clients). Re-export it at the crate root; this also brings it into local
-// scope for the rest of this module.
-pub use types::PlayerVitals;
+pub use types::{ErasureStatus, MigrationAuthorization, MigrationRole, PlayerVitals, PurgeStatus};
 
 use scoutchain_shared_types::{
     read_wiring_link, require_admin, safe_math::safe_add_u64, write_wiring_link,
@@ -64,6 +59,62 @@ mod scout_access_contract {
     #[allow(dead_code)]
     pub trait ScoutAccessContractClient {
         fn mark_player_erased(env: Env, player_id: u64);
+    }
+}
+
+// Cross-contract client stubs for erasure-status aggregation (issue #1781).
+// Each stub exposes only get_purge_status so the aggregator is read-only.
+mod progress_purge_contract {
+    use soroban_sdk::{contractclient, contracttype, Env};
+
+    #[contracttype]
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct PurgeStatus {
+        pub started: bool,
+        pub cursor: u32,
+        pub completed: bool,
+    }
+
+    #[contractclient(name = "Client")]
+    #[allow(dead_code)]
+    pub trait ProgressPurgeClient {
+        fn get_purge_status(env: Env, player_id: u64) -> PurgeStatus;
+    }
+}
+
+mod verification_purge_contract {
+    use soroban_sdk::{contractclient, contracttype, Env};
+
+    #[contracttype]
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct PurgeStatus {
+        pub started: bool,
+        pub cursor: u32,
+        pub completed: bool,
+    }
+
+    #[contractclient(name = "Client")]
+    #[allow(dead_code)]
+    pub trait VerificationPurgeClient {
+        fn get_purge_status(env: Env, player_id: u64) -> PurgeStatus;
+    }
+}
+
+mod scout_access_purge_contract {
+    use soroban_sdk::{contractclient, contracttype, Env};
+
+    #[contracttype]
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct PurgeStatus {
+        pub started: bool,
+        pub cursor: u32,
+        pub completed: bool,
+    }
+
+    #[contractclient(name = "Client")]
+    #[allow(dead_code)]
+    pub trait ScoutAccessPurgeClient {
+        fn get_purge_status(env: Env, player_id: u64) -> PurgeStatus;
     }
 }
 
@@ -2086,6 +2137,121 @@ impl RegistrationContract {
     /// Stable contract identifier used by the on-chain wiring handshake (#1610).
     pub fn contract_kind(env: Env) -> soroban_sdk::Symbol {
         soroban_sdk::Symbol::new(&env, "registration")
+    }
+
+    // -------------------------------------------------------------------------
+    // Erasure status aggregator (issue #1781)
+    // -------------------------------------------------------------------------
+
+    /// Store the verification contract address so `get_erasure_status` can
+    /// cross-call it. Admin-only.
+    pub fn set_verification_contract(env: Env, addr: Address) -> Result<(), ScoutChainError> {
+        let _admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::VerificationContract, &addr);
+        env.storage().persistent().extend_ttl(
+            &DataKey::VerificationContract,
+            ADMIN_BUMP_LEDGERS,
+            ADMIN_BUMP_LEDGERS,
+        );
+        Ok(())
+    }
+
+    /// Store the scout_access contract address so `get_erasure_status` can
+    /// cross-call it. Admin-only.
+    pub fn set_scout_access_contract(env: Env, addr: Address) -> Result<(), ScoutChainError> {
+        let _admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::ScoutAccessContract, &addr);
+        env.storage().persistent().extend_ttl(
+            &DataKey::ScoutAccessContract,
+            ADMIN_BUMP_LEDGERS,
+            ADMIN_BUMP_LEDGERS,
+        );
+        Ok(())
+    }
+
+    /// Aggregate erasure status for `player_id` across all three purging
+    /// contracts (progress, verification, scout_access).
+    ///
+    /// This is a **read-only** cross-contract call. No auth required. Each
+    /// component contract is called only if its address has been configured
+    /// via `set_progress_contract` / `set_verification_contract` /
+    /// `set_scout_access_contract`. Unconfigured contracts return the
+    /// zero-value `PurgeStatus { started: false, cursor: 0, completed: false }`.
+    ///
+    /// `fully_erased` is `true` only when all three configured contracts
+    /// report `completed: true`.
+    pub fn get_erasure_status(env: Env, player_id: u64) -> ErasureStatus {
+        let zero = PurgeStatus {
+            started: false,
+            cursor: 0,
+            completed: false,
+        };
+
+        // ── progress ─────────────────────────────────────────────────────────
+        let progress_status = if let Some(addr) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::ProgressContract)
+        {
+            let client = progress_purge_contract::Client::new(&env, &addr);
+            let s = client.get_purge_status(&player_id);
+            PurgeStatus {
+                started: s.started,
+                cursor: s.cursor,
+                completed: s.completed,
+            }
+        } else {
+            zero.clone()
+        };
+
+        // ── verification ─────────────────────────────────────────────────────
+        let verification_status = if let Some(addr) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::VerificationContract)
+        {
+            let client = verification_purge_contract::Client::new(&env, &addr);
+            let s = client.get_purge_status(&player_id);
+            PurgeStatus {
+                started: s.started,
+                cursor: s.cursor,
+                completed: s.completed,
+            }
+        } else {
+            zero.clone()
+        };
+
+        // ── scout_access ──────────────────────────────────────────────────────
+        let scout_access_status = if let Some(addr) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::ScoutAccessContract)
+        {
+            let client = scout_access_purge_contract::Client::new(&env, &addr);
+            let s = client.get_purge_status(&player_id);
+            PurgeStatus {
+                started: s.started,
+                cursor: s.cursor,
+                completed: s.completed,
+            }
+        } else {
+            zero.clone()
+        };
+
+        let fully_erased = progress_status.completed
+            && verification_status.completed
+            && scout_access_status.completed;
+
+        ErasureStatus {
+            progress: progress_status,
+            verification: verification_status,
+            scout_access: scout_access_status,
+            fully_erased,
+        }
     }
 
     // -------------------------------------------------------------------------

@@ -2,28 +2,39 @@
 // `env.events().publish` call so their wire format (topics and positional
 // data) stays unchanged for indexers.
 #![allow(deprecated)]
+use soroban_sdk::{Address, Env, String, Symbol};
 
-use crate::types::DiversityConfig;
-use soroban_sdk::{contractevent, Address, BytesN, Env, String, Symbol};
+pub const MILESTONE_APPROVED: &str = "milestone_approved";
+pub const VALIDATOR_REGISTERED: &str = "validator_registered";
+pub const VALIDATOR_REVOKED: &str = "validator_revoked";
+pub const VALIDATOR_REVOKED_FOR_CAUSE: &str = "validator_revoked_for_cause";
+pub const VALIDATOR_RESTORED: &str = "validator_restored";
+pub const VALIDATOR_TRANSFERRED: &str = "validator_transferred";
+pub const CONTRACT_PAUSED: &str = "contract_paused";
+pub const CONTRACT_UNPAUSED: &str = "contract_unpaused";
+pub const APPROVE_MILESTONE_PAUSED: &str = "approve_milestone_paused";
+pub const APPROVE_MILESTONE_UNPAUSED: &str = "approve_milestone_unpaused";
+pub const CONTRACT_INITIALIZED: &str = "contract_initialized";
+pub const PROGRESS_CONTRACT_UPDATED: &str = "progress_contract_updated";
+pub const DISPUTE_RESOLVED: &str = "dispute_resolved";
+pub const ADMIN_TRANSFER_PROPOSED: &str = "admin_transfer_proposed";
+pub const ADMIN_TRANSFERRED: &str = "admin_transferred";
+pub const ATTESTATION_RECORDED: &str = "attestation_recorded";
+pub const ATTESTATION_WINDOW_EXPIRED: &str = "attestation_window_expired";
+pub const VALIDATOR_PENDING_VOTES_INVALIDATED: &str = "validator_votes_invalidated";
+pub const WIRING_UPDATED: &str = "wiring_updated";
+pub const DISPUTE_VOTE_CAST: &str = "dispute_vote_cast";
+pub const DISPUTE_TALLIED: &str = "dispute_tallied";
+pub const PLAYER_PURGE_STARTED: &str = "player_purge_started";
+pub const PLAYER_DATA_PURGED: &str = "player_data_purged";
+pub const PLAYER_PURGE_COMPLETED: &str = "player_purge_completed";
 
-pub const CONTRACT_UPGRADED: &str = "contract_upgraded";
-pub const MIGRATION_WINDOW_OPENED: &str = "migration_window_opened";
-pub const MIGRATION_WINDOW_CLOSED: &str = "migration_window_closed";
-pub const MILESTONE_THRESHOLD_UPDATED: &str = "milestone_threshold_updated";
-pub const MILESTONE_THRESHOLD_UNREACHABLE: &str = "milestone_threshold_unreachable";
-pub const JURY_CONFIG_UPDATED: &str = "jury_config_updated";
-pub const DIVERSITY_CONFIG_UPDATED: &str = "diversity_config_updated";
-pub const MIN_REGION_QUORUM_UPDATED: &str = "min_region_quorum_updated";
-pub const VOTING_WINDOW_SECS_UPDATED: &str = "voting_window_secs_updated";
-pub const REG_COOLDOWN_UPDATED: &str = "reg_cooldown_updated";
-
-// ── Typed contract events (issue #1370) ──────────────────────────────────────
-
-/// Emitted by `initialize` / `__constructor`.
-#[contractevent]
-pub struct ContractInitialized {
-    #[topic]
-    pub admin: Address,
+/// topics: (event_name, old_admin)  data: new_admin
+pub fn admin_transfer_proposed(env: &Env, old_admin: &Address, new_admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, ADMIN_TRANSFER_PROPOSED), old_admin.clone()),
+        new_admin.clone(),
+    );
 }
 
 /// Emitted by `approve_milestone` and `attest_milestone` (threshold commit).
@@ -793,139 +804,38 @@ pub fn migration_window_opened(env: &Env, admin: &Address) {
     );
 }
 
-/// Emitted by `close_migration_window`; disables the `admin_seed_*`
-/// entrypoints again.
-///
-/// topics: (event_name, admin)  data: ()
-pub fn migration_window_closed(env: &Env, admin: &Address) {
+// ── Player erasure events (issue #1781) ──────────────────────────────────────
+
+/// Emitted on the **first** page of `purge_player_data` for a player.
+/// topics: (event_name, admin)  data: player_id
+pub fn player_purge_started(env: &Env, admin: &Address, player_id: u64) {
     env.events().publish(
-        (Symbol::new(env, MIGRATION_WINDOW_CLOSED), admin.clone()),
-        (),
+        (Symbol::new(env, PLAYER_PURGE_STARTED), admin.clone()),
+        player_id,
     );
 }
 
-// ── Config setter events (issue #1453) ─────────────────────────────────────
-// Every admin config setter emits `(old, new)` so indexers can reconstruct the
-// full configuration history without polling getters.
-
-/// topics: (event_name, admin)  data: (old_threshold, new_threshold)
-pub fn milestone_threshold_updated(env: &Env, admin: &Address, old: u32, new: u32) {
-    env.events().publish(
-        (Symbol::new(env, MILESTONE_THRESHOLD_UPDATED), admin.clone()),
-        (old, new),
-    );
-}
-
-/// Emitted when a revocation leaves fewer active validators than the
-/// configured k-of-n threshold, so new claims can no longer reach commit.
-/// topics: (event_name, admin)  data: (threshold, active_validator_count)
-pub fn milestone_threshold_unreachable(
+/// Emitted on **every** page (including start and completion pages).
+/// topics: (event_name, admin)  data: (player_id, entries_removed, next_cursor, more)
+pub fn player_data_purged(
     env: &Env,
     admin: &Address,
-    threshold: u32,
-    active_count: u32,
+    player_id: u64,
+    entries_removed: u32,
+    next_cursor: u32,
+    more: bool,
 ) {
     env.events().publish(
-        (
-            Symbol::new(env, MILESTONE_THRESHOLD_UNREACHABLE),
-            admin.clone(),
-        ),
-        (threshold, active_count),
+        (Symbol::new(env, PLAYER_DATA_PURGED), admin.clone()),
+        (player_id, entries_removed, next_cursor, more),
     );
 }
 
-/// topics: (event_name, admin)
-/// data: (old_impact_threshold, old_quorum, old_voting_window_secs,
-///        new_impact_threshold, new_quorum, new_voting_window_secs)
-#[allow(clippy::too_many_arguments)]
-pub fn jury_config_updated(
-    env: &Env,
-    admin: &Address,
-    old_impact_threshold: u32,
-    old_quorum: u32,
-    old_voting_window_secs: u64,
-    new_impact_threshold: u32,
-    new_quorum: u32,
-    new_voting_window_secs: u64,
-) {
+/// Emitted on the **last** page of `purge_player_data` when no data remains.
+/// topics: (event_name, admin)  data: player_id
+pub fn player_purge_completed(env: &Env, admin: &Address, player_id: u64) {
     env.events().publish(
-        (Symbol::new(env, JURY_CONFIG_UPDATED), admin.clone()),
-        (
-            old_impact_threshold,
-            old_quorum,
-            old_voting_window_secs,
-            new_impact_threshold,
-            new_quorum,
-            new_voting_window_secs,
-        ),
+        (Symbol::new(env, PLAYER_PURGE_COMPLETED), admin.clone()),
+        player_id,
     );
-}
-
-/// topics: (event_name, admin)  data: (old_config, new_config)
-/// `old_config` is `None` when no diversity config had been set before.
-pub fn diversity_config_updated(
-    env: &Env,
-    admin: &Address,
-    old: &Option<DiversityConfig>,
-    new: &DiversityConfig,
-) {
-    env.events().publish(
-        (Symbol::new(env, DIVERSITY_CONFIG_UPDATED), admin.clone()),
-        (old.clone(), new.clone()),
-    );
-}
-
-/// topics: (event_name, admin)  data: (old_min_regions, new_min_regions)
-pub fn min_region_quorum_updated(env: &Env, admin: &Address, old: u32, new: u32) {
-    env.events().publish(
-        (Symbol::new(env, MIN_REGION_QUORUM_UPDATED), admin.clone()),
-        (old, new),
-    );
-}
-
-/// topics: (event_name, admin)  data: (old_window_secs, new_window_secs)
-pub fn voting_window_secs_updated(env: &Env, admin: &Address, old: u64, new: u64) {
-    env.events().publish(
-        (Symbol::new(env, VOTING_WINDOW_SECS_UPDATED), admin.clone()),
-        (old, new),
-    );
-}
-
-/// topics: (event_name, admin)  data: (old_cooldown_secs, new_cooldown_secs)
-pub fn reg_cooldown_updated(env: &Env, admin: &Address, old: u64, new: u64) {
-    env.events().publish(
-        (Symbol::new(env, REG_COOLDOWN_UPDATED), admin.clone()),
-        (old, new),
-    );
-}
-
-/// Warning emitted when an admin configures a diversity gate that the current
-/// active validator set cannot satisfy (issue #1632). The setting is still
-/// stored — the gate is reachable again once enough validators are active.
-///
-/// topics: (event_name, admin)  data: (gate, required, active_validator_count)
-/// `gate` is `"min_region_quorum"` or `"diversity_config"`.
-#[contractevent(topics = ["diversity_gate_unreachable"], data_format = "vec")]
-pub struct DiversityGateUnreachable {
-    #[topic]
-    pub admin: Address,
-    pub gate: Symbol,
-    pub required: u32,
-    pub active_count: u32,
-}
-
-pub fn diversity_gate_unreachable(
-    env: &Env,
-    admin: &Address,
-    gate: &str,
-    required: u32,
-    active_count: u32,
-) {
-    DiversityGateUnreachable {
-        admin: admin.clone(),
-        gate: Symbol::new(env, gate),
-        required,
-        active_count,
-    }
-    .publish(env);
 }
