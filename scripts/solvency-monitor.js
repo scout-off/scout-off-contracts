@@ -55,7 +55,7 @@ function parseArgs(argv) {
     json: false,
     webhookUrl: process.env.WEBHOOK_URL || null,
     toleranceStroops: BigInt(
-      process.env.SOLVENCY_SURPLUS_TOLERANCE_STROOPS || "0"
+      process.env.SOLVENCY_SURPLUS_TOLERANCE_STROOPS || "0",
     ),
   };
   for (let i = 0; i < argv.length; i++) {
@@ -134,10 +134,16 @@ let invoke = invokeCli;
  * Returns the SAC address string, or throws ConfigError.
  */
 async function fetchTokenAddress(cfg) {
-  const r = await invoke(cfg.network, cfg.source, cfg.contractId, "get_xlm_token", []);
+  const r = await invoke(
+    cfg.network,
+    cfg.source,
+    cfg.contractId,
+    "get_xlm_token",
+    [],
+  );
   if (!r.ok || r.value === null || r.value === undefined) {
     throw new ConfigError(
-      `get_xlm_token failed or returned null: ${r.error || "null"}`
+      `get_xlm_token failed or returned null: ${r.error || "null"}`,
     );
   }
   return r.value;
@@ -148,13 +154,10 @@ async function fetchTokenAddress(cfg) {
  * Returns a BigInt in stroops.
  */
 async function fetchContractBalance(cfg, tokenId) {
-  const r = await invoke(
-    cfg.network,
-    cfg.source,
-    tokenId,
-    "balance",
-    ["--id", cfg.contractId]
-  );
+  const r = await invoke(cfg.network, cfg.source, tokenId, "balance", [
+    "--id",
+    cfg.contractId,
+  ]);
   if (!r.ok) {
     throw new RpcError(`balance() failed: ${r.error}`);
   }
@@ -171,7 +174,7 @@ async function fetchAccumulatedFees(cfg) {
     cfg.source,
     cfg.contractId,
     "get_accumulated_fees",
-    []
+    [],
   );
   if (!r.ok) {
     throw new RpcError(`get_accumulated_fees failed: ${r.error}`);
@@ -198,7 +201,7 @@ async function fetchTotalOutstandingEscrow(cfg) {
       cfg.source,
       cfg.contractId,
       "get_outstanding_escrows_page",
-      ["--offset", String(offset), "--limit", String(limit)]
+      ["--offset", String(offset), "--limit", String(limit)],
     );
     if (!r.ok) {
       throw new RpcError(`get_outstanding_escrows_page failed: ${r.error}`);
@@ -240,7 +243,7 @@ function postWebhook(url, payload) {
       (res) => {
         res.resume();
         resolve(res.statusCode);
-      }
+      },
     );
     req.on("error", () => resolve(null));
     req.write(body);
@@ -327,8 +330,8 @@ function formatReport(report, useJson) {
     report.status === "deficit"
       ? `  *** DEFICIT: contract cannot pay all obligations ***`
       : report.status === "surplus"
-      ? `  *** SURPLUS: balance exceeds obligations by more than tolerance ***`
-      : `  Invariant holds.`,
+        ? `  *** SURPLUS: balance exceeds obligations by more than tolerance ***`
+        : `  Invariant holds.`,
   ].join("\n");
 }
 
@@ -342,13 +345,12 @@ async function main(deps) {
   const args = parseArgs(process.argv.slice(2));
 
   const contractId =
-    (deps && deps.contractId) ||
-    process.env.SCOUT_ACCESS_CONTRACT_ID;
+    (deps && deps.contractId) || process.env.SCOUT_ACCESS_CONTRACT_ID;
 
   if (!contractId) {
     throw new ConfigError(
       "SCOUT_ACCESS_CONTRACT_ID is not set. " +
-        "Export it in the environment or define it in .env.contracts."
+        "Export it in the environment or define it in .env.contracts.",
     );
   }
 
@@ -399,7 +401,7 @@ async function main(deps) {
     const statusCode = await postWebhook(args.webhookUrl, alertPayload);
     if (statusCode && statusCode >= 400) {
       process.stderr.write(
-        `Webhook POST to ${args.webhookUrl} returned HTTP ${statusCode}\n`
+        `Webhook POST to ${args.webhookUrl} returned HTTP ${statusCode}\n`,
       );
     }
   }

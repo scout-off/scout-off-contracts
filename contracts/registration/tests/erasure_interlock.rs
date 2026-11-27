@@ -45,7 +45,13 @@ fn build(wire: bool) -> H {
         ver.set_registration_contract(&reg_id);
         sa.set_registration_contract(&reg_id);
     }
-    H { env, reg, prog, ver, sa }
+    H {
+        env,
+        reg,
+        prog,
+        ver,
+        sa,
+    }
 }
 
 fn register(h: &H) -> u64 {
@@ -61,7 +67,8 @@ fn register(h: &H) -> u64 {
         env,
         "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB",
     ));
-    h.reg.register_player(&Address::generate(env), &vitals, &hashes)
+    h.reg
+        .register_player(&Address::generate(env), &vitals, &hashes)
 }
 
 #[test]

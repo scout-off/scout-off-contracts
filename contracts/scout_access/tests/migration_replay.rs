@@ -619,7 +619,12 @@ fn test_seed_fee_config_history_oldest_first() {
     let e1 = history_entry(&env, 1_699_000_000);
     let e2 = history_entry(&env, 1_699_100_000);
     let e3 = history_entry(&env, 1_699_200_000);
-    client.admin_seed_fee_config_history(&soroban_sdk::vec![&env, e1.clone(), e2.clone(), e3.clone()]);
+    client.admin_seed_fee_config_history(&soroban_sdk::vec![
+        &env,
+        e1.clone(),
+        e2.clone(),
+        e3.clone()
+    ]);
 
     let stored = client.get_fee_config_history();
     assert_eq!(stored.len(), 3u32);

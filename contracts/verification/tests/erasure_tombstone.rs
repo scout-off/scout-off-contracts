@@ -7,7 +7,7 @@ use scoutchain_shared_types::ValidatorStatus;
 use scoutchain_verification::{
     VerificationContract, VerificationContractClient, VerificationError,
 };
-use soroban_sdk::{testutils::Address as_, Address, Env, String};
+use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
 #[test]
 fn test_mark_player_erased_sets_tombstone() {
@@ -25,15 +25,15 @@ fn test_mark_player_erased_sets_tombstone() {
 
     // Mark player as erased (authorized by registration contract)
     let player_id = 123u64;
-    client
-        .try_mark_player_erased(&player_id)
-        .unwrap();
+    client.try_mark_player_erased(&player_id).unwrap();
 
     // Verify the tombstone is set
     let erased = env
         .storage()
         .persistent()
-        .get::<scoutchain_verification::DataKey, bool>(&scoutchain_verification::DataKey::Erased(player_id))
+        .get::<scoutchain_verification::DataKey, bool>(&scoutchain_verification::DataKey::Erased(
+            player_id,
+        ))
         .unwrap();
     assert!(erased);
 }

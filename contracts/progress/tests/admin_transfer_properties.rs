@@ -298,8 +298,12 @@ fn test_transfer_admin_emits_propose_event() {
     // The event emitted by `transfer_admin` is the last one; compare it against
     // the last event emitted by `propose_admin`, normalizing the differing
     // address argument.
-    let propose_event = propose_events.last().expect("propose_admin must emit an event");
-    let transfer_event = transfer_events.last().expect("transfer_admin must emit an event");
+    let propose_event = propose_events
+        .last()
+        .expect("propose_admin must emit an event");
+    let transfer_event = transfer_events
+        .last()
+        .expect("transfer_admin must emit an event");
 
     assert_eq!(
         propose_event.0, transfer_event.0,
@@ -316,13 +320,17 @@ fn test_transfer_admin_emits_propose_event() {
     let same = Address::generate(&h2.env);
     h2.client.propose_admin(&same);
     let propose_same = h2.env.events().all();
-    let propose_same_event = propose_same.last().expect("propose_admin must emit an event");
+    let propose_same_event = propose_same
+        .last()
+        .expect("propose_admin must emit an event");
 
     let h3 = setup();
     let same3 = Address::generate(&h3.env);
     h3.client.transfer_admin(&same3);
     let transfer_same = h3.env.events().all();
-    let transfer_same_event = transfer_same.last().expect("transfer_admin must emit an event");
+    let transfer_same_event = transfer_same
+        .last()
+        .expect("transfer_admin must emit an event");
 
     assert_eq!(
         propose_same_event.0, transfer_same_event.0,

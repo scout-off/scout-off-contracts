@@ -3,9 +3,9 @@
 //! Once a player is erased via `registration.deregister_player`, all player-scoped
 //! writes must be permanently blocked with `PlayerErased` error.
 
-use scoutchain_progress::{ProgressContract, ProgressContractClient, ProgressError, ProgressEntry};
+use scoutchain_progress::{ProgressContract, ProgressContractClient, ProgressEntry, ProgressError};
 use scoutchain_shared_types::ProgressLevel;
-use soroban_sdk::{testutils::Address as_, Address, Env, BytesN};
+use soroban_sdk::{testutils::Address as _, Address, BytesN, Env};
 
 #[test]
 fn test_mark_player_erased_sets_tombstone() {
@@ -23,9 +23,7 @@ fn test_mark_player_erased_sets_tombstone() {
 
     // Mark player as erased (authorized by registration contract)
     let player_id = 123u64;
-    client
-        .try_mark_player_erased(&player_id)
-        .unwrap();
+    client.try_mark_player_erased(&player_id).unwrap();
 
     // Verify the tombstone is set
     let erased = env

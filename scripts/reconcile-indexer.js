@@ -71,8 +71,10 @@ const SKIPPED_TABLES = {
     "'validator_revoked_for_cause' (for-cause). Both have topics (event_name, admin) and data " +
     "(wallet, reason); neither carries a severity field, so severity is the event name itself. " +
     "Subscribe to both topics to capture every revocation.",
-  fee_config_history: "event-log only, by design (see docs commit clarifying this) — no per-row on-chain analog",
-  admin_transfers: "event-log only across four contracts — no per-row on-chain analog",
+  fee_config_history:
+    "event-log only, by design (see docs commit clarifying this) — no per-row on-chain analog",
+  admin_transfers:
+    "event-log only across four contracts — no per-row on-chain analog",
 };
 
 function parseArgs(argv) {
@@ -91,7 +93,8 @@ function parseArgs(argv) {
     else if (a === "--rpc-url") args.rpcUrl = argv[++i];
     else if (a === "--source") args.source = argv[++i];
     else if (a === "--sample") args.sample = Number(argv[++i]);
-    else if (a === "--tables") args.tables = argv[++i].split(",").map((t) => t.trim());
+    else if (a === "--tables")
+      args.tables = argv[++i].split(",").map((t) => t.trim());
     else if (a === "--rpc-timeout-ms") args.rpcTimeoutMs = Number(argv[++i]);
     else if (a === "--json") args.json = true;
     else if (a === "--use-cli") args.useCli = true;
@@ -114,7 +117,10 @@ function loadDotEnvContracts() {
     const eq = trimmed.indexOf("=");
     if (eq === -1) continue;
     const key = trimmed.slice(0, eq).trim();
-    const value = trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, "");
+    const value = trimmed
+      .slice(eq + 1)
+      .trim()
+      .replace(/^["']|["']$/g, "");
     if (!(key in process.env)) process.env[key] = value;
   }
 }
@@ -122,7 +128,9 @@ function loadDotEnvContracts() {
 function requireEnv(names) {
   const missing = names.filter((n) => !process.env[n]);
   if (missing.length > 0) {
-    throw new ConfigError(`Missing required environment variable(s): ${missing.join(", ")}`);
+    throw new ConfigError(
+      `Missing required environment variable(s): ${missing.join(", ")}`,
+    );
   }
 }
 
@@ -200,10 +208,17 @@ let invoke = invokeCli;
 
 function asBigIntString(value) {
   if (value === null || value === undefined) return null;
-  return typeof value === "bigint" ? value.toString() : BigInt(value).toString();
+  return typeof value === "bigint"
+    ? value.toString()
+    : BigInt(value).toString();
 }
 
-const LEVEL_NAMES = ["Unverified", "VerifiedIdentity", "PerformanceMilestones", "EliteTier"];
+const LEVEL_NAMES = [
+  "Unverified",
+  "VerifiedIdentity",
+  "PerformanceMilestones",
+  "EliteTier",
+];
 
 function levelNameToInt(name) {
   const idx = LEVEL_NAMES.indexOf(name);
@@ -238,8 +253,15 @@ function makeReport() {
 // value-level drift on records both sides agree exist.
 
 async function reconcilePlayers(pg, cfg, report) {
-  const countResult = await invoke(cfg.network, cfg.source, cfg.registrationId, "get_player_count", []);
-  if (!countResult.ok) throw new Error(`get_player_count failed: ${countResult.error}`);
+  const countResult = await invoke(
+    cfg.network,
+    cfg.source,
+    cfg.registrationId,
+    "get_player_count",
+    [],
+  );
+  if (!countResult.ok)
+    throw new Error(`get_player_count failed: ${countResult.error}`);
   const total = Number(countResult.value);
   const limit = cfg.sample ? Math.min(cfg.sample, total) : total;
 
@@ -249,11 +271,24 @@ async function reconcilePlayers(pg, cfg, report) {
   for (let id = 1; id <= limit; id++) {
     const key = String(id);
     const dbRow = byId.get(key);
-    const chain = await invoke(cfg.network, cfg.source, cfg.registrationId, "get_player", ["--player_id", key]);
+    const chain = await invoke(
+      cfg.network,
+      cfg.source,
+      cfg.registrationId,
+      "get_player",
+      ["--player_id", key],
+    );
 
     if (!chain.ok) {
       if (dbRow) {
-        report.add("players", key, "existence", "not_found", "present", chain.error);
+        report.add(
+          "players",
+          key,
+          "existence",
+          "not_found",
+          "present",
+          chain.error,
+        );
       }
       continue;
     }
@@ -266,10 +301,34 @@ async function reconcilePlayers(pg, cfg, report) {
     report.check("players", key, "age", p.vitals.age, dbRow.age);
     report.check("players", key, "position", p.vitals.position, dbRow.position);
     report.check("players", key, "region", p.vitals.region, dbRow.region);
-    report.check("players", key, "nationality", p.vitals.nationality, dbRow.nationality);
-    report.check("players", key, "ipfs_hashes", JSON.stringify(p.ipfs_hashes), JSON.stringify(dbRow.ipfs_hashes));
-    report.check("players", key, "registered_at", asBigIntString(p.registered_at), asBigIntString(dbRow.registered_at));
-    report.check("players", key, "updated_at", asBigIntString(p.updated_at), asBigIntString(dbRow.updated_at));
+    report.check(
+      "players",
+      key,
+      "nationality",
+      p.vitals.nationality,
+      dbRow.nationality,
+    );
+    report.check(
+      "players",
+      key,
+      "ipfs_hashes",
+      JSON.stringify(p.ipfs_hashes),
+      JSON.stringify(dbRow.ipfs_hashes),
+    );
+    report.check(
+      "players",
+      key,
+      "registered_at",
+      asBigIntString(p.registered_at),
+      asBigIntString(dbRow.registered_at),
+    );
+    report.check(
+      "players",
+      key,
+      "updated_at",
+      asBigIntString(p.updated_at),
+      asBigIntString(dbRow.updated_at),
+    );
 
     const deactivatedResult = await invoke(
       cfg.network,
@@ -279,42 +338,93 @@ async function reconcilePlayers(pg, cfg, report) {
       ["--player_id", key],
     );
     if (deactivatedResult.ok) {
-      report.check("players", key, "deactivated", deactivatedResult.value === true, Boolean(dbRow.deactivated));
+      report.check(
+        "players",
+        key,
+        "deactivated",
+        deactivatedResult.value === true,
+        Boolean(dbRow.deactivated),
+      );
     } else {
-      report.add("players", key, "deactivated", "getter_failed", dbRow.deactivated, deactivatedResult.error);
+      report.add(
+        "players",
+        key,
+        "deactivated",
+        "getter_failed",
+        dbRow.deactivated,
+        deactivatedResult.error,
+      );
     }
 
-    const levelResult = await invoke(cfg.network, cfg.source, cfg.progressId, "get_level", ["--player_id", key]);
+    const levelResult = await invoke(
+      cfg.network,
+      cfg.source,
+      cfg.progressId,
+      "get_level",
+      ["--player_id", key],
+    );
     if (levelResult.ok) {
       const chainLevel = levelNameToInt(levelResult.value);
       report.check("players", key, "level", chainLevel, dbRow.level);
     } else {
-      report.add("players", key, "level", "get_level_failed", dbRow.level, levelResult.error);
+      report.add(
+        "players",
+        key,
+        "level",
+        "get_level_failed",
+        dbRow.level,
+        levelResult.error,
+      );
     }
 
     // Cross-check the player_level_history audit table's row count against
     // the progress contract's own history counter, as a cheap drift signal
     // for that skipped table without replaying every event.
-    const historyCount = await invoke(cfg.network, cfg.source, cfg.progressId, "get_history_count", ["--player_id", key]);
+    const historyCount = await invoke(
+      cfg.network,
+      cfg.source,
+      cfg.progressId,
+      "get_history_count",
+      ["--player_id", key],
+    );
     if (historyCount.ok) {
       const { rows: histRows } = await pg.query(
         "SELECT COUNT(*)::int AS c FROM player_level_history WHERE player_id = $1",
         [id],
       );
-      report.check("player_level_history", key, "row_count", Number(historyCount.value), histRows[0].c);
+      report.check(
+        "player_level_history",
+        key,
+        "row_count",
+        Number(historyCount.value),
+        histRows[0].c,
+      );
     }
   }
 
   if (rows.some((r) => Number(r.player_id) > total)) {
     for (const r of rows.filter((r) => Number(r.player_id) > total)) {
-      report.add("players", String(r.player_id), "existence", "impossible_id", "present");
+      report.add(
+        "players",
+        String(r.player_id),
+        "existence",
+        "impossible_id",
+        "present",
+      );
     }
   }
 }
 
 async function reconcileScouts(pg, cfg, report) {
-  const countResult = await invoke(cfg.network, cfg.source, cfg.registrationId, "get_scout_count", []);
-  if (!countResult.ok) throw new Error(`get_scout_count failed: ${countResult.error}`);
+  const countResult = await invoke(
+    cfg.network,
+    cfg.source,
+    cfg.registrationId,
+    "get_scout_count",
+    [],
+  );
+  if (!countResult.ok)
+    throw new Error(`get_scout_count failed: ${countResult.error}`);
   const total = Number(countResult.value);
   const limit = cfg.sample ? Math.min(cfg.sample, total) : total;
 
@@ -324,10 +434,24 @@ async function reconcileScouts(pg, cfg, report) {
   for (let id = 1; id <= limit; id++) {
     const key = String(id);
     const dbRow = byId.get(key);
-    const chain = await invoke(cfg.network, cfg.source, cfg.registrationId, "get_scout", ["--scout_id", key]);
+    const chain = await invoke(
+      cfg.network,
+      cfg.source,
+      cfg.registrationId,
+      "get_scout",
+      ["--scout_id", key],
+    );
 
     if (!chain.ok) {
-      if (dbRow) report.add("scouts", key, "existence", "not_found", "present", chain.error);
+      if (dbRow)
+        report.add(
+          "scouts",
+          key,
+          "existence",
+          "not_found",
+          "present",
+          chain.error,
+        );
       continue;
     }
     if (!dbRow) {
@@ -338,11 +462,23 @@ async function reconcileScouts(pg, cfg, report) {
     const s = chain.value;
     report.check("scouts", key, "wallet", s.wallet, dbRow.wallet);
     report.check("scouts", key, "region", s.region, dbRow.region);
-    report.check("scouts", key, "registered_at", asBigIntString(s.registered_at), asBigIntString(dbRow.registered_at));
+    report.check(
+      "scouts",
+      key,
+      "registered_at",
+      asBigIntString(s.registered_at),
+      asBigIntString(dbRow.registered_at),
+    );
     // scouts.verified: added in the fix for issue #836 — the column now exists
     // in migrations/001_initial_schema.sql and is checked here against the
     // on-chain value returned by registration.get_scout(...).verified.
-    report.check("scouts", key, "verified", Boolean(s.verified), Boolean(dbRow.verified));
+    report.check(
+      "scouts",
+      key,
+      "verified",
+      Boolean(s.verified),
+      Boolean(dbRow.verified),
+    );
 
     const deactivatedResult = await invoke(
       cfg.network,
@@ -352,9 +488,22 @@ async function reconcileScouts(pg, cfg, report) {
       ["--scout_id", key],
     );
     if (deactivatedResult.ok) {
-      report.check("scouts", key, "deactivated", deactivatedResult.value === true, Boolean(dbRow.deactivated));
+      report.check(
+        "scouts",
+        key,
+        "deactivated",
+        deactivatedResult.value === true,
+        Boolean(dbRow.deactivated),
+      );
     } else {
-      report.add("scouts", key, "deactivated", "getter_failed", dbRow.deactivated, deactivatedResult.error);
+      report.add(
+        "scouts",
+        key,
+        "deactivated",
+        "getter_failed",
+        dbRow.deactivated,
+        deactivatedResult.error,
+      );
     }
   }
 }
@@ -363,13 +512,32 @@ async function reconcileValidators(pg, cfg, report) {
   const { rows } = await pg.query("SELECT * FROM validators");
 
   for (const dbRow of rows) {
-    const chain = await invoke(cfg.network, cfg.source, cfg.verificationId, "get_validator", ["--wallet", dbRow.wallet]);
+    const chain = await invoke(
+      cfg.network,
+      cfg.source,
+      cfg.verificationId,
+      "get_validator",
+      ["--wallet", dbRow.wallet],
+    );
     if (!chain.ok) {
-      report.add("validators", dbRow.wallet, "existence", "not_found", "present", chain.error);
+      report.add(
+        "validators",
+        dbRow.wallet,
+        "existence",
+        "not_found",
+        "present",
+        chain.error,
+      );
       continue;
     }
     const v = chain.value;
-    report.check("validators", dbRow.wallet, "credentials", v.credentials, dbRow.credentials);
+    report.check(
+      "validators",
+      dbRow.wallet,
+      "credentials",
+      v.credentials,
+      dbRow.credentials,
+    );
     report.check("validators", dbRow.wallet, "active", v.active, dbRow.active);
     report.check(
       "validators",
@@ -382,7 +550,13 @@ async function reconcileValidators(pg, cfg, report) {
 
   // Cross-check: every currently-active validator on-chain must exist in
   // the DB at all (catches a validator the indexer never wrote a row for).
-  const activeResult = await invoke(cfg.network, cfg.source, cfg.verificationId, "get_validators", []);
+  const activeResult = await invoke(
+    cfg.network,
+    cfg.source,
+    cfg.verificationId,
+    "get_validators",
+    [],
+  );
   if (activeResult.ok) {
     const dbWallets = new Set(rows.map((r) => r.wallet));
     for (const wallet of activeResult.value) {
@@ -396,7 +570,13 @@ async function reconcileValidators(pg, cfg, report) {
 async function reconcileMilestonesAndDisputes(pg, cfg, report, playerIds) {
   for (const id of playerIds) {
     const key = String(id);
-    const countResult = await invoke(cfg.network, cfg.source, cfg.verificationId, "get_milestone_count", ["--player_id", key]);
+    const countResult = await invoke(
+      cfg.network,
+      cfg.source,
+      cfg.verificationId,
+      "get_milestone_count",
+      ["--player_id", key],
+    );
     if (!countResult.ok) continue;
     const count = Number(countResult.value);
 
@@ -410,55 +590,164 @@ async function reconcileMilestonesAndDisputes(pg, cfg, report, playerIds) {
       "SELECT * FROM milestone_disputes WHERE player_id = $1",
       [id],
     );
-    const disputesByIndex = new Map(disputeRows.map((r) => [r.milestone_index, r]));
+    const disputesByIndex = new Map(
+      disputeRows.map((r) => [r.milestone_index, r]),
+    );
 
     for (let index = 1; index <= count; index++) {
-      const mChain = await invoke(cfg.network, cfg.source, cfg.verificationId, "get_milestone", [
-        "--player_id", key,
-        "--index", String(index),
-      ]);
+      const mChain = await invoke(
+        cfg.network,
+        cfg.source,
+        cfg.verificationId,
+        "get_milestone",
+        ["--player_id", key, "--index", String(index)],
+      );
       const mDb = byIndex.get(index);
       const mKey = `${key}:${index}`;
 
       if (!mChain.ok) {
-        if (mDb) report.add("milestones", mKey, "existence", "not_found", "present", mChain.error);
+        if (mDb)
+          report.add(
+            "milestones",
+            mKey,
+            "existence",
+            "not_found",
+            "present",
+            mChain.error,
+          );
       } else if (!mDb) {
         report.add("milestones", mKey, "existence", "present", "missing");
       } else {
         const m = mChain.value;
-        report.check("milestones", mKey, "validator", m.validator, mDb.validator);
-        report.check("milestones", mKey, "description", m.description, mDb.description);
-        report.check("milestones", mKey, "evidence_hash", m.evidence_hash, mDb.evidence_hash);
-        report.check("milestones", mKey, "approved_at", asBigIntString(m.approved_at), asBigIntString(mDb.approved_at));
+        report.check(
+          "milestones",
+          mKey,
+          "validator",
+          m.validator,
+          mDb.validator,
+        );
+        report.check(
+          "milestones",
+          mKey,
+          "description",
+          m.description,
+          mDb.description,
+        );
+        report.check(
+          "milestones",
+          mKey,
+          "evidence_hash",
+          m.evidence_hash,
+          mDb.evidence_hash,
+        );
+        report.check(
+          "milestones",
+          mKey,
+          "approved_at",
+          asBigIntString(m.approved_at),
+          asBigIntString(mDb.approved_at),
+        );
       }
 
-      const hasDispute = await invoke(cfg.network, cfg.source, cfg.verificationId, "has_dispute", [
-        "--player_id", key,
-        "--milestone_index", String(index),
-      ]);
+      const hasDispute = await invoke(
+        cfg.network,
+        cfg.source,
+        cfg.verificationId,
+        "has_dispute",
+        ["--player_id", key, "--milestone_index", String(index)],
+      );
       const dDb = disputesByIndex.get(index);
       if (hasDispute.ok) {
         const chainHasDispute = hasDispute.value === true;
         if (chainHasDispute !== Boolean(dDb)) {
-          report.add("milestone_disputes", mKey, "existence", chainHasDispute, Boolean(dDb));
+          report.add(
+            "milestone_disputes",
+            mKey,
+            "existence",
+            chainHasDispute,
+            Boolean(dDb),
+          );
         } else if (chainHasDispute && dDb) {
-          const dChain = await invoke(cfg.network, cfg.source, cfg.verificationId, "get_dispute", [
-            "--player_id", key,
-            "--milestone_index", String(index),
-          ]);
+          const dChain = await invoke(
+            cfg.network,
+            cfg.source,
+            cfg.verificationId,
+            "get_dispute",
+            ["--player_id", key, "--milestone_index", String(index)],
+          );
           if (dChain.ok) {
             const d = dChain.value;
-            report.check("milestone_disputes", mKey, "reason", d.reason, dDb.reason);
-            report.check("milestone_disputes", mKey, "disputed_at", asBigIntString(d.disputed_at), asBigIntString(dDb.disputed_at));
-            report.check("milestone_disputes", mKey, "resolved", d.resolved, dDb.resolved);
-            report.check("milestone_disputes", mKey, "upheld", d.upheld, dDb.upheld);
+            report.check(
+              "milestone_disputes",
+              mKey,
+              "reason",
+              d.reason,
+              dDb.reason,
+            );
+            report.check(
+              "milestone_disputes",
+              mKey,
+              "disputed_at",
+              asBigIntString(d.disputed_at),
+              asBigIntString(dDb.disputed_at),
+            );
+            report.check(
+              "milestone_disputes",
+              mKey,
+              "resolved",
+              d.resolved,
+              dDb.resolved,
+            );
+            report.check(
+              "milestone_disputes",
+              mKey,
+              "upheld",
+              d.upheld,
+              dDb.upheld,
+            );
             // Jury fields (migration 005)
-            report.check("milestone_disputes", mKey, "impact_score", Number(d.impact_score), Number(dDb.impact_score));
-            report.check("milestone_disputes", mKey, "jury_required", Boolean(d.jury_required), Boolean(dDb.jury_required));
-            report.check("milestone_disputes", mKey, "quorum", Number(d.quorum), Number(dDb.quorum));
-            report.check("milestone_disputes", mKey, "voting_deadline", asBigIntString(d.voting_deadline), asBigIntString(dDb.voting_deadline));
-            report.check("milestone_disputes", mKey, "votes_for", Number(d.votes_for), Number(dDb.votes_for));
-            report.check("milestone_disputes", mKey, "votes_against", Number(d.votes_against), Number(dDb.votes_against));
+            report.check(
+              "milestone_disputes",
+              mKey,
+              "impact_score",
+              Number(d.impact_score),
+              Number(dDb.impact_score),
+            );
+            report.check(
+              "milestone_disputes",
+              mKey,
+              "jury_required",
+              Boolean(d.jury_required),
+              Boolean(dDb.jury_required),
+            );
+            report.check(
+              "milestone_disputes",
+              mKey,
+              "quorum",
+              Number(d.quorum),
+              Number(dDb.quorum),
+            );
+            report.check(
+              "milestone_disputes",
+              mKey,
+              "voting_deadline",
+              asBigIntString(d.voting_deadline),
+              asBigIntString(dDb.voting_deadline),
+            );
+            report.check(
+              "milestone_disputes",
+              mKey,
+              "votes_for",
+              Number(d.votes_for),
+              Number(dDb.votes_for),
+            );
+            report.check(
+              "milestone_disputes",
+              mKey,
+              "votes_against",
+              Number(d.votes_against),
+              Number(dDb.votes_against),
+            );
           }
         }
       }
@@ -469,23 +758,43 @@ async function reconcileMilestonesAndDisputes(pg, cfg, report, playerIds) {
 async function reconcileTrialOffers(pg, cfg, report, playerIds) {
   for (const id of playerIds) {
     const key = String(id);
-    const countResult = await invoke(cfg.network, cfg.source, cfg.scoutAccessId, "get_trial_count", ["--player_id", key]);
+    const countResult = await invoke(
+      cfg.network,
+      cfg.source,
+      cfg.scoutAccessId,
+      "get_trial_count",
+      ["--player_id", key],
+    );
     if (!countResult.ok) continue;
     const count = Number(countResult.value);
 
-    const { rows } = await pg.query("SELECT * FROM trial_offers WHERE player_id = $1", [id]);
+    const { rows } = await pg.query(
+      "SELECT * FROM trial_offers WHERE player_id = $1",
+      [id],
+    );
     const byIndex = new Map(rows.map((r) => [r.trial_index, r]));
 
     for (let index = 1; index <= count; index++) {
-      const chain = await invoke(cfg.network, cfg.source, cfg.scoutAccessId, "get_trial_offer", [
-        "--player_id", key,
-        "--index", String(index),
-      ]);
+      const chain = await invoke(
+        cfg.network,
+        cfg.source,
+        cfg.scoutAccessId,
+        "get_trial_offer",
+        ["--player_id", key, "--index", String(index)],
+      );
       const dbRow = byIndex.get(index);
       const tKey = `${key}:${index}`;
 
       if (!chain.ok) {
-        if (dbRow) report.add("trial_offers", tKey, "existence", "not_found", "present", chain.error);
+        if (dbRow)
+          report.add(
+            "trial_offers",
+            tKey,
+            "existence",
+            "not_found",
+            "present",
+            chain.error,
+          );
         continue;
       }
       if (!dbRow) {
@@ -494,8 +803,20 @@ async function reconcileTrialOffers(pg, cfg, report, playerIds) {
       }
       const t = chain.value;
       report.check("trial_offers", tKey, "scout", t.scout, dbRow.scout);
-      report.check("trial_offers", tKey, "details_hash", t.details_hash, dbRow.details_hash);
-      report.check("trial_offers", tKey, "logged_at", asBigIntString(t.logged_at), asBigIntString(dbRow.logged_at));
+      report.check(
+        "trial_offers",
+        tKey,
+        "details_hash",
+        t.details_hash,
+        dbRow.details_hash,
+      );
+      report.check(
+        "trial_offers",
+        tKey,
+        "logged_at",
+        asBigIntString(t.logged_at),
+        asBigIntString(dbRow.logged_at),
+      );
     }
   }
 }
@@ -513,25 +834,55 @@ async function reconcileSubscriptions(pg, cfg, report) {
   const chainScouts = new Set();
 
   for (const tier of ["Basic", "Pro", "Elite"]) {
-    const result = await invoke(cfg.network, cfg.source, cfg.scoutAccessId, "get_subscribers_by_tier", ["--tier", tier]);
+    const result = await invoke(
+      cfg.network,
+      cfg.source,
+      cfg.scoutAccessId,
+      "get_subscribers_by_tier",
+      ["--tier", tier],
+    );
     if (!result.ok) continue;
 
     for (const scout of result.value) {
       chainScouts.add(scout);
       const dbRow = byScout.get(scout);
-      const chainSub = await invoke(cfg.network, cfg.source, cfg.scoutAccessId, "get_subscription", ["--scout", scout]);
+      const chainSub = await invoke(
+        cfg.network,
+        cfg.source,
+        cfg.scoutAccessId,
+        "get_subscription",
+        ["--scout", scout],
+      );
       if (!chainSub.ok) continue;
       const s = chainSub.value;
 
       if (!dbRow) {
-        report.add("scout_subscriptions", scout, "existence", "present", "missing");
+        report.add(
+          "scout_subscriptions",
+          scout,
+          "existence",
+          "present",
+          "missing",
+        );
         continue;
       }
 
       // --- Core field checks ---
       report.check("scout_subscriptions", scout, "tier", s.tier, dbRow.tier);
-      report.check("scout_subscriptions", scout, "subscribed_at", asBigIntString(s.subscribed_at), asBigIntString(dbRow.subscribed_at));
-      report.check("scout_subscriptions", scout, "expires_at", asBigIntString(s.expires_at), asBigIntString(dbRow.expires_at));
+      report.check(
+        "scout_subscriptions",
+        scout,
+        "subscribed_at",
+        asBigIntString(s.subscribed_at),
+        asBigIntString(dbRow.subscribed_at),
+      );
+      report.check(
+        "scout_subscriptions",
+        scout,
+        "expires_at",
+        asBigIntString(s.expires_at),
+        asBigIntString(dbRow.expires_at),
+      );
 
       // --- Tier divergence: on-chain subscription has expired but the DB row
       // still records the scout as active.  The contract treats an expired
@@ -539,7 +890,8 @@ async function reconcileSubscriptions(pg, cfg, report) {
       // so an off-chain query using the DB row would incorrectly grant the
       // scout access they no longer have on-chain.
       const chainExpiredOnChain = Number(s.expires_at) < nowSecs;
-      const dbExpiredOnChain = dbRow.expires_at !== null && Number(dbRow.expires_at) < nowSecs;
+      const dbExpiredOnChain =
+        dbRow.expires_at !== null && Number(dbRow.expires_at) < nowSecs;
       if (chainExpiredOnChain !== dbExpiredOnChain) {
         report.add(
           "scout_subscriptions",
@@ -557,12 +909,22 @@ async function reconcileSubscriptions(pg, cfg, report) {
       // it when the DB row has the column (non-undefined).
       if (dbRow.auto_renew !== undefined) {
         const autoRenewResult = await invoke(
-          cfg.network, cfg.source, cfg.scoutAccessId, "get_auto_renew", ["--scout", scout],
+          cfg.network,
+          cfg.source,
+          cfg.scoutAccessId,
+          "get_auto_renew",
+          ["--scout", scout],
         );
         if (autoRenewResult.ok) {
           const chainAutoRenew = autoRenewResult.value === true;
           const dbAutoRenew = dbRow.auto_renew === true;
-          report.check("scout_subscriptions", scout, "auto_renew", chainAutoRenew, dbAutoRenew);
+          report.check(
+            "scout_subscriptions",
+            scout,
+            "auto_renew",
+            chainAutoRenew,
+            dbAutoRenew,
+          );
         }
       }
     }
@@ -574,8 +936,14 @@ async function reconcileSubscriptions(pg, cfg, report) {
   // subsequently deleted by a contract upgrade.
   for (const [scout, dbRow] of byScout) {
     if (!chainScouts.has(scout)) {
-      report.add("scout_subscriptions", scout, "existence", "missing", "present",
-        "scout exists in DB but not found under any tier on-chain");
+      report.add(
+        "scout_subscriptions",
+        scout,
+        "existence",
+        "missing",
+        "present",
+        "scout exists in DB but not found under any tier on-chain",
+      );
     }
   }
 }
@@ -583,20 +951,41 @@ async function reconcileSubscriptions(pg, cfg, report) {
 async function reconcileContactRecords(pg, cfg, report, playerIds) {
   for (const id of playerIds) {
     const key = String(id);
-    const result = await invoke(cfg.network, cfg.source, cfg.scoutAccessId, "get_player_contacts", ["--player_id", key]);
+    const result = await invoke(
+      cfg.network,
+      cfg.source,
+      cfg.scoutAccessId,
+      "get_player_contacts",
+      ["--player_id", key],
+    );
     if (!result.ok) continue;
 
-    const { rows } = await pg.query("SELECT * FROM contact_records WHERE player_id = $1", [id]);
+    const { rows } = await pg.query(
+      "SELECT * FROM contact_records WHERE player_id = $1",
+      [id],
+    );
     const dbScouts = new Set(rows.map((r) => r.scout));
 
     for (const scout of result.value) {
       if (!dbScouts.has(scout)) {
-        report.add("contact_records", `${key}:${scout}`, "existence", "present", "missing");
+        report.add(
+          "contact_records",
+          `${key}:${scout}`,
+          "existence",
+          "present",
+          "missing",
+        );
       }
     }
     for (const scout of dbScouts) {
       if (!result.value.includes(scout)) {
-        report.add("contact_records", `${key}:${scout}`, "existence", "missing", "present");
+        report.add(
+          "contact_records",
+          `${key}:${scout}`,
+          "existence",
+          "missing",
+          "present",
+        );
       }
     }
   }
@@ -617,14 +1006,13 @@ async function reconcileEvidenceAccessGrants(pg, cfg, report, playerIds) {
     const chainGrants = [];
     let offset = 0;
     while (true) {
-      const page = await invoke(cfg.network, cfg.source, cfg.scoutAccessId, "get_player_access_grants", [
-        "--player_id",
-        key,
-        "--offset",
-        String(offset),
-        "--limit",
-        "50",
-      ]);
+      const page = await invoke(
+        cfg.network,
+        cfg.source,
+        cfg.scoutAccessId,
+        "get_player_access_grants",
+        ["--player_id", key, "--offset", String(offset), "--limit", "50"],
+      );
       if (!page.ok) break;
       if (!Array.isArray(page.value)) break;
       for (const g of page.value) chainGrants.push(g);
@@ -661,20 +1049,38 @@ async function reconcileEvidenceAccessGrants(pg, cfg, report, playerIds) {
     for (const [scoutKey, chainGrant] of chainByKey) {
       const dbRow = dbByKey.get(scoutKey);
       if (!dbRow) {
-        report.add("evidence_access_grants", `${key}:${scoutKey}`, "existence", "present", "missing");
+        report.add(
+          "evidence_access_grants",
+          `${key}:${scoutKey}`,
+          "existence",
+          "present",
+          "missing",
+        );
         continue;
       }
       for (const f of fields) {
         const chainVal = f.convert(chainGrant[f.name]);
         const dbVal = f.convert(dbRow[f.name]);
-        report.check("evidence_access_grants", `${key}:${scoutKey}`, f.name, chainVal, dbVal);
+        report.check(
+          "evidence_access_grants",
+          `${key}:${scoutKey}`,
+          f.name,
+          chainVal,
+          dbVal,
+        );
       }
     }
 
     // --- DB-only rows (grant in DB, not on chain) ---
     for (const [scoutKey, dbRow] of dbByKey) {
       if (!chainByKey.has(scoutKey)) {
-        report.add("evidence_access_grants", `${key}:${scoutKey}`, "existence", "missing", "present");
+        report.add(
+          "evidence_access_grants",
+          `${key}:${scoutKey}`,
+          "existence",
+          "missing",
+          "present",
+        );
       }
     }
   }
@@ -696,29 +1102,34 @@ async function reconcileDisputeVotes(pg, cfg, report, playerIds) {
   const onChainJuryDisputes = new Set();
   for (const id of playerIds) {
     const key = String(id);
-    const countResult = await invoke(cfg.network, cfg.source, cfg.verificationId, "get_milestone_count", [
-      "--player_id",
-      key,
-    ]);
+    const countResult = await invoke(
+      cfg.network,
+      cfg.source,
+      cfg.verificationId,
+      "get_milestone_count",
+      ["--player_id", key],
+    );
     if (!countResult.ok) continue;
     const count = Number(countResult.value);
 
     for (let index = 1; index <= count; index++) {
       const mKey = `${key}:${index}`;
-      const hasDispute = await invoke(cfg.network, cfg.source, cfg.verificationId, "has_dispute", [
-        "--player_id",
-        key,
-        "--milestone_index",
-        String(index),
-      ]);
+      const hasDispute = await invoke(
+        cfg.network,
+        cfg.source,
+        cfg.verificationId,
+        "has_dispute",
+        ["--player_id", key, "--milestone_index", String(index)],
+      );
       if (!hasDispute.ok || !hasDispute.value) continue;
 
-      const dChain = await invoke(cfg.network, cfg.source, cfg.verificationId, "get_dispute", [
-        "--player_id",
-        key,
-        "--milestone_index",
-        String(index),
-      ]);
+      const dChain = await invoke(
+        cfg.network,
+        cfg.source,
+        cfg.verificationId,
+        "get_dispute",
+        ["--player_id", key, "--milestone_index", String(index)],
+      );
       if (!dChain.ok || !dChain.value.jury_required) continue;
 
       const d = dChain.value;
@@ -748,7 +1159,9 @@ async function reconcileDisputeVotes(pg, cfg, report, playerIds) {
   // dispute on-chain. Only meaningful on a full sweep — with --sample, rows for
   // players outside the sample were never checked.
   if (cfg.sample) return;
-  const { rows: votedDisputes } = await pg.query("SELECT DISTINCT player_id, milestone_index FROM dispute_votes");
+  const { rows: votedDisputes } = await pg.query(
+    "SELECT DISTINCT player_id, milestone_index FROM dispute_votes",
+  );
   for (const r of votedDisputes) {
     const mKey = `${r.player_id}:${r.milestone_index}`;
     if (!onChainJuryDisputes.has(mKey)) {
@@ -774,16 +1187,36 @@ async function reconcileIndexerCursor(pg, cfg, report) {
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getLatestLedger", params: {} }),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "getLatestLedger",
+          params: {},
+        }),
       },
       timeoutMs,
     );
   } catch (err) {
     if (err && (err.name === "AbortError" || err.name === "TimeoutError")) {
-      report.add("indexer_cursor", "1", "rpc_timeout", null, null, `getLatestLedger timed out after ${timeoutMs}ms`);
+      report.add(
+        "indexer_cursor",
+        "1",
+        "rpc_timeout",
+        null,
+        null,
+        `getLatestLedger timed out after ${timeoutMs}ms`,
+      );
     } else {
-      const httpStatus = err && err.httpStatus !== undefined ? err.httpStatus : null;
-      report.add("indexer_cursor", "1", "rpc_error", httpStatus, null, err && err.message ? err.message : String(err));
+      const httpStatus =
+        err && err.httpStatus !== undefined ? err.httpStatus : null;
+      report.add(
+        "indexer_cursor",
+        "1",
+        "rpc_error",
+        httpStatus,
+        null,
+        err && err.message ? err.message : String(err),
+      );
     }
     return;
   }
@@ -800,13 +1233,22 @@ async function reconcileIndexerCursor(pg, cfg, report) {
     return;
   }
 
-  const { rows } = await pg.query("SELECT last_ledger FROM indexer_cursor WHERE id = 1");
+  const { rows } = await pg.query(
+    "SELECT last_ledger FROM indexer_cursor WHERE id = 1",
+  );
   const lastLedger = Number(rows[0]?.last_ledger ?? 0);
   const lag = latestLedger - lastLedger;
   // Not a hard mismatch (some lag is expected between ledger close and
   // indexing) — surfaced as informational unless it's suspiciously large.
   if (lag > 100) {
-    report.add("indexer_cursor", "1", "ledger_lag", latestLedger, lastLedger, `${lag} ledgers behind`);
+    report.add(
+      "indexer_cursor",
+      "1",
+      "ledger_lag",
+      latestLedger,
+      lastLedger,
+      `${lag} ledgers behind`,
+    );
   }
 }
 
@@ -820,7 +1262,9 @@ async function reconcileIndexerCursor(pg, cfg, report) {
  */
 async function main(deps = {}) {
   const injected = Boolean(deps.pg);
-  const args = injected ? { network: "testnet" } : parseArgs(process.argv.slice(2));
+  const args = injected
+    ? { network: "testnet" }
+    : parseArgs(process.argv.slice(2));
   if (deps.invoke) invoke = deps.invoke;
   else if (!args.useCli) {
     invoke = createSorobanInvoker({
@@ -831,13 +1275,14 @@ async function main(deps = {}) {
   }
   if (!injected) loadDotEnvContracts();
 
-  if (!injected) requireEnv([
-    "DATABASE_URL",
-    "REGISTRATION_CONTRACT_ID",
-    "VERIFICATION_CONTRACT_ID",
-    "PROGRESS_CONTRACT_ID",
-    "SCOUT_ACCESS_CONTRACT_ID",
-  ]);
+  if (!injected)
+    requireEnv([
+      "DATABASE_URL",
+      "REGISTRATION_CONTRACT_ID",
+      "VERIFICATION_CONTRACT_ID",
+      "PROGRESS_CONTRACT_ID",
+      "SCOUT_ACCESS_CONTRACT_ID",
+    ]);
 
   const cfg = {
     network: args.network,
@@ -854,40 +1299,65 @@ async function main(deps = {}) {
   const tablesToRun = deps.tables ?? args.tables ?? ALL_TABLES;
   for (const t of tablesToRun) {
     if (!ALL_TABLES.includes(t)) {
-      throw new ConfigError(`Unknown table "${t}". Valid tables: ${ALL_TABLES.join(", ")}`);
+      throw new ConfigError(
+        `Unknown table "${t}". Valid tables: ${ALL_TABLES.join(", ")}`,
+      );
     }
   }
 
-  const pg = deps.pg ?? new PgClient({ connectionString: process.env.DATABASE_URL });
+  const pg =
+    deps.pg ?? new PgClient({ connectionString: process.env.DATABASE_URL });
   if (!injected) await pg.connect();
 
   const report = deps.report ?? makeReport();
   try {
     let playerIds = [];
-    if (tablesToRun.includes("players") || tablesToRun.includes("milestones") ||
-        tablesToRun.includes("milestone_disputes") || tablesToRun.includes("dispute_votes") ||
-        tablesToRun.includes("trial_offers") || tablesToRun.includes("contact_records")) {
-      const countResult = await invoke(cfg.network, cfg.source, cfg.registrationId, "get_player_count", []);
-      if (!countResult.ok) throw new Error(`get_player_count failed: ${countResult.error}`);
+    if (
+      tablesToRun.includes("players") ||
+      tablesToRun.includes("milestones") ||
+      tablesToRun.includes("milestone_disputes") ||
+      tablesToRun.includes("dispute_votes") ||
+      tablesToRun.includes("trial_offers") ||
+      tablesToRun.includes("contact_records")
+    ) {
+      const countResult = await invoke(
+        cfg.network,
+        cfg.source,
+        cfg.registrationId,
+        "get_player_count",
+        [],
+      );
+      if (!countResult.ok)
+        throw new Error(`get_player_count failed: ${countResult.error}`);
       const total = Number(countResult.value);
       const limit = cfg.sample ? Math.min(cfg.sample, total) : total;
       playerIds = Array.from({ length: limit }, (_, i) => i + 1);
     }
 
-    if (tablesToRun.includes("players")) await reconcilePlayers(pg, cfg, report);
+    if (tablesToRun.includes("players"))
+      await reconcilePlayers(pg, cfg, report);
     if (tablesToRun.includes("scouts")) await reconcileScouts(pg, cfg, report);
-    if (tablesToRun.includes("validators")) await reconcileValidators(pg, cfg, report);
-    if (tablesToRun.includes("milestones") || tablesToRun.includes("milestone_disputes")) {
+    if (tablesToRun.includes("validators"))
+      await reconcileValidators(pg, cfg, report);
+    if (
+      tablesToRun.includes("milestones") ||
+      tablesToRun.includes("milestone_disputes")
+    ) {
       await reconcileMilestonesAndDisputes(pg, cfg, report, playerIds);
     }
-    if (tablesToRun.includes("dispute_votes")) await reconcileDisputeVotes(pg, cfg, report, playerIds);
-    if (tablesToRun.includes("trial_offers")) await reconcileTrialOffers(pg, cfg, report, playerIds);
-    if (tablesToRun.includes("scout_subscriptions")) await reconcileSubscriptions(pg, cfg, report);
-    if (tablesToRun.includes("contact_records")) await reconcileContactRecords(pg, cfg, report, playerIds);
+    if (tablesToRun.includes("dispute_votes"))
+      await reconcileDisputeVotes(pg, cfg, report, playerIds);
+    if (tablesToRun.includes("trial_offers"))
+      await reconcileTrialOffers(pg, cfg, report, playerIds);
+    if (tablesToRun.includes("scout_subscriptions"))
+      await reconcileSubscriptions(pg, cfg, report);
+    if (tablesToRun.includes("contact_records"))
+      await reconcileContactRecords(pg, cfg, report, playerIds);
     if (tablesToRun.includes("evidence_access_grants")) {
       await reconcileEvidenceAccessGrants(pg, cfg, report, playerIds);
     }
-    if (tablesToRun.includes("indexer_cursor")) await reconcileIndexerCursor(pg, cfg, report);
+    if (tablesToRun.includes("indexer_cursor"))
+      await reconcileIndexerCursor(pg, cfg, report);
   } finally {
     await pg.end();
   }
@@ -895,7 +1365,13 @@ async function main(deps = {}) {
   if (injected) return report;
 
   if (args.json) {
-    process.stdout.write(JSON.stringify({ mismatches: report.mismatches, skipped: SKIPPED_TABLES }, null, 2) + "\n");
+    process.stdout.write(
+      JSON.stringify(
+        { mismatches: report.mismatches, skipped: SKIPPED_TABLES },
+        null,
+        2,
+      ) + "\n",
+    );
   } else {
     printTextReport(report, tablesToRun);
   }
@@ -909,7 +1385,10 @@ function printTextReport(report, tablesToRun) {
   console.log("=".repeat(72));
 
   if (report.mismatches.length === 0) {
-    console.log("\nNo drift found across checked tables:", tablesToRun.join(", "));
+    console.log(
+      "\nNo drift found across checked tables:",
+      tablesToRun.join(", "),
+    );
   } else {
     const byTable = new Map();
     for (const m of report.mismatches) {
@@ -917,17 +1396,25 @@ function printTextReport(report, tablesToRun) {
       byTable.get(m.table).push(m);
     }
     for (const [table, items] of byTable) {
-      console.log(`\n--- ${table} (${items.length} mismatch${items.length === 1 ? "" : "es"}) ---`);
+      console.log(
+        `\n--- ${table} (${items.length} mismatch${items.length === 1 ? "" : "es"}) ---`,
+      );
       for (const m of items) {
         const detail = m.detail ? ` (${m.detail})` : "";
-        console.log(`  [${m.key}] ${m.field}: on-chain=${JSON.stringify(m.onChain)} off-chain=${JSON.stringify(m.offChain)}${detail}`);
+        console.log(
+          `  [${m.key}] ${m.field}: on-chain=${JSON.stringify(m.onChain)} off-chain=${JSON.stringify(m.offChain)}${detail}`,
+        );
       }
     }
   }
 
-  const skippedNames = Object.keys(SKIPPED_TABLES).filter((t) => tablesToRun.includes(t) || !tablesToRun);
+  const skippedNames = Object.keys(SKIPPED_TABLES).filter(
+    (t) => tablesToRun.includes(t) || !tablesToRun,
+  );
   if (Object.keys(SKIPPED_TABLES).length > 0) {
-    console.log("\n--- Skipped (event-log-only, no per-row on-chain analog) ---");
+    console.log(
+      "\n--- Skipped (event-log-only, no per-row on-chain analog) ---",
+    );
     for (const [table, reason] of Object.entries(SKIPPED_TABLES)) {
       console.log(`  ${table}: ${reason}`);
     }
@@ -956,7 +1443,9 @@ if (require.main === module) {
       process.stderr.write(`Configuration error: ${err.message}\n`);
       process.exit(2);
     }
-    process.stderr.write(`Reconciliation failed: ${err.stack || err.message}\n`);
+    process.stderr.write(
+      `Reconciliation failed: ${err.stack || err.message}\n`,
+    );
     process.exit(2);
   });
 }

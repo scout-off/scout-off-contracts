@@ -29,7 +29,9 @@ async function main() {
          AND table_name = ANY($1::text[])`,
       [Object.keys(expectedColumns)],
     );
-    const present = new Set(rows.map(({ table_name, column_name }) => `${table_name}.${column_name}`));
+    const present = new Set(
+      rows.map(({ table_name, column_name }) => `${table_name}.${column_name}`),
+    );
     const drift = [];
 
     for (const [table, columns] of Object.entries(expectedColumns)) {
@@ -57,7 +59,9 @@ async function main() {
          AND ccu.column_name = 'id'`,
     );
     if (foreignKey.rowCount === 0) {
-      drift.push("missing foreign key refresh_tokens.session_id -> sessions.id");
+      drift.push(
+        "missing foreign key refresh_tokens.session_id -> sessions.id",
+      );
     }
 
     if (drift.length > 0) {

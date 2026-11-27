@@ -9,8 +9,8 @@ mod events;
 mod types;
 
 use types::{
-    ContractHealth, DataKey, PlayerSummary, ProgressLevel, RegistrationWiringState,
-    ScoutProfile, ScoutVerificationRecord, StoredPlayerProfile,
+    ContractHealth, DataKey, PlayerSummary, ProgressLevel, RegistrationWiringState, ScoutProfile,
+    ScoutVerificationRecord, StoredPlayerProfile,
 };
 // Re-exported so external integration tests (e.g. tests/integration_progress_sync.rs)
 // can construct register_player's `vitals` argument and read filter_players /
@@ -854,14 +854,16 @@ impl RegistrationContract {
             .instance()
             .get::<DataKey, Address>(&DataKey::VerificationContract)
         {
-            verification_contract::Client::new(&env, &verification_addr).mark_player_erased(&player_id);
+            verification_contract::Client::new(&env, &verification_addr)
+                .mark_player_erased(&player_id);
         }
         if let Some(scout_access_addr) = env
             .storage()
             .instance()
             .get::<DataKey, Address>(&DataKey::ScoutAccessContract)
         {
-            scout_access_contract::Client::new(&env, &scout_access_addr).mark_player_erased(&player_id);
+            scout_access_contract::Client::new(&env, &scout_access_addr)
+                .mark_player_erased(&player_id);
         }
 
         events::player_deregistered(&env, player_id, &level, &region, &admin);

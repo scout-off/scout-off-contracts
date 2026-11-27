@@ -3347,11 +3347,7 @@ impl ScoutAccessContract {
             for offset in 0..(end - start) {
                 let idx = start + offset + 1;
                 let tok = DataKey::TrialOffer(player_id, idx);
-                if let Some(offer) = env
-                    .storage()
-                    .persistent()
-                    .get::<DataKey, TrialOffer>(&tok)
-                {
+                if let Some(offer) = env.storage().persistent().get::<DataKey, TrialOffer>(&tok) {
                     // Strip this (player_id, idx) pair from the scout's index
                     // so no dangling back-reference survives (#1785).
                     let sto_key = DataKey::ScoutTrialOffers(offer.scout.clone());
@@ -3671,7 +3667,8 @@ impl ScoutAccessContract {
             .storage()
             .instance()
             .get::<DataKey, Address>(&DataKey::RegistrationContract);
-        let registration_addr = registration_addr.ok_or(ScoutAccessError::RegistrationContractNotSet)?;
+        let registration_addr =
+            registration_addr.ok_or(ScoutAccessError::RegistrationContractNotSet)?;
 
         registration_addr.require_auth();
 
@@ -3679,9 +3676,11 @@ impl ScoutAccessContract {
         env.storage()
             .persistent()
             .set(&DataKey::Erased(player_id), &true);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::Erased(player_id), PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Erased(player_id),
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
 
         Ok(())
     }
@@ -8003,7 +8002,10 @@ mod tests {
         let mut calls: u32 = 0;
         loop {
             let (next, more) = client.purge_player_data(&player_id, &cursor);
-            assert!(next >= cursor, "cursor must be monotonically non-decreasing");
+            assert!(
+                next >= cursor,
+                "cursor must be monotonically non-decreasing"
+            );
             cursor = next;
             calls += 1;
             if !more {
@@ -8036,11 +8038,10 @@ mod tests {
             assert!(!client.has_evidence_access(&player_id, &scout));
         }
         env.as_contract(&client.address, || {
-            assert!(
-                !env.storage()
-                    .persistent()
-                    .has(&DataKey::EvidenceAccessGrantCount(player_id)),
-            );
+            assert!(!env
+                .storage()
+                .persistent()
+                .has(&DataKey::EvidenceAccessGrantCount(player_id)),);
         });
     }
 
@@ -8096,8 +8097,14 @@ mod tests {
                 .map(|v| v.iter().any(|(pid, _)| pid == player_id))
                 .unwrap_or(false);
 
-            assert!(!a_has_ref, "ScoutTrialOffers for scout_a must not reference purged player");
-            assert!(!b_has_ref, "ScoutTrialOffers for scout_b must not reference purged player");
+            assert!(
+                !a_has_ref,
+                "ScoutTrialOffers for scout_a must not reference purged player"
+            );
+            assert!(
+                !b_has_ref,
+                "ScoutTrialOffers for scout_b must not reference purged player"
+            );
         });
     }
 }

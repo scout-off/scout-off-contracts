@@ -6,7 +6,7 @@
 use scoutchain_scout_access::{
     ScoutAccessContract, ScoutAccessContractClient, ScoutAccessError, SubscriptionTier,
 };
-use soroban_sdk::{testutils::Address as_, Address, Env};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
 #[test]
 fn test_mark_player_erased_sets_tombstone() {
@@ -24,15 +24,15 @@ fn test_mark_player_erased_sets_tombstone() {
 
     // Mark player as erased (authorized by registration contract)
     let player_id = 123u64;
-    client
-        .try_mark_player_erased(&player_id)
-        .unwrap();
+    client.try_mark_player_erased(&player_id).unwrap();
 
     // Verify the tombstone is set
     let erased = env
         .storage()
         .persistent()
-        .get::<scoutchain_scout_access::DataKey, bool>(&scoutchain_scout_access::DataKey::Erased(player_id))
+        .get::<scoutchain_scout_access::DataKey, bool>(&scoutchain_scout_access::DataKey::Erased(
+            player_id,
+        ))
         .unwrap();
     assert!(erased);
 }

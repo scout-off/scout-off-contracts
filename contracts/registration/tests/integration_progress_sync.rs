@@ -71,7 +71,8 @@ fn setup() -> Harness {
 }
 
 fn wire_registration_link(h: &Harness) {
-    h.progress.set_registration_contract(&h.registration.address);
+    h.progress
+        .set_registration_contract(&h.registration.address);
     h.registration.set_progress_contract(&h.progress.address);
 }
 
@@ -162,7 +163,8 @@ fn test_set_player_level_rejects_non_progress_contract_caller() {
 fn test_advance_level_returns_registration_call_failed_when_registration_side_unwired() {
     let h = setup();
 
-    h.progress.set_registration_contract(&h.registration.address);
+    h.progress
+        .set_registration_contract(&h.registration.address);
     // Deliberately skip: h.registration.set_progress_contract(...)
 
     let wallet = Address::generate(&h.env);

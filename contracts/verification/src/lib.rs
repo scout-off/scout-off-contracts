@@ -4618,7 +4618,8 @@ impl VerificationContract {
             .storage()
             .instance()
             .get::<DataKey, Address>(&DataKey::RegistrationContract);
-        let registration_addr = registration_addr.ok_or(VerificationError::RegistrationNotConfigured)?;
+        let registration_addr =
+            registration_addr.ok_or(VerificationError::RegistrationNotConfigured)?;
 
         registration_addr.require_auth();
 
@@ -4626,9 +4627,11 @@ impl VerificationContract {
         env.storage()
             .persistent()
             .set(&DataKey::Erased(player_id), &true);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::Erased(player_id), PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Erased(player_id),
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
 
         Ok(())
     }

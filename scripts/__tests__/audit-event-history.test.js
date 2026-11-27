@@ -1,4 +1,4 @@
-'use strict';
+"use strict";
 
 /**
  * Tests for scripts/audit-event-history.js
@@ -12,9 +12,9 @@
  * - getRpcInfo parsing
  */
 
-const path = require('path');
+const path = require("path");
 
-const SCRIPT_PATH = path.resolve(__dirname, '..', 'audit-event-history.js');
+const SCRIPT_PATH = path.resolve(__dirname, "..", "audit-event-history.js");
 const EVENTS_PAGE_SIZE = 200;
 
 // Helper to create a mock fetch that returns events
@@ -32,12 +32,12 @@ function createMockFetch(eventsByLedger) {
         ok: false,
         status: 500,
         json: async () => ({
-          jsonrpc: '2.0',
+          jsonrpc: "2.0",
           id: payload.id,
           error: {
             code: -32603,
-            message: 'Internal error',
-            data: 'Mock RPC internal error',
+            message: "Internal error",
+            data: "Mock RPC internal error",
           },
         }),
       };
@@ -55,7 +55,7 @@ function createMockFetch(eventsByLedger) {
     // Filter events by contract ID
     let filtered = allEvents.filter((ev) => {
       // Check contract ID in topics
-      const eventTopic = ev.topics ? ev.topics[0] : '';
+      const eventTopic = ev.topics ? ev.topics[0] : "";
       const isMatch = contractIds.some((cid) => eventTopic.startsWith(cid));
       return isMatch;
     });
@@ -65,7 +65,7 @@ function createMockFetch(eventsByLedger) {
       filtered = filtered.filter((ev) => {
         if (!ev.topics) return false;
         return topicsFilter.some((ft) =>
-          ev.topics.some((et) => et === ft || et.startsWith(ft))
+          ev.topics.some((et) => et === ft || et.startsWith(ft)),
         );
       });
     }
@@ -74,7 +74,7 @@ function createMockFetch(eventsByLedger) {
     let startIndex = 0;
     if (cursor) {
       // Decode cursor (simple format: ledger:count)
-      const parts = cursor.split(':');
+      const parts = cursor.split(":");
       const startLedgerVal = Number(parts[0]);
       const eventCount = Number(parts[1]);
       startIndex = allEvents.findIndex((e) => e.ledger === startLedgerVal);
@@ -99,7 +99,7 @@ function createMockFetch(eventsByLedger) {
       ok: true,
       status: 200,
       json: async () => ({
-        jsonrpc: '2.0',
+        jsonrpc: "2.0",
         id: payload.id,
         result: {
           events: paginated.map((ev) => ({
@@ -111,7 +111,9 @@ function createMockFetch(eventsByLedger) {
             data: ev.data ? { json: JSON.stringify(ev.data) } : {},
           })),
           pagination: {
-            cursor: hasMore ? `${paginated[paginated.length - 1].ledger}:${paginated.length}` : null,
+            cursor: hasMore
+              ? `${paginated[paginated.length - 1].ledger}:${paginated.length}`
+              : null,
           },
         },
       }),
@@ -125,26 +127,26 @@ function createRpcInfoMock(rpcInfo) {
     const payload = JSON.parse(body);
     const method = payload.method;
 
-    if (method === 'getHealth') {
+    if (method === "getHealth") {
       return {
         ok: true,
         status: 200,
         json: async () => ({
-          jsonrpc: '2.0',
+          jsonrpc: "2.0",
           id: payload.id,
           result: {
-            status: 'healthy',
+            status: "healthy",
           },
         }),
       };
     }
 
-    if (method === 'getLatestLedger') {
+    if (method === "getLatestLedger") {
       return {
         ok: true,
         status: 200,
         json: async () => ({
-          jsonrpc: '2.0',
+          jsonrpc: "2.0",
           id: payload.id,
           result: {
             ledger: rpcInfo.latestLedger,
@@ -160,50 +162,50 @@ function createRpcInfoMock(rpcInfo) {
       ok: false,
       status: 400,
       json: async () => ({
-        jsonrpc: '2.0',
+        jsonrpc: "2.0",
         id: payload.id,
         error: {
           code: -32601,
-          message: 'Method not found',
+          message: "Method not found",
         },
       }),
     };
   });
 }
 
-describe('scripts/audit-event-history.js structure', () => {
-  test('fetchEvents is exported', async () => {
+describe("scripts/audit-event-history.js structure", () => {
+  test("fetchEvents is exported", async () => {
     const mod = require(SCRIPT_PATH);
-    expect(typeof mod.fetchEvents).toBe('function');
+    expect(typeof mod.fetchEvents).toBe("function");
   });
 
-  test('parseArgs is exported', async () => {
+  test("parseArgs is exported", async () => {
     const mod = require(SCRIPT_PATH);
-    expect(typeof mod.parseArgs).toBe('function');
+    expect(typeof mod.parseArgs).toBe("function");
   });
 
-  test('requireEnv is exported', async () => {
+  test("requireEnv is exported", async () => {
     const mod = require(SCRIPT_PATH);
-    expect(typeof mod.requireEnv).toBe('function');
+    expect(typeof mod.requireEnv).toBe("function");
   });
 
-  test('PlayerHistoryReconstructor is exported', async () => {
+  test("PlayerHistoryReconstructor is exported", async () => {
     const mod = require(SCRIPT_PATH);
-    expect(typeof mod.PlayerHistoryReconstructor).toBe('function');
+    expect(typeof mod.PlayerHistoryReconstructor).toBe("function");
   });
 
-  test('getRpcInfo is exported', async () => {
+  test("getRpcInfo is exported", async () => {
     const mod = require(SCRIPT_PATH);
-    expect(typeof mod.getRpcInfo).toBe('function');
+    expect(typeof mod.getRpcInfo).toBe("function");
   });
 
-  test('EVENTS_PAGE_SIZE is exported', async () => {
+  test("EVENTS_PAGE_SIZE is exported", async () => {
     const mod = require(SCRIPT_PATH);
     expect(mod.EVENTS_PAGE_SIZE).toBe(200);
   });
 });
 
-describe('scripts/audit-event-history.js fetchEvents', () => {
+describe("scripts/audit-event-history.js fetchEvents", () => {
   let originalFetch;
 
   beforeEach(() => {
@@ -215,27 +217,36 @@ describe('scripts/audit-event-history.js fetchEvents', () => {
     jest.restoreAllMocks();
   });
 
-  test('fetches first page when startLedger is provided', async () => {
+  test("fetches first page when startLedger is provided", async () => {
     const mockEvents = Array.from({ length: 50 }, (_, i) => ({
-      contractId: 'C123',
+      contractId: "C123",
       ledger: 1000 + i,
-      type: 'progress_updated',
-      topics: ['progress_updated', 'wallet1'],
-      data: { player_id: 1, old_level: 'Unverified', new_level: 'VerifiedIdentity' },
+      type: "progress_updated",
+      topics: ["progress_updated", "wallet1"],
+      data: {
+        player_id: 1,
+        old_level: "Unverified",
+        new_level: "VerifiedIdentity",
+      },
     }));
 
     global.fetch = createMockFetch(mockEvents);
 
     const mod = require(SCRIPT_PATH);
-    const result = await mod.fetchEvents('http://rpc.example.com', 'C123', null, { startLedger: 1000 });
+    const result = await mod.fetchEvents(
+      "http://rpc.example.com",
+      "C123",
+      null,
+      { startLedger: 1000 },
+    );
 
     expect(global.fetch).toHaveBeenCalledTimes(1);
     const request = JSON.parse(global.fetch.mock.calls[0][1].body);
     expect(request.params.startLedger).toBe(1000);
     expect(request.params.filters).toEqual([
       {
-        type: 'contract',
-        contractIds: ['C123'],
+        type: "contract",
+        contractIds: ["C123"],
         topics: null,
       },
     ]);
@@ -247,20 +258,29 @@ describe('scripts/audit-event-history.js fetchEvents', () => {
     expect(result[result.length - 1].ledger).toBe(1049);
   });
 
-  test('paginates across multiple pages when needed', async () => {
+  test("paginates across multiple pages when needed", async () => {
     // Create 450 events (more than 2 pages of 200)
     const mockEvents = Array.from({ length: 450 }, (_, i) => ({
-      contractId: 'C123',
+      contractId: "C123",
       ledger: 2000 + i,
-      type: 'progress_updated',
-      topics: ['progress_updated', 'wallet1'],
-      data: { player_id: 1, old_level: 'Unverified', new_level: 'VerifiedIdentity' },
+      type: "progress_updated",
+      topics: ["progress_updated", "wallet1"],
+      data: {
+        player_id: 1,
+        old_level: "Unverified",
+        new_level: "VerifiedIdentity",
+      },
     }));
 
     global.fetch = createMockFetch(mockEvents);
 
     const mod = require(SCRIPT_PATH);
-    const result = await mod.fetchEvents('http://rpc.example.com', 'C123', null, { startLedger: 2000 });
+    const result = await mod.fetchEvents(
+      "http://rpc.example.com",
+      "C123",
+      null,
+      { startLedger: 2000 },
+    );
 
     // Should make 3 requests (200 + 200 + 50)
     expect(global.fetch).toHaveBeenCalledTimes(3);
@@ -271,22 +291,22 @@ describe('scripts/audit-event-history.js fetchEvents', () => {
     expect(result[result.length - 1].ledger).toBe(2449);
   });
 
-  test('applies topic filter when provided', async () => {
+  test("applies topic filter when provided", async () => {
     const mockEvents = [
       // progress events
       {
-        contractId: 'C123',
+        contractId: "C123",
         ledger: 3000,
-        type: 'progress_updated',
-        topics: ['progress_updated', 'wallet1'],
+        type: "progress_updated",
+        topics: ["progress_updated", "wallet1"],
         data: { player_id: 1 },
       },
       // verification event with different topic
       {
-        contractId: 'C456',
+        contractId: "C456",
         ledger: 3001,
-        type: 'milestone_approved',
-        topics: ['milestone_approved', 'wallet1'],
+        type: "milestone_approved",
+        topics: ["milestone_approved", "wallet1"],
         data: { player_id: 1 },
       },
     ];
@@ -295,57 +315,69 @@ describe('scripts/audit-event-history.js fetchEvents', () => {
 
     const mod = require(SCRIPT_PATH);
     // Filter for progress events only
-    const result = await mod.fetchEvents('http://rpc.example.com', 'C123', ['progress_updated'], { startLedger: 3000 });
+    const result = await mod.fetchEvents(
+      "http://rpc.example.com",
+      "C123",
+      ["progress_updated"],
+      { startLedger: 3000 },
+    );
 
     expect(global.fetch).toHaveBeenCalledTimes(1);
     const request = JSON.parse(global.fetch.mock.calls[0][1].body);
 
     // Request should include topic filter
-    expect(request.params.filters[0].topics).toEqual(['progress_updated']);
+    expect(request.params.filters[0].topics).toEqual(["progress_updated"]);
 
     // Should only return progress events
     expect(result.length).toBe(1);
-    expect(result[0].type).toBe('progress_updated');
+    expect(result[0].type).toBe("progress_updated");
   });
 
-  test('handles empty results gracefully', async () => {
+  test("handles empty results gracefully", async () => {
     const mockEvents = [];
 
     global.fetch = createMockFetch(mockEvents);
 
     const mod = require(SCRIPT_PATH);
-    const result = await mod.fetchEvents('http://rpc.example.com', 'C123', null, { startLedger: 4000 });
+    const result = await mod.fetchEvents(
+      "http://rpc.example.com",
+      "C123",
+      null,
+      { startLedger: 4000 },
+    );
 
     expect(global.fetch).toHaveBeenCalledTimes(1);
     expect(result.length).toBe(0);
   });
 
-  test('throws on network error (non-OK response)', async () => {
+  test("throws on network error (non-OK response)", async () => {
     global.fetch = jest.fn(async () => ({
       ok: false,
       status: 503,
-      statusText: 'Service Unavailable',
+      statusText: "Service Unavailable",
     }));
 
     const mod = require(SCRIPT_PATH);
 
     await expect(
-      mod.fetchEvents('http://rpc.example.com', 'C123', null, { startLedger: 5000 })
-    ).rejects.toThrow('Network error: 503 Service Unavailable');
+      mod.fetchEvents("http://rpc.example.com", "C123", null, {
+        startLedger: 5000,
+      }),
+    ).rejects.toThrow("Network error: 503 Service Unavailable");
   });
 
-  test('throws on RPC error response', async () => {
+  test("throws on RPC error response", async () => {
     const mockFetch = createMockFetch([]);
     mockFetch.mockImplementationOnce(() => ({
       ok: true,
       status: 200,
       json: async () => ({
-        jsonrpc: '2.0',
+        jsonrpc: "2.0",
         id: 1,
         error: {
           code: -32602,
-          message: 'Invalid params',
-          data: 'Missing contractIds',
+          message: "Invalid params",
+          data: "Missing contractIds",
         },
       }),
     }));
@@ -354,23 +386,30 @@ describe('scripts/audit-event-history.js fetchEvents', () => {
     const mod = require(SCRIPT_PATH);
 
     await expect(
-      mod.fetchEvents('http://rpc.example.com', 'C123', null, { startLedger: 5000 })
-    ).rejects.toThrow('RPC error (-32602): Invalid params');
+      mod.fetchEvents("http://rpc.example.com", "C123", null, {
+        startLedger: 5000,
+      }),
+    ).rejects.toThrow("RPC error (-32602): Invalid params");
   });
 
-  test('includes pagination cursor on subsequent pages', async () => {
+  test("includes pagination cursor on subsequent pages", async () => {
     const mockEvents = Array.from({ length: 250 }, (_, i) => ({
-      contractId: 'C123',
+      contractId: "C123",
       ledger: 6000 + i,
-      type: 'progress_updated',
-      topics: ['progress_updated', 'wallet1'],
+      type: "progress_updated",
+      topics: ["progress_updated", "wallet1"],
       data: { player_id: 1 },
     }));
 
     global.fetch = createMockFetch(mockEvents);
 
     const mod = require(SCRIPT_PATH);
-    const result = await mod.fetchEvents('http://rpc.example.com', 'C123', null, { startLedger: 6000 });
+    const result = await mod.fetchEvents(
+      "http://rpc.example.com",
+      "C123",
+      null,
+      { startLedger: 6000 },
+    );
 
     expect(result.length).toBe(250);
     expect(global.fetch).toHaveBeenCalledTimes(2);
@@ -381,7 +420,7 @@ describe('scripts/audit-event-history.js fetchEvents', () => {
     expect(secondRequest.params.startLedger).toBeUndefined();
   });
 
-  test('falls back to a safe startLedger when RPC info unavailable', async () => {
+  test("falls back to a safe startLedger when RPC info unavailable", async () => {
     // Mock getRpcInfo to return null
     jest.doMock(SCRIPT_PATH, () => {
       const actual = jest.requireActual(SCRIPT_PATH);
@@ -392,10 +431,10 @@ describe('scripts/audit-event-history.js fetchEvents', () => {
     });
 
     const mockEvents = Array.from({ length: 10 }, (_, i) => ({
-      contractId: 'C123',
+      contractId: "C123",
       ledger: 7000 + i,
-      type: 'progress_updated',
-      topics: ['progress_updated', 'wallet1'],
+      type: "progress_updated",
+      topics: ["progress_updated", "wallet1"],
       data: { player_id: 1 },
     }));
 
@@ -405,14 +444,19 @@ describe('scripts/audit-event-history.js fetchEvents', () => {
     jest.resetModules();
     const mod = require(SCRIPT_PATH);
 
-    const result = await mod.fetchEvents('http://rpc.example.com', 'C123', null, { startLedger: null });
+    const result = await mod.fetchEvents(
+      "http://rpc.example.com",
+      "C123",
+      null,
+      { startLedger: null },
+    );
 
     // Should have warned and used fallback
     expect(result.length).toBe(10);
   });
 });
 
-describe('scripts/audit-event-history.js getRpcInfo', () => {
+describe("scripts/audit-event-history.js getRpcInfo", () => {
   let originalFetch;
 
   beforeEach(() => {
@@ -424,14 +468,14 @@ describe('scripts/audit-event-history.js getRpcInfo', () => {
     jest.restoreAllMocks();
   });
 
-  test('returns latestLedger and oldestLedger from RPC responses', async () => {
+  test("returns latestLedger and oldestLedger from RPC responses", async () => {
     global.fetch = createRpcInfoMock({
       latestLedger: 10000,
       retention: 5000,
     });
 
     const mod = require(SCRIPT_PATH);
-    const info = await mod.getRpcInfo('http://rpc.example.com');
+    const info = await mod.getRpcInfo("http://rpc.example.com");
 
     expect(global.fetch).toHaveBeenCalledTimes(2);
     expect(info).toEqual({
@@ -440,26 +484,26 @@ describe('scripts/audit-event-history.js getRpcInfo', () => {
     });
   });
 
-  test('returns null when getHealth fails', async () => {
+  test("returns null when getHealth fails", async () => {
     global.fetch = jest.fn(async () => ({
       ok: false,
       status: 500,
     }));
 
     const mod = require(SCRIPT_PATH);
-    const info = await mod.getRpcInfo('http://rpc.example.com');
+    const info = await mod.getRpcInfo("http://rpc.example.com");
 
     expect(info).toBeNull();
   });
 
-  test('returns partial info when only getLatestLedger fails', async () => {
+  test("returns partial info when only getLatestLedger fails", async () => {
     const healthMock = jest.fn(async () => ({
       ok: true,
       status: 200,
       json: async () => ({
-        jsonrpc: '2.0',
+        jsonrpc: "2.0",
         id: 1,
-        result: { status: 'healthy' },
+        result: { status: "healthy" },
       }),
     }));
 
@@ -470,12 +514,12 @@ describe('scripts/audit-event-history.js getRpcInfo', () => {
 
     global.fetch = jest.fn().mockImplementation((url, opts) => {
       const body = JSON.parse(opts.body);
-      if (body.method === 'getHealth') return healthMock(url, opts);
+      if (body.method === "getHealth") return healthMock(url, opts);
       return latestMock(url, opts);
     });
 
     const mod = require(SCRIPT_PATH);
-    const info = await mod.getRpcInfo('http://rpc.example.com');
+    const info = await mod.getRpcInfo("http://rpc.example.com");
 
     expect(info).toEqual({
       latestLedger: null,
@@ -483,28 +527,33 @@ describe('scripts/audit-event-history.js getRpcInfo', () => {
     });
   });
 
-  test('warns when retention info is missing', async () => {
+  test("warns when retention info is missing", async () => {
     global.fetch = createRpcInfoMock({
       latestLedger: 10000,
       retention: null,
     });
 
-    const mockConsoleWarn = jest.spyOn(console, 'warn').mockImplementation();
+    const mockConsoleWarn = jest.spyOn(console, "warn").mockImplementation();
 
     const mod = require(SCRIPT_PATH);
-    const result = await mod.fetchEvents('http://rpc.example.com', 'C123', null, {});
+    const result = await mod.fetchEvents(
+      "http://rpc.example.com",
+      "C123",
+      null,
+      {},
+    );
 
     // Should use fallback (1000 ledgers back from latest = 9000)
     expect(mockConsoleWarn).toHaveBeenCalledWith(
-      expect.stringContaining('Could not determine RPC event retention'),
-      expect.stringContaining('Starting from ledger')
+      expect.stringContaining("Could not determine RPC event retention"),
+      expect.stringContaining("Starting from ledger"),
     );
 
     mockConsoleWarn.mockRestore();
   });
 });
 
-describe('scripts/audit-event-history.js CLI parsing', () => {
+describe("scripts/audit-event-history.js CLI parsing", () => {
   let originalFetch;
 
   beforeEach(() => {
@@ -515,49 +564,53 @@ describe('scripts/audit-event-history.js CLI parsing', () => {
     global.fetch = originalFetch;
   });
 
-  test('parseArgs handles positional player ID', async () => {
+  test("parseArgs handles positional player ID", async () => {
     const mod = require(SCRIPT_PATH);
-    const args = mod.parseArgs(['audit-event-history.js', '42']);
-    expect(args.playerIdArg).toBe('42');
+    const args = mod.parseArgs(["audit-event-history.js", "42"]);
+    expect(args.playerIdArg).toBe("42");
   });
 
-  test('parseArgs handles --player-id option', async () => {
+  test("parseArgs handles --player-id option", async () => {
     const mod = require(SCRIPT_PATH);
-    const args = mod.parseArgs(['audit-event-history.js', '--player-id', '99']);
-    expect(args.playerIdArg).toBe('99');
+    const args = mod.parseArgs(["audit-event-history.js", "--player-id", "99"]);
+    expect(args.playerIdArg).toBe("99");
   });
 
-  test('parseArgs handles --sample option', async () => {
+  test("parseArgs handles --sample option", async () => {
     const mod = require(SCRIPT_PATH);
-    const args = mod.parseArgs(['audit-event-history.js', '--sample', '10']);
+    const args = mod.parseArgs(["audit-event-history.js", "--sample", "10"]);
     expect(args.sample).toBe(10);
   });
 
-  test('parseArgs handles --json option', async () => {
+  test("parseArgs handles --json option", async () => {
     const mod = require(SCRIPT_PATH);
-    const args = mod.parseArgs(['audit-event-history.js', '--json']);
+    const args = mod.parseArgs(["audit-event-history.js", "--json"]);
     expect(args.json).toBe(true);
   });
 
-  test('parseArgs handles --start-ledger option', async () => {
+  test("parseArgs handles --start-ledger option", async () => {
     const mod = require(SCRIPT_PATH);
-    const args = mod.parseArgs(['audit-event-history.js', '--start-ledger', '5000']);
+    const args = mod.parseArgs([
+      "audit-event-history.js",
+      "--start-ledger",
+      "5000",
+    ]);
     expect(args.startLedger).toBe(5000);
   });
 
-  test('parseArgs combines all options', async () => {
+  test("parseArgs combines all options", async () => {
     const mod = require(SCRIPT_PATH);
     const args = mod.parseArgs([
-      'audit-event-history.js',
-      '--player-id',
-      '5',
-      '--sample',
-      '20',
-      '--json',
-      '--start-ledger',
-      '3000',
+      "audit-event-history.js",
+      "--player-id",
+      "5",
+      "--sample",
+      "20",
+      "--json",
+      "--start-ledger",
+      "3000",
     ]);
-    expect(args.playerIdArg).toBe('5');
+    expect(args.playerIdArg).toBe("5");
     expect(args.sample).toBe(20);
     expect(args.json).toBe(true);
     expect(args.startLedger).toBe(3000);
@@ -565,12 +618,12 @@ describe('scripts/audit-event-history.js CLI parsing', () => {
 
   test('parseArgs handles "all" keyword', async () => {
     const mod = require(SCRIPT_PATH);
-    const args = mod.parseArgs(['audit-event-history.js', 'all']);
-    expect(args.playerIdArg).toBe('all');
+    const args = mod.parseArgs(["audit-event-history.js", "all"]);
+    expect(args.playerIdArg).toBe("all");
   });
 });
 
-describe('scripts/audit-event-history.js requireEnv', () => {
+describe("scripts/audit-event-history.js requireEnv", () => {
   let originalFetch;
 
   beforeEach(() => {
@@ -581,7 +634,7 @@ describe('scripts/audit-event-history.js requireEnv', () => {
     global.fetch = originalFetch;
   });
 
-  test('requireEnv throws when env vars are missing', async () => {
+  test("requireEnv throws when env vars are missing", async () => {
     const mod = require(SCRIPT_PATH);
 
     // Clear any existing env vars
@@ -590,21 +643,21 @@ describe('scripts/audit-event-history.js requireEnv', () => {
     delete process.env.TEST_VAR;
 
     expect(() => {
-      mod.requireEnv(['RPC_URL', 'TEST_VAR']);
-    }).toThrow('Missing required environment variable(s): RPC_URL, TEST_VAR');
+      mod.requireEnv(["RPC_URL", "TEST_VAR"]);
+    }).toThrow("Missing required environment variable(s): RPC_URL, TEST_VAR");
 
     // Restore
     Object.assign(process.env, originalEnv);
   });
 
-  test('requireEnv passes when all vars exist', async () => {
+  test("requireEnv passes when all vars exist", async () => {
     const mod = require(SCRIPT_PATH);
 
-    process.env.RPC_URL = 'test-url';
-    process.env.TEST_VAR = 'test-value';
+    process.env.RPC_URL = "test-url";
+    process.env.TEST_VAR = "test-value";
 
     expect(() => {
-      mod.requireEnv(['RPC_URL', 'TEST_VAR']);
+      mod.requireEnv(["RPC_URL", "TEST_VAR"]);
     }).not.toThrow();
 
     delete process.env.RPC_URL;
@@ -612,7 +665,7 @@ describe('scripts/audit-event-history.js requireEnv', () => {
   });
 });
 
-describe('scripts/audit-event-history.js PlayerHistoryReconstructor', () => {
+describe("scripts/audit-event-history.js PlayerHistoryReconstructor", () => {
   let originalFetch;
 
   beforeEach(() => {
@@ -623,43 +676,61 @@ describe('scripts/audit-event-history.js PlayerHistoryReconstructor', () => {
     global.fetch = originalFetch;
   });
 
-  test('processProgressUpdateEvent validates level transitions', async () => {
+  test("processProgressUpdateEvent validates level transitions", async () => {
     const mod = require(SCRIPT_PATH);
     const reconstructor = new mod.PlayerHistoryReconstructor(1);
 
     // Valid transition: 0 -> 1
     reconstructor.processProgressUpdateEvent({
-      data: { json: JSON.stringify({ player_id: 1, old_level: 'Unverified', new_level: 'VerifiedIdentity' }) },
+      data: {
+        json: JSON.stringify({
+          player_id: 1,
+          old_level: "Unverified",
+          new_level: "VerifiedIdentity",
+        }),
+      },
       ledger: 100,
       ledger_close_time: new Date(100 * 1000).toISOString(),
     });
 
     // Valid transition: 1 -> 2
     reconstructor.processProgressUpdateEvent({
-      data: { json: JSON.stringify({ player_id: 1, old_level: 'VerifiedIdentity', new_level: 'PerformanceMilestones' }) },
+      data: {
+        json: JSON.stringify({
+          player_id: 1,
+          old_level: "VerifiedIdentity",
+          new_level: "PerformanceMilestones",
+        }),
+      },
       ledger: 200,
       ledger_close_time: new Date(200 * 1000).toISOString(),
     });
 
     // Invalid transition: 2 -> 0 (can only reset or advance by 1)
     reconstructor.processProgressUpdateEvent({
-      data: { json: JSON.stringify({ player_id: 1, old_level: 'PerformanceMilestones', new_level: 'Unverified' }) },
+      data: {
+        json: JSON.stringify({
+          player_id: 1,
+          old_level: "PerformanceMilestones",
+          new_level: "Unverified",
+        }),
+      },
       ledger: 300,
       ledger_close_time: new Date(300 * 1000).toISOString(),
     });
 
     const issues = reconstructor.getReconstructedState().issues;
     expect(issues).toHaveLength(1);
-    expect(issues[0].severity).toBe('error');
-    expect(issues[0].category).toBe('progress_update');
+    expect(issues[0].severity).toBe("error");
+    expect(issues[0].category).toBe("progress_update");
   });
 
-  test('processPlayerLevelResetEvent handles resets', async () => {
+  test("processPlayerLevelResetEvent handles resets", async () => {
     const mod = require(SCRIPT_PATH);
     const reconstructor = new mod.PlayerHistoryReconstructor(1);
 
     reconstructor.processPlayerLevelResetEvent({
-      data: { json: JSON.stringify({ player_id: 1, level: 'Unverified' }) },
+      data: { json: JSON.stringify({ player_id: 1, level: "Unverified" }) },
       ledger: 100,
       ledger_close_time: new Date(100 * 1000).toISOString(),
     });

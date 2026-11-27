@@ -99,7 +99,11 @@ describe("normaliseArchiveEvent", () => {
 // ---------------------------------------------------------------------------
 
 describe("RpcEventSource", () => {
-  function makeRpcFetch({ events = [], cursor = null, oldestLedger = null } = {}) {
+  function makeRpcFetch({
+    events = [],
+    cursor = null,
+    oldestLedger = null,
+  } = {}) {
     return jest.fn(async (_url, opts) => {
       const body = JSON.parse(opts.body);
       let result;
@@ -190,7 +194,9 @@ describe("GalexieArchiveEventSource", () => {
         };
       }
       const file = url.split("/").pop();
-      const lines = (recordsByFile[file] || []).map((r) => JSON.stringify(r)).join("\n");
+      const lines = (recordsByFile[file] || [])
+        .map((r) => JSON.stringify(r))
+        .join("\n");
       return { ok: true, text: async () => lines };
     });
   }
@@ -220,7 +226,9 @@ describe("GalexieArchiveEventSource", () => {
     });
     // Only CONTRACT_A events in ledger range 400–1200
     const events = await src.fetch([CONTRACT_A], 400, 1200);
-    expect(events.map((e) => e.ledger).sort((a, b) => a - b)).toEqual([500, 1100]);
+    expect(events.map((e) => e.ledger).sort((a, b) => a - b)).toEqual([
+      500, 1100,
+    ]);
     expect(events.every((e) => e.contractId === CONTRACT_A)).toBe(true);
   });
 
@@ -302,7 +310,9 @@ describe("checkRangeCoverage", () => {
 
 describe("createEventSource", () => {
   test("throws when rpcUrl is absent", () => {
-    expect(() => createEventSource({ rpcUrl: undefined })).toThrow("rpcUrl is required");
+    expect(() => createEventSource({ rpcUrl: undefined })).toThrow(
+      "rpcUrl is required",
+    );
   });
 
   test("returns rpc source and null archival when no archive URL is set", () => {
