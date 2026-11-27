@@ -681,69 +681,6 @@ impl ScoutAccessContract {
         Ok(())
     }
 
-    /// Erase all personal data held for a player (GDPR "right to erasure").
-    ///
-    /// ## Guard policy (issue #1823)
-    ///
-    /// Erasure is a compliance operation, not user activity, so it is
-    /// **allowed while the contract is paused** — an incident pause is exactly
-    /// when an operator may be told to stop processing personal data. The
-    /// guard set and order is identical across all three contracts that hold
-    /// player data (`scout_access`, `progress`, `verification`):
-    ///
-    /// 1. `require_admin`
-    /// 2. `require_initialized`
-    /// 3. `bump_instance_ttl`
-    ///
-    /// This is an intentional exception to the project's
-    /// `require_not_paused → require_initialized` ordering convention; see
-    /// `scripts/check-guard-ordering.sh` and `docs/PLAYER_ERASURE.md`.
-    ///
-    /// ## Cursor arithmetic (issue #1825)
-    ///
-    /// `cursor` is caller-supplied and the workspace builds with
-    /// `overflow-checks = true`, so all cursor arithmetic is saturating and an
-    /// out-of-range cursor returns `InvalidInput` rather than trapping.
-    pub fn purge_player_data(
-        env: Env,
-        player_id: u64,
-        cursor: u32,
-    ) -> Result<u32, ScoutAccessError> {
-        let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
-        Self::require_initialized(&env)?;
-        Self::bump_instance_ttl(&env);
-
-        // Reject cursors past the end of the data set up front so the paging
-        // arithmetic below can never overflow.
-        let trial_count: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::TrialOfferCount(player_id))
-            .unwrap_or(0);
-        if cursor > trial_count {
-            return Err(ScoutAccessError::InvalidInput);
-        }
-
-        let start = cursor.saturating_add(1);
-        let end = start.saturating_add(PAGE_SIZE).min(trial_count);
-
-        let mut purged: u32 = 0;
-        let mut i = start;
-        while i <= end {
-            let key = DataKey::TrialOffer(player_id, i);
-            if env.storage().persistent().has(&key) {
-                env.storage().persistent().remove(&key);
-                purged = purged.saturating_add(1);
-            }
-            i = i.saturating_add(1);
-        }
-
-        // Contact records are keyed by scout, not by player, so they are not
-        // part of the player-scoped erasure sweep here.
-        events::player_data_purged(&env, &admin, player_id, cursor, purged);
-        Ok(end)
-    }
-
     /// Upgrade the contract WASM. Admin auth required.
     /// Persistent storage (including Admin) survives this call.
     pub fn upgrade(

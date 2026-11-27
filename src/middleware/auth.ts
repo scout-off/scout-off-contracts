@@ -178,11 +178,6 @@ export async function requireAuth(
       return;
     }
 
-    if (payload.role === UNKNOWN_ROLE && !allowUnknown) {
-      res.status(403).json({ error: "Forbidden - wallet not registered" });
-      return;
-    }
-
     req.user = {
       sub: payload.sub,
       role: payload.role,

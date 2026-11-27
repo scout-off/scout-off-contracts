@@ -93,64 +93,6 @@ describe("requireAuth unknown-role policy", () => {
   });
 });
 
-describe("requireAuth unknown-role policy", () => {
-  const buildApp = (allowUnknown: boolean) => {
-    const testApp = express();
-    testApp.get(
-      "/protected",
-      requireAuth({ allowUnknown }),
-      (req, res) => {
-        res.json({ ok: true, role: req.user?.role });
-      }
-    );
-    return testApp;
-  };
-
-  it("rejects unknown-role tokens by default with 403 not_registered", async () => {
-    const token = issueSep10Token(
-      { sub: "unregistered-wallet", role: "unknown" },
-      TEST_SECRET
-    );
-
-    const response = await request(buildApp(false))
-      .get("/protected")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(403);
-
-    expect(response.body).toEqual(
-      expect.objectContaining({ error: "not_registered" })
-    );
-  });
-
-  it("accepts unknown-role tokens when allowUnknown is true", async () => {
-    const token = issueSep10Token(
-      { sub: "unregistered-wallet", role: "unknown" },
-      TEST_SECRET
-    );
-
-    const response = await request(buildApp(true))
-      .get("/protected")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-
-    expect(response.body).toEqual({ ok: true, role: "unknown" });
-  });
-
-  it("still accepts registered roles on default routes", async () => {
-    const token = issueSep10Token(
-      { sub: "player1", role: "player" },
-      TEST_SECRET
-    );
-
-    const response = await request(buildApp(false))
-      .get("/protected")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-
-    expect(response.body).toEqual({ ok: true, role: "player" });
-  });
-});
-
 describe("Token revocation through real SEP-10 flow", () => {
   it("should include jti claim in JWT issued through sep10 signing path", async () => {
     const token = await issueSep10Token(

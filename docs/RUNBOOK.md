@@ -187,17 +187,6 @@ identical on all three contracts — `require_admin` → `require_initialized` �
 so erasure is still admin-only and still fails on an uninitialised contract.
 See [PLAYER_ERASURE.md](PLAYER_ERASURE.md) for the full procedure.
 
-### Player erasure while paused
-
-`purge_player_data` on **all three** contracts (`scout_access`,
-`progress`, `verification`) is an intentional exception to the pause: it
-remains callable while a contract is paused, because erasure is a compliance
-operation (it deletes state and moves no funds) and operators may be required
-to honour erasure requests precisely during an incident. The guard set is
-identical on all three contracts — `require_admin` → `require_initialized` —
-so erasure is still admin-only and still fails on an uninitialised contract.
-See [PLAYER_ERASURE.md](PLAYER_ERASURE.md) for the full procedure.
-
 ## Function-Scoped Circuit Breakers
 
 ### When to Use `pause_approve_milestone` Instead of `pause_contract`
