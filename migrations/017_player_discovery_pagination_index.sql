@@ -1,4 +1,4 @@
--- migrations/015_player_discovery_pagination_index.sql
+-- migrations/017_player_discovery_pagination_index.sql
 -- Adds a composite index on (level DESC, player_id ASC) to support
 -- efficient keyset pagination for the player discovery API.
 --
