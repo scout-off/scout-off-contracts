@@ -5634,7 +5634,6 @@ mod tests {
             &3u64,
             &String::from_str(&env, "QmPK3s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB"),
         );
-    }
 
         // Advance past the 1h window for offers 1 & 2 (3_700s old) but not
         // for offer 3 (only 1_900s old).
@@ -6027,80 +6026,6 @@ mod tests {
         );
     }
 
-    // -------------------------------------------------------------------------
-    // Integration test: log_trial_offer advances player to EliteTier via the
-    // real progress contract cross-contract call.
-    // -------------------------------------------------------------------------
-
-    #[test]
-    fn test_log_trial_offer_advances_player_to_elite_tier() {
-        use scoutchain_progress::ProgressContract;
-        use scoutchain_progress::ProgressContractClient;
-        use scoutchain_shared_types::ProgressLevel;
-        use scoutchain_verification::VerificationContract;
-        use scoutchain_verification::VerificationContractClient;
-
-        let env = Env::default();
-        env.mock_all_auths();
-
-        // --- deploy verification contract ---
-        let ver_admin = Address::generate(&env);
-        let ver_id = env.register(VerificationContract, (ver_admin.clone(),));
-        let ver_client = VerificationContractClient::new(&env, &ver_id);
-        ver_client.set_registration_contract(
-            &scoutchain_shared_types::testutils::active_registry_stub(&env),
-        );
-
-        // --- deploy progress contract ---
-        let progress_admin = Address::generate(&env);
-        let progress_id = env.register(ProgressContract, (progress_admin.clone(),));
-        let progress_client = ProgressContractClient::new(&env, &progress_id);
-        progress_client.set_verification_contract(&ver_id);
-        progress_client.set_registration_contract(&env.register(LevelSyncStub, ()));
-
-        // --- deploy scout_access contract ---
-        let admin = Address::generate(&env);
-        let xlm = create_token(&env, &admin);
-        let scout_access_id = env.register(
-            ScoutAccessContract,
-            (admin.clone(), xlm.clone(), default_fees()),
-        );
-        let client = ScoutAccessContractClient::new(&env, &scout_access_id);
-        client.set_registration_contract(&env.register(RegistrationStub, ()));
-
-        // Wire scout_access → progress
-        client.set_progress_contract(&progress_id);
-        // Whitelist scout_access as the secondary caller of advance_level.
-        progress_client.set_scout_access_contract(&scout_access_id);
-
-        // Pre-advance the player to PerformanceMilestones (Level 2) via the
-        // verification contract (the whitelisted primary caller) so that
-        // log_trial_offer can push them to EliteTier (Level 3).
-        let player_id = 1u64;
-        progress_client.advance_level(&ver_id, &player_id, &1u32); // → VerifiedIdentity
-        progress_client.advance_level(&ver_id, &player_id, &2u32); // → PerformanceMilestones
-        assert_eq!(
-            progress_client.get_level(&player_id),
-            ProgressLevel::PerformanceMilestones
-        );
-
-        // Register a milestone so the trial-offer's milestone_ref (index 1)
-        // validates against the verification contract's milestone count.
-        let validator = Address::generate(&env);
-        ver_client.register_validator(
-            &validator,
-            &String::from_str(&env, "UEFA-B-License"),
-            &String::from_str(&env, "Default Academy"),
-            &Vec::new(&env),
-        );
-        ver_client.approve_milestone(
-            &validator,
-            &player_id,
-            &String::from_str(&env, "scored"),
-            &String::from_str(&env, "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB"),
-            &None,
-        );
-
     #[test]
     fn test_full_scout_workflow() {
         let (env, admin, xlm, _contract_id, client) = setup();
@@ -6111,6 +6036,7 @@ mod tests {
         let fees = default_fees();
 
         mint_token(&env, &xlm, &admin, &scout, 100_000_000);
+
         client.subscribe(&scout, &SubscriptionTier::Elite);
         client.pay_to_contact(&scout, &player_id);
         client.log_trial_offer(&scout, &player_id, &details_hash);
@@ -6156,10 +6082,6 @@ mod tests {
         let result = client.try_withdraw_fees(&recipient);
         assert_eq!(result, Err(Ok(ScoutAccessError::NoFeesToWithdraw)));
     }
-
-    // -------------------------------------------------------------------------
-    // #1460: ContactCount key is TTL-managed and exposed via get_contact_count
-    // -------------------------------------------------------------------------
 
     #[test]
     fn test_fee_accumulation_overflow() {
@@ -6412,10 +6334,6 @@ mod tests {
         let result = ScoutAccessContract::validate_fee_config(&bad_fees);
         assert_eq!(result, Err(ScoutAccessError::InvalidInput));
     }
-
-    // -------------------------------------------------------------------------
-    // #454: Missing XlmToken key returns typed NotInitialized error
-    // -------------------------------------------------------------------------
 
     #[test]
     fn test_update_fee_config_zero_trial_escrow_disables_trial_offers() {
@@ -6691,7 +6609,6 @@ mod tests {
     fn test_refund_subscription_success() {
         let (env, admin, xlm, _contract_id, client) = setup();
         let scout = Address::generate(&env);
-        let player_id = 1u64;
         mint_token(&env, &xlm, &admin, &scout, 100_000_000);
 
         client.subscribe(&scout, &SubscriptionTier::Elite);
@@ -6925,22 +6842,6 @@ mod tests {
     // real progress contract cross-contract call.
     // -------------------------------------------------------------------------
 
-    // =========================================================================
-    // Check-precedence tests
-    //
-    // Each test sets up a scenario where TWO OR MORE error conditions are
-    // simultaneously true and asserts the *specific* error that the documented
-    // check-precedence order requires.  These tests are the executable
-    // contract for the numbered tables in docs/CONTRACT_REFERENCE.md.
-    // =========================================================================
-
-    // -------------------------------------------------------------------------
-    // subscribe — precedence tests
-    // -------------------------------------------------------------------------
-
-    /// ContractPaused beats NotInitialized (Priority 1 > Priority 2).
-    /// When the contract is paused the caller should see ContractPaused even if
-    /// the contract has also somehow lost its Initialized flag.
     #[test]
     fn test_log_trial_offer_advances_player_to_elite_tier() {
         use scoutchain_progress::ProgressContract;
@@ -7057,15 +6958,6 @@ mod tests {
         assert_eq!(client.get_contact_count(&scout), 2);
     }
 
-    // -------------------------------------------------------------------------
-    // #245 — Subscription downgrade guard edge cases
-    // -------------------------------------------------------------------------
-
-    /// A first-time subscriber with no prior subscription record must never
-    /// encounter the downgrade guard. The guard only activates when an
-    /// existing subscription is found in persistent storage. A new scout
-    /// subscribing to Basic, Pro, or Elite must always succeed regardless of
-    /// tier rank.
     #[test]
     fn test_get_contact_count_zero_for_new_scout() {
         let (env, _admin, _xlm, _contract_id, client) = setup();
@@ -7208,10 +7100,6 @@ mod tests {
         assert_eq!(result, Err(Ok(ScoutAccessError::TrialOfferRateLimited)));
     }
 
-    /// Verify that tier_rank comparison is ordinal, not name-based. Pro has
-    /// rank 2 and Basic has rank 1, so Pro→Basic is a downgrade (rank 2 > 1).
-    /// This test makes the rank ordering explicit and guards against any future
-    /// refactoring that reorders the SubscriptionTier enum variants.
     #[test]
     fn test_trial_offer_allowed_after_cooldown_expires() {
         let (env, admin, xlm, _contract_id, client) = setup();
@@ -7239,7 +7127,6 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    /// ContractPaused beats SubscriptionExpired (Priority 1 > Priority 5).
     #[test]
     fn test_trial_offer_to_different_player_not_rate_limited() {
         let (env, admin, xlm, _contract_id, client) = setup();
@@ -7294,10 +7181,6 @@ mod tests {
         assert_eq!(client.get_trial_count(&player_id), 0);
     }
 
-    /// SubscriptionExpired beats AlreadyContacted (Priority 5 > Priority 6).
-    /// When the subscription is expired AND a ContactRecord already exists, the
-    /// caller must see SubscriptionExpired — the expiry check runs before the
-    /// duplicate-contact guard in the source.
     #[test]
     fn test_log_trial_offer_succeeds_after_unpause() {
         let (env, admin, xlm, _contract_id, client) = setup();
@@ -7337,7 +7220,6 @@ mod tests {
     // #462: subscription_created / subscription_renewed events
     // -------------------------------------------------------------------------
 
-    /// ContractPaused beats ScoutNotSubscribed (Priority 1 > Priority 4).
     #[test]
     fn test_subscription_created_event_emitted_on_first_subscribe() {
         let (env, admin, xlm, contract_id, client) = setup();
@@ -7727,8 +7609,6 @@ mod tests {
             Err(Ok(ScoutAccessError::SubscriptionDowngradeNotAllowed)),
             "Pro(rank=2) → Basic(rank=1) must be blocked while the Pro subscription is active"
         );
-        // Priority 6: Unauthorized (not contacted player 2) wins.
-        assert_eq!(result, Err(Ok(ScoutAccessError::Unauthorized)));
     }
 
     // -------------------------------------------------------------------------
@@ -7923,7 +7803,7 @@ mod tests {
     fn test_log_trial_offer_paused_beats_invalid_input() {
         let (env, admin, xlm, _contract_id, client) = setup();
         let scout = Address::generate(&env);
-        mint_token(&env, &xlm, &_admin, &scout, 10_000_000);
+        mint_token(&env, &xlm, &admin, &scout, 100_000_000);
 
         client.subscribe(&scout, &SubscriptionTier::Elite);
         client.pause_contract();
@@ -7989,7 +7869,7 @@ mod tests {
     fn test_log_trial_offer_invalid_input_beats_unauthorized_tier() {
         let (env, admin, xlm, _contract_id, client) = setup();
         let scout = Address::generate(&env);
-        mint_token(&env, &xlm, &_admin, &scout, 100_000_000);
+        mint_token(&env, &xlm, &admin, &scout, 100_000_000);
 
         client.subscribe(&scout, &SubscriptionTier::Pro);
         // Pro tier (non-Elite) — Unauthorized also true.
@@ -8058,11 +7938,8 @@ mod tests {
     fn test_log_trial_offer_not_contacted_beats_rate_limited() {
         let (env, admin, xlm, _contract_id, client) = setup();
         let scout = Address::generate(&env);
-        mint_token(&env, &xlm, &_admin, &scout, 100_000_000);
+        mint_token(&env, &xlm, &admin, &scout, 100_000_000);
 
-        let sub_duration: u64 = 30 * 24 * 60 * 60;
-
-        env.ledger().with_mut(|l| l.timestamp = 1_000_000);
         client.subscribe(&scout, &SubscriptionTier::Elite);
         // Contact and offer player 1 (rate-limit is now in effect for player 1).
         client.pay_to_contact(&scout, &1u64);
@@ -8406,23 +8283,6 @@ mod tests {
         assert_eq!(after.expires_at, expected_expiry);
     }
 
-    /// Regression test for the TrialEscrow TTL bug.
-    ///
-    /// Before the fix, `log_trial_offer` wrote `DataKey::TrialEscrow` via
-    /// `.set()` but never called `extend_ttl` on it, leaving it with Soroban's
-    /// default minimal persistent TTL (~4,096 ledgers ≈ 5.7 hours). This is
-    /// shorter than `trial_offer_expiry_secs` (1 hour in the test default
-    /// config), but more importantly it is shorter than the platform's 30-day
-    /// activity cycle, meaning the record could be silently archived before
-    /// either `confirm_trial_offer` or `expire_trial_offers` ran — locking
-    /// the escrowed XLM with no normal read path to resolve it.
-    ///
-    /// After the fix, `log_trial_offer` extends the TTL to `TRIAL_TTL_EXTEND_TO`
-    /// (518,400 ledgers ≈ 30 days), well beyond the default. This test:
-    /// 1. Calls `log_trial_offer` and asserts the TTL is immediately set to the
-    ///    full policy value (> 5,000 ledgers, far above any reasonable default).
-    /// 2. Advances the ledger sequence past the old default TTL (~4,096 ledgers)
-    ///    and asserts the `TrialEscrow` entry is still present (not archived).
     #[test]
     fn test_renew_if_due_fails_when_not_enabled() {
         let (env, _admin, xlm, _contract_id, client) = setup();
