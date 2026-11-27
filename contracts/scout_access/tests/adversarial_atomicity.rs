@@ -27,6 +27,8 @@
 //!
 //! See: ai.md §"Error Handling — ProgressCallFailed"
 
+mod common;
+
 use scoutchain_progress::{ProgressContract, ProgressContractClient};
 use scoutchain_scout_access::{
     FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
@@ -72,22 +74,27 @@ fn setup_full() -> Harness {
 
     let admin = Address::generate(&env);
 
-    let ver_id = env.register(VerificationContract, ());
+    let ver_id = env.register(VerificationContract, (admin.clone(),));
     let verification = VerificationContractClient::new(&env, &ver_id);
-    verification.initialize(&admin);
+    verification.set_registration_contract(
+        &scoutchain_shared_types::testutils::active_registry_stub(&env),
+    );
 
-    let progress_id = env.register(ProgressContract, ());
+    let progress_id = env.register(ProgressContract, (admin.clone(),));
     let progress = ProgressContractClient::new(&env, &progress_id);
-    progress.initialize(&admin);
+    common::wire_registration(&env, None, Some(&progress));
     progress.set_verification_contract(&ver_id);
 
     let xlm = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    let sa_id = env.register(ScoutAccessContract, ());
+    let sa_id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
     let scout_access = ScoutAccessContractClient::new(&env, &sa_id);
-    scout_access.initialize(&admin, &xlm, &default_fees());
+    common::wire_registration(&env, Some(&scout_access), None);
     scout_access.set_progress_contract(&progress_id);
     progress.set_scout_access_contract(&sa_id);
 
@@ -109,26 +116,31 @@ fn setup_bad_progress_for_scout_access() -> Harness {
 
     let admin = Address::generate(&env);
 
-    let ver_id = env.register(VerificationContract, ());
+    let ver_id = env.register(VerificationContract, (admin.clone(),));
     let verification = VerificationContractClient::new(&env, &ver_id);
-    verification.initialize(&admin);
+    verification.set_registration_contract(
+        &scoutchain_shared_types::testutils::active_registry_stub(&env),
+    );
 
     // Real progress contract for verification (approve_milestone needs it).
-    let progress_id = env.register(ProgressContract, ());
+    let progress_id = env.register(ProgressContract, (admin.clone(),));
     let progress = ProgressContractClient::new(&env, &progress_id);
-    progress.initialize(&admin);
+    common::wire_registration(&env, None, Some(&progress));
     progress.set_verification_contract(&ver_id);
 
     let xlm = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    let sa_id = env.register(ScoutAccessContract, ());
+    let sa_id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
     let scout_access = ScoutAccessContractClient::new(&env, &sa_id);
-    scout_access.initialize(&admin, &xlm, &default_fees());
+    common::wire_registration(&env, Some(&scout_access), None);
 
     // Point scout_access at a GARBAGE address — confirm_trial_offer will fail.
-    let bad_progress = Address::generate(&env);
+    let bad_progress = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
     scout_access.set_progress_contract(&bad_progress);
 
     // (Do NOT whitelist sa_id in progress — it uses a bad address anyway.)
@@ -282,7 +294,7 @@ fn test_confirm_trial_offer_bad_progress_returns_progress_call_failed() {
 /// is removed on the first confirmation, so the second call finds no escrow
 /// and rejects immediately — preventing double-advancement.
 #[test]
-fn test_double_confirm_trial_offer_is_blocked() {
+fn test_double_confirm_trial_offer_is_idempotent_no_op() {
     let h = setup_full();
     let player_id: u64 = 3;
     let scout = Address::generate(&h.env);
@@ -307,25 +319,22 @@ fn test_double_confirm_trial_offer_is_blocked() {
         .confirm_trial_offer(&player_wallet, &player_id, &trial_index, &None);
     assert_eq!(h.progress.get_level(&player_id), ProgressLevel::EliteTier);
 
-    // Second confirm — must be rejected.
+    // Second confirm — an idempotent no-op since the confirmation marker is
+    // set: it succeeds without releasing escrow or advancing again.
     let result =
         h.scout_access
             .try_confirm_trial_offer(&player_wallet, &player_id, &trial_index, &None);
-    assert!(
-        matches!(
-            result,
-            Err(Ok(
-                scoutchain_scout_access::ScoutAccessError::TrialOfferAlreadyConfirmed
-            ))
-        ),
-        "second confirm_trial_offer must return TrialOfferAlreadyConfirmed: {result:?}"
+    assert_eq!(
+        result,
+        Ok(Ok(())),
+        "second confirm_trial_offer must be an idempotent no-op: {result:?}"
     );
 
     // Level must remain EliteTier — no regression.
     assert_eq!(
         h.progress.get_level(&player_id),
         ProgressLevel::EliteTier,
-        "player level must remain EliteTier after double-confirm rejection"
+        "player level must remain EliteTier after the repeated confirm"
     );
 }
 

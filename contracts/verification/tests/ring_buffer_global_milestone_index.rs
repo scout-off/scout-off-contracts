@@ -50,10 +50,12 @@ const POOL_SIZE: u64 = 90;
 fn setup() -> (Env, VerificationContractClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
-    let id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &id);
+    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(
+        &env,
+    ));
     (env, client)
 }
 
@@ -170,10 +172,12 @@ fn cost_global_milestone_index_write_is_flat() {
     fn measure_at_fill(fill_count: u64) -> u64 {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register(VerificationContract, ());
-        let client = VerificationContractClient::new(&env, &id);
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let id = env.register(VerificationContract, (admin.clone(),));
+        let client = VerificationContractClient::new(&env, &id);
+        client.set_registration_contract(
+            &scoutchain_shared_types::testutils::active_registry_stub(&env),
+        );
 
         // Build the validator pool and fill the ring buffer.
         let pool = build_pool(&env, &client);

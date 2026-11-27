@@ -60,6 +60,21 @@ pub enum ScoutChainError {
     /// `restore_scout_record` targeted a scout entry that has been fully
     /// evicted and is unrecoverable.
     ScoutRecordEvicted = 18,
+
+    // ── Cooldown config ──
+    /// Cooldown value exceeds the maximum allowed (7 days).
+    InvalidCooldown = 19,
+
+    // ── Scout cap (issue #1641) ──
+    /// `register_scout` / `admin_seed_scout` would exceed `MAX_SCOUTS` live scouts.
+    ScoutCapReached = 20,
+    /// Wiring target failed the `contract_kind`/`version` handshake (#1610).
+    InvalidPeerContract = 21,
+
+    // ── Player erasure tombstone ──
+    /// The player has been erased via `deregister_player`; all player-scoped
+    /// writes are permanently blocked for this player_id.
+    PlayerErased = 22,
 }
 
 impl AdminError for ScoutChainError {
@@ -91,6 +106,10 @@ mod tests {
         ("RegistrationCooldown", 16),
         ("PlayerRecordEvicted", 17),
         ("ScoutRecordEvicted", 18),
+        ("InvalidCooldown", 19),
+        ("ScoutCapReached", 20),
+        ("InvalidPeerContract", 21),
+        ("PlayerErased", 22),
     ];
 
     #[test]
@@ -113,6 +132,9 @@ mod tests {
         assert_eq!(ScoutChainError::RegistrationCooldown as u32, 16);
         assert_eq!(ScoutChainError::PlayerRecordEvicted as u32, 17);
         assert_eq!(ScoutChainError::ScoutRecordEvicted as u32, 18);
+        assert_eq!(ScoutChainError::ScoutCapReached as u32, 20);
+        assert_eq!(ScoutChainError::InvalidPeerContract as u32, 21);
+        assert_eq!(ScoutChainError::PlayerErased as u32, 22);
     }
 
     /// The two variants this file previously conflated.

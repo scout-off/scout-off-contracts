@@ -5,11 +5,12 @@
 -- A row here is an append-only fact ("this scout was granted access to this
 -- player's confidential evidence at this time, at this tier"), not a live
 -- entitlement. `revoked` / `revoked_at` are only ever set by
--- scout_access.admin_revoke_evidence_access — never by subscription
--- downgrade or expiry reconciliation, matching the on-chain design. See
--- docs/EVIDENCE_PRIVACY.md — "Grant lifecycle" for why revocation here only
--- gates *future* key-wrap requests and cannot claw back an already-delivered
--- wrapped key.
+-- scout_access.admin_revoke_evidence_access (admin) or
+-- scout_access.revoke_evidence_access (player-initiated) — never by
+-- subscription downgrade or expiry reconciliation, matching the on-chain
+-- design. See docs/EVIDENCE_PRIVACY.md — "Grant lifecycle" for why revocation
+-- here only gates *future* key-wrap requests and cannot claw back an
+-- already-delivered wrapped key.
 --
 -- Safe to re-run: CREATE TABLE IF NOT EXISTS is idempotent.
 
@@ -20,11 +21,16 @@ CREATE TABLE IF NOT EXISTS evidence_access_grants (
     -- Ledger timestamp (Unix seconds) the grant was issued at, from the
     -- evidence_access_granted event / EvidenceAccessGrant.granted_at.
     granted_at      BIGINT       NOT NULL,
+    -- Ledger timestamp (Unix seconds) at which the grant expires and is no
+    -- longer considered active (granted_at + 90 days). Mirrors
+    -- EvidenceAccessGrant.expires_at added in #1380.
+    expires_at      BIGINT       NOT NULL,
     -- The scout's subscription tier at the moment of grant issuance.
     -- Recorded for audit purposes only; not re-checked afterward.
     tier_at_grant   VARCHAR(16)  NOT NULL CHECK (tier_at_grant IN ('Basic', 'Pro', 'Elite')),
     revoked         BOOLEAN      NOT NULL DEFAULT FALSE,
-    -- Ledger timestamp (Unix seconds) of admin_revoke_evidence_access, if any.
+    -- Ledger timestamp (Unix seconds) of admin_revoke_evidence_access or
+    -- revoke_evidence_access (player-initiated), if any.
     revoked_at      BIGINT,
     created_db_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     UNIQUE (player_id, scout)

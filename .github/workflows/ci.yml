@@ -7,23 +7,180 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  pr-checklist:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Require every PR template checklist item in the description
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          missing=0
+          while IFS= read -r item; do
+            if ! printf '%s\n' "$PR_BODY" | grep -qiF -- "- [ ] $item" \
+              && ! printf '%s\n' "$PR_BODY" | grep -qiF -- "- [x] $item"; then
+              echo "ERROR: PR description is missing checklist item: $item"
+              missing=1
+            fi
+          done < <(sed -n 's/^- \[ \] //p' .github/pull_request_template.md)
+          exit "$missing"
+
   check-todos:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Block TODO/FIXME/HACK markers in contract source
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Block TODO/FIXME/HACK markers in contract, script and backend source
         run: |
           # The pattern uses grouping `(...)` and alternation `|`, which are
           # extended-regex constructs. grep treats them as literal characters
           # in basic mode, so without `-E` this gate would silently never match
           # a TODO/FIXME/HACK/XXX marker and let them merge to main undetected.
-          if grep -rInE '\b(TODO|FIXME|HACK|XXX)\b' contracts/ --include='*.rs'; then
-            echo "ERROR: TODO/FIXME/HACK/XXX markers found in contract source."
+          # Scripts, backend sources and workflows are scanned too: several are
+          # deployment-critical (deploy, upgrade, rollback). This workflow file is
+          # excluded because it necessarily names the markers it searches for.
+          if grep -rInE '\b(TODO|FIXME|HACK|XXX)\b' contracts/ --include='*.rs' \
+            || grep -rInE '\b(TODO|FIXME|HACK|XXX)\b' scripts/ src/ testnet/ .github/ \
+              --include='*.sh' --include='*.py' --include='*.js' --include='*.mjs' \
+              --include='*.ts' --include='*.yml' --include='*.yaml' \
+              --exclude='ci.yml' --exclude-dir=node_modules; then
+            echo "ERROR: TODO/FIXME/HACK/XXX markers found in source."
             echo "Resolve them or remove them before merging."
             exit 1
           fi
           echo "No TODO/FIXME/HACK/XXX markers found."
       - name: Check database migration numbering
         run: bash scripts/check-migration-numbering.sh
+
+  prisma-drift:
+    name: Prisma schema drift
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: scoutchain
+          POSTGRES_PASSWORD: scoutchain
+          POSTGRES_DB: scoutchain_drift
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://scoutchain:scoutchain@localhost:5432/scoutchain_drift
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "20"
+          cache: "npm"
+          # Only package.json is tracked (see .gitignore); dependencies are
+          # pinned to exact versions there.
+          cache-dependency-path: package.json
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Check Prisma schema against SQL migrations
+        run: bash scripts/check-prisma-drift.sh
+
+  backend:
+    name: Backend — lint, typecheck, test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: scoutchain
+          POSTGRES_PASSWORD: scoutchain
+          POSTGRES_DB: scoutchain_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://scoutchain:scoutchain@localhost:5432/scoutchain_test
+      JWT_SECRET: ci-test-secret-do-not-use-in-production
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: "npm"
+          # Only package.json is tracked (see .gitignore); dependencies are
+          # pinned to exact versions there.
+          cache-dependency-path: package.json
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Apply SQL migrations to test DB
+        run: bash scripts/test-migrate-db.sh
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Build and verify start path
+        run: |
+          npm run build
+          test -f dist/server.js
+          node -e "require('./dist/server.js')"
+
+      - name: Run tests
+        run: npm test
+
+  check-node-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '20'
+      - name: Syntax-check Node scripts
+        run: |
+          # `node --check` alone cannot catch structural breakage such as
+          # functions accidentally nested inside another function (issue #1648),
+          # so the Jest smoke test below exercises main() at runtime.
+          for f in scripts/*.js; do
+            node --check "$f"
+          done
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Check formatting
+        run: npm run format:check
+      - name: Run reconcile-indexer smoke test
+        run: npx jest scripts/__tests__/reconcile-indexer.test.js --roots='<rootDir>/scripts'

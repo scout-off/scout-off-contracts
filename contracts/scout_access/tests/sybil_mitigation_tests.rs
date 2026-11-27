@@ -9,12 +9,12 @@
 
 use scoutchain_registration::{RegistrationContract, RegistrationContractClient};
 use scoutchain_scout_access::{
-    FeeConfig, ScoutAccessContract, ScoutAccessContractClient, SubscriptionTier,
+    FeeConfig, ScoutAccessContract, ScoutAccessContractClient, ScoutAccessError, SubscriptionTier,
 };
 use soroban_sdk::{
-    testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke},
+    testutils::{Address as _, Ledger},
     token::StellarAssetClient,
-    Address, Env, IntoVal, String,
+    Address, Env, String,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -64,20 +64,20 @@ fn setup() -> Harness {
     token_client.mint(&scout2, &1_000_000_000);
 
     // Deploy registration contract
-    let reg_id = env.register(RegistrationContract, ());
+    let reg_id = env.register(RegistrationContract, (admin.clone(),));
     let registration_client = RegistrationContractClient::new(&env, &reg_id);
-    registration_client.initialize(&admin);
 
     // Register scouts in registration contract
-    let _scout1_id =
-        registration_client.register_scout(&scout1, &String::from_str(&env, "North America"));
+    let _scout1_id = registration_client.register_scout(&scout1, &String::from_str(&env, "US"));
 
-    let _scout2_id = registration_client.register_scout(&scout2, &String::from_str(&env, "Europe"));
+    let _scout2_id = registration_client.register_scout(&scout2, &String::from_str(&env, "FR"));
 
     // Deploy scout_access contract
-    let sa_id = env.register(ScoutAccessContract, ());
+    let sa_id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
     let scout_access_client = ScoutAccessContractClient::new(&env, &sa_id);
-    scout_access_client.initialize(&admin, &xlm, &default_fees());
 
     // Wire registration contract into scout_access
     scout_access_client.set_registration_contract(&reg_id);
@@ -171,12 +171,14 @@ fn test_unverified_scout_can_subscribe_basic() {
 }
 
 #[test]
-fn test_unverified_scout_can_subscribe_elite() {
+fn test_unverified_scout_cannot_subscribe_elite() {
     let h = setup();
 
-    // Elite tier should work for unverified scouts (no gating on Elite)
-    h.scout_access_client
-        .subscribe(&h.scout1, &SubscriptionTier::Elite);
+    // Since #1417 Elite is gated like Pro: unverified scouts are rejected.
+    let result = h
+        .scout_access_client
+        .try_subscribe(&h.scout1, &SubscriptionTier::Elite);
+    assert_eq!(result, Err(Ok(ScoutAccessError::ScoutNotVerified)));
 }
 
 #[test]
@@ -203,9 +205,11 @@ fn test_multiple_scouts_independent_verification() {
         "unverified scout2 should not subscribe to Pro"
     );
 
-    // scout2 can still get Elite
-    h.scout_access_client
-        .subscribe(&h.scout2, &SubscriptionTier::Elite);
+    // scout2 cannot get Elite either (#1417)
+    let result = h
+        .scout_access_client
+        .try_subscribe(&h.scout2, &SubscriptionTier::Elite);
+    assert_eq!(result, Err(Ok(ScoutAccessError::ScoutNotVerified)));
 }
 
 #[test]
@@ -241,31 +245,17 @@ fn test_set_registration_contract_requires_admin() {
     let env = Env::default();
     env.ledger().with_mut(|l| l.timestamp = 1_000_000);
     let admin = Address::generate(&env);
-    let contract_id = env.register(ScoutAccessContract, ());
-    let client = ScoutAccessContractClient::new(&env, &contract_id);
     let xlm = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
-    // Mock ONLY the admin's initialize auth; set_registration_contract's
-    // require_admin check then fails for any unauthenticated caller.
-    env.mock_auths(&[MockAuth {
-        address: &admin,
-        invoke: &MockAuthInvoke {
-            contract: &contract_id,
-            fn_name: "initialize",
-            args: soroban_sdk::vec![
-                &env,
-                admin.to_val(),
-                xlm.to_val(),
-                default_fees().into_val(&env)
-            ],
-            sub_invokes: &[],
-        },
-    }]);
-    client.initialize(&admin, &xlm, &default_fees());
+    let contract_id = env.register(
+        ScoutAccessContract,
+        (admin.clone(), xlm.clone(), default_fees()),
+    );
+    let client = ScoutAccessContractClient::new(&env, &contract_id);
 
-    let random_contract = Address::generate(&env);
+    let random_contract = scoutchain_shared_types::testutils::peer_stub(&env, "registration");
     let result = client.try_set_registration_contract(&random_contract);
     assert!(
         result.is_err(),
@@ -273,8 +263,10 @@ fn test_set_registration_contract_requires_admin() {
     );
 }
 
+/// Pro/Elite fail closed when no registration contract is wired (#1417);
+/// Basic stays open.
 #[test]
-fn test_registration_contract_graceful_degradation() {
+fn test_unwired_registration_fails_closed_for_paid_tiers() {
     let h = setup();
     let scout3 = Address::generate(&h.env);
 
@@ -283,12 +275,19 @@ fn test_registration_contract_graceful_degradation() {
     token_client.mint(&scout3, &1_000_000_000);
 
     // Do NOT wire registration contract; create a new scout_access instance
-    let sa_id = h.env.register(ScoutAccessContract, ());
+    let sa_id = h.env.register(
+        ScoutAccessContract,
+        (h.admin.clone(), h.xlm.clone(), default_fees()),
+    );
     let sa_client = ScoutAccessContractClient::new(&h.env, &sa_id);
-    sa_client.initialize(&h.admin, &h.xlm, &default_fees());
 
-    // Without registration contract wired, Pro subscriptions should be allowed (graceful degradation)
-    sa_client.subscribe(&scout3, &SubscriptionTier::Pro);
+    for tier in [SubscriptionTier::Pro, SubscriptionTier::Elite] {
+        assert_eq!(
+            sa_client.try_subscribe(&scout3, &tier),
+            Err(Ok(ScoutAccessError::RegistrationContractNotSet))
+        );
+    }
+    sa_client.subscribe(&scout3, &SubscriptionTier::Basic);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -312,13 +311,13 @@ fn test_multi_wallet_sybil_attempt_blocked() {
     // Register all 3 in registration contract
     let _id1 = h
         .registration_client
-        .register_scout(&attacker1, &String::from_str(&h.env, "Region1"));
+        .register_scout(&attacker1, &String::from_str(&h.env, "NG"));
     let _id2 = h
         .registration_client
-        .register_scout(&attacker2, &String::from_str(&h.env, "Region2"));
+        .register_scout(&attacker2, &String::from_str(&h.env, "GH"));
     let _id3 = h
         .registration_client
-        .register_scout(&attacker3, &String::from_str(&h.env, "Region3"));
+        .register_scout(&attacker3, &String::from_str(&h.env, "SN"));
 
     // All 3 are unverified by default
     let result1 = h
@@ -359,8 +358,9 @@ fn test_multi_wallet_sybil_attempt_blocked() {
     );
 }
 
+/// The Elite tier is no longer a way around verification (#1417).
 #[test]
-fn test_attacker_can_pay_for_elite_instead() {
+fn test_attacker_cannot_pay_for_elite_instead() {
     let h = setup();
 
     let attacker = Address::generate(&h.env);
@@ -368,13 +368,144 @@ fn test_attacker_can_pay_for_elite_instead() {
     token_client.mint(&attacker, &1_000_000_000);
 
     h.registration_client
-        .register_scout(&attacker, &String::from_str(&h.env, "AttackerRegion"));
+        .register_scout(&attacker, &String::from_str(&h.env, "KE"));
 
-    // Elite tier always works (no verification needed)
+    // Elite used to skip verification, which made it the cheapest route to
+    // unlimited contacts for an unverified attacker; it is now gated too.
+    let result = h
+        .scout_access_client
+        .try_subscribe(&attacker, &SubscriptionTier::Elite);
+    assert_eq!(result, Err(Ok(ScoutAccessError::ScoutNotVerified)));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests: revocation via unverify_scout (#1608)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_unverify_scout_records_audit_fields() {
+    let h = setup();
+    let id = h
+        .registration_client
+        .get_scout_by_wallet(&h.scout1)
+        .scout_id;
+    h.registration_client.verify_scout(&id);
+    h.registration_client
+        .unverify_scout(&id, &String::from_str(&h.env, "fraud"));
+
+    let rec = h.registration_client.get_scout_verification(&id);
+    assert!(!rec.verified);
+    assert!(rec.verified_at.is_some());
+    assert_eq!(rec.revoked_at, Some(1_000_000));
+    assert_eq!(rec.revoked_reason, Some(String::from_str(&h.env, "fraud")));
+    assert!(!h.registration_client.is_scout_verified(&h.scout1));
+
+    // Already unverified: second call is rejected.
+    assert!(h
+        .registration_client
+        .try_unverify_scout(&id, &String::from_str(&h.env, "again"))
+        .is_err());
+}
+
+#[test]
+fn test_renew_if_due_fails_after_unverify_for_pro() {
+    let h = setup();
+    let id = h
+        .registration_client
+        .get_scout_by_wallet(&h.scout1)
+        .scout_id;
+    h.registration_client.verify_scout(&id);
     h.scout_access_client
-        .subscribe(&attacker, &SubscriptionTier::Elite);
+        .subscribe(&h.scout1, &SubscriptionTier::Pro);
+    h.scout_access_client.set_auto_renew(&h.scout1, &true);
 
-    // This demonstrates that Elite (0.7 XLM unlimited) is still cheaper than
-    // 3 Pro wallets (0.9 XLM for 30 contacts), so the mitigation raises friction
-    // but doesn't completely prevent an attacker who wants unlimited contacts.
+    h.registration_client
+        .unverify_scout(&id, &String::from_str(&h.env, "fraud"));
+    h.env
+        .ledger()
+        .with_mut(|l| l.timestamp = 1_000_000 + 31 * 24 * 60 * 60);
+
+    assert_eq!(
+        h.scout_access_client.try_renew_if_due(&h.scout1),
+        Err(Ok(ScoutAccessError::ScoutNotVerified))
+    );
+}
+
+#[test]
+fn test_basic_tier_renewal_unaffected_by_unverify() {
+    let h = setup();
+    let id = h
+        .registration_client
+        .get_scout_by_wallet(&h.scout1)
+        .scout_id;
+    h.scout_access_client
+        .subscribe(&h.scout1, &SubscriptionTier::Basic);
+    h.scout_access_client.set_auto_renew(&h.scout1, &true);
+    // Never verified; Basic renewal must still succeed.
+    let _ = id;
+    h.env
+        .ledger()
+        .with_mut(|l| l.timestamp = 1_000_000 + 31 * 24 * 60 * 60);
+    h.scout_access_client.renew_if_due(&h.scout1);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests: on-chain wiring handshake (#1610)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_wiring_rejects_non_scoutchain_and_wrong_kind_peers() {
+    let h = setup();
+
+    // Plain account address: not a contract.
+    let not_a_contract = Address::generate(&h.env);
+    assert_eq!(
+        h.scout_access_client
+            .try_set_registration_contract(&not_a_contract),
+        Err(Ok(ScoutAccessError::InvalidPeerContract))
+    );
+
+    // A real ScoutChain contract of the wrong kind (scout_access itself).
+    let wrong_kind = h.scout_access_client.address.clone();
+    assert_eq!(
+        h.scout_access_client
+            .try_set_registration_contract(&wrong_kind),
+        Err(Ok(ScoutAccessError::InvalidPeerContract))
+    );
+    assert_eq!(
+        h.scout_access_client.try_set_progress_contract(&wrong_kind),
+        Err(Ok(ScoutAccessError::InvalidPeerContract))
+    );
+
+    // The correct kind is accepted.
+    h.scout_access_client
+        .set_registration_contract(&h.registration_client.address);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests: deregistered scouts fail closed (issue #1641)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_deregistered_scout_is_rejected() {
+    use scoutchain_scout_access::ScoutAccessError;
+
+    let h = setup();
+    let scout_id = h
+        .registration_client
+        .get_scout_by_wallet(&h.scout1)
+        .scout_id;
+    h.registration_client.deregister_scout(&scout_id);
+
+    // A missing profile must not fall through to "allowed".
+    assert_eq!(
+        h.scout_access_client
+            .try_subscribe(&h.scout1, &SubscriptionTier::Basic),
+        Err(Ok(ScoutAccessError::ScoutNotRegistered))
+    );
+    // Other, still-registered scouts are unaffected.
+    assert!(h
+        .scout_access_client
+        .try_subscribe(&h.scout2, &SubscriptionTier::Basic)
+        .is_ok());
 }

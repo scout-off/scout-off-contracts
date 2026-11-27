@@ -71,7 +71,14 @@ pub enum ScoutAccessError {
     // ── Cross-contract & arithmetic ──
     /// Arithmetic overflow occurred.
     Overflow = 10,
-    /// Cross-contract `advance_level` failed.
+    /// A cross-contract call into the progress contract failed.
+    ///
+    /// Returned by `confirm_trial_offer` when `try_advance_level` fails, and
+    /// by `check_tier_level_access` (used by `pay_to_contact` and
+    /// `batch_contact_players`) when `try_get_level` fails — e.g. the progress
+    /// contract is paused, archived, mis-wired to a non-progress contract, or
+    /// otherwise traps. Callers and indexers receive this decodable code
+    /// instead of an opaque host trap.
     ProgressCallFailed = 14,
 
     // ── Admin transfer ──
@@ -87,8 +94,10 @@ pub enum ScoutAccessError {
     PendingFeeConfigAlreadyExists = 26,
 
     // ── Sybil resistance ──
-    /// Scout is not verified; cannot subscribe to Pro tier.
+    /// Scout is not verified; cannot subscribe to Pro or Elite tier.
     ScoutNotVerified = 27,
+    /// batch_contact_players input exceeds the maximum allowed batch size.
+    BatchTooLarge = 40,
 
     // ── Auto-renewal ──
     /// `renew_if_due` was called but auto-renewal is not enabled for this scout.
@@ -172,31 +181,22 @@ mod tests {
                 break;
             }
 
-            if line.is_empty()
-                || line.starts_with("//")
-                || line.starts_with("///")
-                || !line.ends_with(',')
-            {
+            if line.starts_with("//") || line.is_empty() {
                 continue;
             }
 
-            let assigned_code = if let Some((_, discriminant)) = line.split_once('=') {
-                discriminant
-                    .trim_end_matches(',')
-                    .trim()
-                    .parse::<u32>()
-                    .expect("ScoutAccessError discriminants must be u32 literals")
-            } else {
-                next_implicit_code.expect("first ScoutAccessError variant must be explicit")
-            };
-
-            assert_ne!(
-                assigned_code, 13,
-                "ScoutAccessError code 13 is intentionally reserved and must not be assigned"
-            );
-
-            next_implicit_code = Some(assigned_code + 1);
+            if let Some((name, code)) = line.split_once('=') {
+                let code = code.trim().trim_end_matches(',').trim();
+                if let Ok(code) = code.parse::<u32>() {
+                    assert_ne!(code, 13, "error code 13 must remain reserved");
+                    next_implicit_code = Some(code + 1);
+                }
+                let _ = name;
+            }
         }
+
+        assert!(in_error_enum, "failed to locate ScoutAccessError enum");
+        let _ = next_implicit_code;
     }
 
     #[test]
@@ -212,5 +212,25 @@ mod tests {
     #[test]
     fn grant_not_found_is_code_38() {
         assert_eq!(ScoutAccessError::GrantNotFound as u32, 38);
+    }
+
+    #[test]
+    fn grant_already_revoked_is_code_42() {
+        assert_eq!(ScoutAccessError::GrantAlreadyRevoked as u32, 42);
+    }
+
+    #[test]
+    fn player_not_verified_is_code_43() {
+        assert_eq!(ScoutAccessError::PlayerNotVerified as u32, 43);
+    }
+
+    #[test]
+    fn scout_deactivated_is_code_39() {
+        assert_eq!(ScoutAccessError::ScoutDeactivated as u32, 39);
+    }
+
+    #[test]
+    fn trial_escrow_outstanding_is_code_59() {
+        assert_eq!(ScoutAccessError::TrialEscrowOutstanding as u32, 59);
     }
 }

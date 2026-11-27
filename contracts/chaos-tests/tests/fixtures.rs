@@ -63,24 +63,23 @@ impl Harness {
 
         let admin = Address::generate(&env);
 
-        let progress_id = env.register(ProgressContract, ());
+        let progress_id = env.register(ProgressContract, (admin.clone(),));
         let progress = ProgressContractClient::new(&env, &progress_id);
-        progress.initialize(&admin);
 
-        let reg_id = env.register(RegistrationContract, ());
+        let reg_id = env.register(RegistrationContract, (admin.clone(),));
         let registration = RegistrationContractClient::new(&env, &reg_id);
-        registration.initialize(&admin);
 
-        let ver_id = env.register(VerificationContract, ());
+        let ver_id = env.register(VerificationContract, (admin.clone(),));
         let verification = VerificationContractClient::new(&env, &ver_id);
-        verification.initialize(&admin);
 
         let xlm = env
             .register_stellar_asset_contract_v2(admin.clone())
             .address();
-        let sa_id = env.register(ScoutAccessContract, ());
+        let sa_id = env.register(
+            ScoutAccessContract,
+            (admin.clone(), xlm.clone(), default_fees()),
+        );
         let scout_access = ScoutAccessContractClient::new(&env, &sa_id);
-        scout_access.initialize(&admin, &xlm, &default_fees());
 
         // Wire the four contracts so milestone approval can actually advance
         // levels and so fee collection is a real token transfer.
@@ -89,6 +88,7 @@ impl Harness {
         progress.set_registration_contract(&reg_id);
         progress.set_scout_access_contract(&sa_id);
         scout_access.set_progress_contract(&progress_id);
+        scout_access.set_registration_contract(&reg_id);
         registration.set_progress_contract(&progress_id);
 
         let mut players = Vec::new(&env);
@@ -99,9 +99,9 @@ impl Harness {
                 &wallet,
                 &PlayerVitals {
                     age: 20,
-                    position: String::from_str(&env, "Forward"),
-                    region: String::from_str(&env, "West Africa"),
-                    nationality: String::from_str(&env, "Ghana"),
+                    position: String::from_str(&env, "ST"),
+                    region: String::from_str(&env, "NG"),
+                    nationality: String::from_str(&env, "GH"),
                 },
                 &{
                     let mut hashes = Vec::new(&env);
@@ -116,7 +116,9 @@ impl Harness {
         let mut scouts = Vec::new(&env);
         for _ in 0..2 {
             let wallet = Address::generate(&env);
-            let _ = registration.register_scout(&wallet, &String::from_str(&env, "West Africa"));
+            let scout_id = registration.register_scout(&wallet, &String::from_str(&env, "NG"));
+            // Paid tiers require a verified scout (#1417).
+            registration.verify_scout(&scout_id);
             StellarAssetClient::new(&env, &xlm).mint(&wallet, &100_000_000i128);
             scout_access.subscribe(&wallet, &SubscriptionTier::Elite);
             scouts.push_back(wallet);

@@ -34,6 +34,12 @@ import re, sys
 
 src = open(sys.argv[1]).read()
 
+# Ignore test modules: their #[contractimpl] blocks are test stubs, not part
+# of the contract's public interface.
+test_mod = re.search(r'^#\[cfg\(test\)\]\s*\nmod \w+', src, re.M)
+if test_mod:
+    src = src[:test_mod.start()]
+
 # Split around #[contractimpl] markers; we want the impl block that follows.
 segments = re.split(r'#\[contractimpl\]', src)
 

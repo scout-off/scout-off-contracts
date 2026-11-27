@@ -130,8 +130,8 @@ impl Harness {
                     &wallet,
                     &PlayerVitals {
                         age: 20,
-                        position: String::from_str(&self.env, "Midfielder"),
-                        region: String::from_str(&self.env, "East Africa"),
+                        position: String::from_str(&self.env, "CM"),
+                        region: String::from_str(&self.env, "KE"),
                         nationality: String::from_str(&self.env, "Kenya"),
                     },
                     &hashes,

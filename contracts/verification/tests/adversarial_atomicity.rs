@@ -64,10 +64,12 @@ const CID_C: &str = "QmgzsER5ykyxoTsVUSePRkKXqkEzsRVLpUv511dp4c3vAs";
 fn setup_unwired() -> (Env, VerificationContractClient<'static>, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let contract_id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &contract_id);
+    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(
+        &env,
+    ));
     let validator = Address::generate(&env);
     client.register_validator(
         &validator,
@@ -83,13 +85,15 @@ fn setup_unwired() -> (Env, VerificationContractClient<'static>, Address) {
 fn setup_bad_wiring() -> (Env, VerificationContractClient<'static>, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let contract_id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &contract_id);
+    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(
+        &env,
+    ));
 
     // Wire a random address that has no contract — any cross-contract call will fail.
-    let bad_progress = Address::generate(&env);
+    let bad_progress = scoutchain_shared_types::testutils::peer_stub(&env, "progress");
     client.set_progress_contract(&bad_progress);
 
     let validator = Address::generate(&env);
@@ -285,16 +289,19 @@ fn test_retry_with_fresh_evidence_hash_succeeds_after_wiring_fixed() {
     env.mock_all_auths();
 
     // Deploy verification.
-    let ver_id = env.register(VerificationContract, ());
-    let client = VerificationContractClient::new(&env, &ver_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let ver_id = env.register(VerificationContract, (admin.clone(),));
+    let client = VerificationContractClient::new(&env, &ver_id);
+    client.set_registration_contract(&scoutchain_shared_types::testutils::active_registry_stub(
+        &env,
+    ));
 
     // Deploy a real progress contract and wire it after initialization.
-    let prog_id = env.register(ProgressContract, ());
+    let prog_id = env.register(ProgressContract, (admin.clone(),));
     let progress = ProgressContractClient::new(&env, &prog_id);
-    progress.initialize(&admin);
     progress.set_verification_contract(&ver_id);
+    // Progress requires a registration contract for level syncs (#1409).
+    progress.set_registration_contract(&env.register(RegistrationStub, ()));
 
     // Wire verification → progress.
     client.set_progress_contract(&prog_id);
@@ -376,4 +383,27 @@ fn test_validator_cap_bounds_evidence_storage() {
         100,
         "active validator count must be exactly 100 at the cap"
     );
+}
+
+/// Registration stand-in that accepts every level sync from progress.
+#[soroban_sdk::contract]
+struct RegistrationStub;
+
+#[soroban_sdk::contractimpl]
+impl RegistrationStub {
+    /// Wiring handshake (#1610): report the kind of contract this stub stands in for.
+    pub fn contract_kind(env: Env) -> soroban_sdk::Symbol {
+        soroban_sdk::Symbol::new(&env, "registration")
+    }
+
+    pub fn version(env: Env) -> soroban_sdk::String {
+        soroban_sdk::String::from_str(&env, "2.0.0")
+    }
+
+    pub fn set_player_level(
+        _env: Env,
+        _player_id: u64,
+        _level: scoutchain_shared_types::ProgressLevel,
+    ) {
+    }
 }
