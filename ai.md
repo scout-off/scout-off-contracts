@@ -1,6 +1,15 @@
 # ScoutChain — AI Integration Guide
 
-This document is the authoritative reference for AI assistants, SDK consumers, and new team members integrating with ScoutChain's Soroban smart contracts.
+> **Last reviewed:** 2026-08-30
+> **Contract version:** see `version()` on each deployed contract
+> **Repo root:** `scout-off-contracts/`
+>
+> This document is kept in sync with the live `#[contractimpl]` signatures. If
+> you spot a discrepancy, open an issue referencing this file and the affected
+> function.
+
+This document is the authoritative reference for AI assistants, SDK consumers,
+and new team members integrating with ScoutChain's Soroban smart contracts.
 
 ---
 
@@ -21,20 +30,520 @@ All four contracts import from `scoutchain-shared-types`:
 
 ```rust
 pub enum ProgressLevel {
-    Unverified,          // Level 0
-    VerifiedIdentity,    // Level 1
-    PerformanceMilestones, // Level 2
-    EliteTier,           // Level 3
+    Unverified,             // Level 0
+    VerifiedIdentity,       // Level 1
+    PerformanceMilestones,  // Level 2
+    EliteTier,              // Level 3
 }
+```
+
+The `registration` contract uses `PlayerVitals` as an input struct:
+
+```rust
+pub struct PlayerVitals {
+    pub age:         u32,
+    pub position:    String,  // max 64 bytes
+    pub region:      String,  // max 128 bytes
+    pub nationality: String,  // max 64 bytes
+}
+```
+
+---
+
+## Initialize Signatures
+
+Each contract has a **one-time** `initialize` call. Calling it twice returns `AlreadyInitialized` (code 1).
+
+```rust
+// registration
+pub fn initialize(env: Env, admin: Address) -> Result<(), ScoutChainError>
+
+// verification
+pub fn initialize(env: Env, admin: Address) -> Result<(), VerificationError>
+
+// progress
+pub fn initialize(env: Env, admin: Address) -> Result<(), ProgressError>
+
+// scout_access — requires the XLM token address and an initial FeeConfig
+pub fn initialize(
+    env: Env,
+    admin: Address,
+    xlm_token: Address,
+    fee_config: FeeConfig,
+) -> Result<(), ScoutAccessError>
+```
+
+`scout_access.initialize` probes `xlm_token` by calling `decimals()` on it. A wrong address (testnet SAC on mainnet, a typo, a non-token contract) returns `InvalidInput` (code 15) immediately rather than failing on the first `subscribe()` call.
+
+---
+
+## Function Signatures — registration
+
+```rust
+pub fn register_player(
+    env: Env,
+    wallet: Address,
+    vitals: PlayerVitals,
+    ipfs_hashes: Vec<String>,
+) -> Result<u64, ScoutChainError>
+
+pub fn update_profile(
+    env: Env,
+    player_id: u64,
+    ipfs_hashes: Vec<String>,
+) -> Result<(), ScoutChainError>
+
+pub fn register_scout(env: Env, wallet: Address, region: String) -> Result<u64, ScoutChainError>
+
+pub fn filter_players(
+    env: Env,
+    region: String,
+    position: String,
+    min_level: ProgressLevel,
+    offset: u32,
+    limit: u32,
+) -> Result<FilterResult, ScoutChainError>
+
+// Queries
+pub fn get_player(env: Env, player_id: u64) -> Result<PlayerProfile, ScoutChainError>
+pub fn get_player_by_wallet(env: Env, wallet: Address) -> Result<PlayerProfile, ScoutChainError>
+pub fn get_player_id_by_wallet(env: Env, wallet: Address) -> Result<u64, ScoutChainError>
+pub fn get_scout(env: Env, scout_id: u64) -> Result<ScoutProfile, ScoutChainError>
+pub fn get_player_count(env: Env) -> u64
+pub fn get_scout_count(env: Env) -> u64
+pub fn health(env: Env) -> ContractHealth
+pub fn version(env: Env) -> String
+
+// Admin only
+pub fn set_progress_contract(env: Env, addr: Address) -> Result<(), ScoutChainError>
+pub fn set_player_level(env: Env, player_id: u64, level: ProgressLevel) -> Result<(), ScoutChainError>
+pub fn deregister_player(env: Env, player_id: u64) -> Result<(), ScoutChainError>
+pub fn deactivate_player(env: Env, player_id: u64) -> Result<(), ScoutChainError>
+pub fn reactivate_player(env: Env, player_id: u64) -> Result<(), ScoutChainError>
+pub fn verify_scout(env: Env, scout_id: u64) -> Result<(), ScoutChainError>
+// Revokes a scout's verified status. Pro/Elite gating in scout_access re-checks
+// verification, so an unverified scout can no longer subscribe to Pro or Elite.
+pub fn unverify_scout(env: Env, scout_id: u64) -> Result<(), ScoutChainError>
+// GDPR erasure for a scout record (see docs/CONTRACT_REFERENCE.md).
+pub fn deregister_scout(env: Env, scout_id: u64) -> Result<(), ScoutChainError>
+pub fn propose_admin(env: Env, new_admin: Address) -> Result<(), ScoutChainError>
+pub fn accept_admin(env: Env) -> Result<(), ScoutChainError>
+pub fn pause_contract(env: Env) -> Result<(), ScoutChainError>
+pub fn unpause_contract(env: Env) -> Result<(), ScoutChainError>
+pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), ScoutChainError>
+
+// GDPR erasure — page through a player's data. Loop until `more == false`.
+// See docs/PLAYER_ERASURE.md.
+pub fn purge_player_data(env: Env, player_id: u64, cursor: u32) -> Result<(u32, bool), ScoutChainError>
+```
+
+---
+
+## Function Signatures — verification
+
+```rust
+pub fn register_validator(
+    env: Env,
+    wallet: Address,
+    credentials: String,
+    affiliation: String,
+    specializations: Vec<String>,
+) -> Result<(), VerificationError>
+
+// `affiliation` is the canonical org identifier used for diversity gating;
+// `specializations` are optional category tags such as "physical-stats" or "identity-kyc"
+// that must match the milestone category when nested category gating is active.
+pub fn revoke_validator(
+    env: Env,
+    wallet: Address,
+    severity: RevocationSeverity,
+    reason: Option<String>,
+) -> Result<(), VerificationError>
+
+pub fn batch_revoke_validators(
+    env: Env,
+    wallets: Vec<Address>,
+    severity: RevocationSeverity,
+    reason: Option<String>,
+) -> Result<(), VerificationError>
+
+pub fn batch_register_validators(
+    env: Env,
+    entries: Vec<(Address, String, String, Vec<String>)>,
+) -> Result<(), VerificationError>
+
+pub fn restore_validator(env: Env, wallet: Address) -> Result<(), VerificationError>
+
+pub fn transfer_validator(
+    env: Env,
+    old_wallet: Address,
+    new_wallet: Address,
+) -> Result<(), VerificationError>
+
+pub fn approve_milestone(
+    env: Env,
+    validator_wallet: Address,
+    player_id: u64,
+    description: String,
+    evidence_hash: String,
+    milestone_category: Option<String>,
+) -> Result<u32, VerificationError>
+
+// `milestone_category` is optional but when supplied, the validator must hold the
+// matching specialization tag (returns `SpecializationMismatch` / code 21 otherwise).
+// `approve_milestone` is also gated by the threshold-mode check: calling it after
+// `set_milestone_threshold(n>=2)` returns `ThresholdModeRequiresAttestation`.
+
+pub fn dispute_milestone(
+    env: Env,
+    player_wallet: Address,
+    player_id: u64,
+    milestone_index: u32,
+    reason: String,
+) -> Result<(), VerificationError>
+
+pub fn resolve_dispute(
+    env: Env,
+    player_id: u64,
+    milestone_index: u32,
+    upheld: bool,
+) -> Result<(), VerificationError>
+
+// Queries
+pub fn get_milestone(env: Env, player_id: u64, index: u32) -> Result<Milestone, VerificationError>
+pub fn get_milestone_count(env: Env, player_id: u64) -> u32
+pub fn get_validator(env: Env, wallet: Address) -> Result<Validator, VerificationError>
+pub fn get_validators(env: Env) -> Vec<Address>
+pub fn get_validator_milestone_count(env: Env, wallet: Address) -> u32
+pub fn get_active_validator_count(env: Env) -> u32
+pub fn is_active_validator(env: Env, wallet: Address) -> bool
+pub fn get_limits(env: Env) -> VerificationLimits
+pub fn health(env: Env) -> ContractHealth
+pub fn version(env: Env) -> String
+
+// Admin only
+pub fn set_progress_contract(env: Env, progress_contract: Address) -> Result<(), VerificationError>
+pub fn update_progress_contract(env: Env, progress_contract: Address) -> Result<(), VerificationError>
+pub fn propose_admin(env: Env, new_admin: Address) -> Result<(), VerificationError>
+pub fn accept_admin(env: Env) -> Result<(), VerificationError>
+pub fn pause_contract(env: Env) -> Result<(), VerificationError>
+pub fn unpause_contract(env: Env) -> Result<(), VerificationError>
+pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), VerificationError>
+
+// GDPR erasure — page through a player's data. Loop until `more == false`.
+// See docs/PLAYER_ERASURE.md.
+pub fn purge_player_data(env: Env, player_id: u64, cursor: u32) -> Result<(u32, bool), VerificationError>
+```
+
+### Protocol limits — `get_limits()`
+
+`get_limits()` returns the compile-time protocol constants so clients can
+pre-validate input instead of hard-coding numbers that may change between
+contract versions:
+
+```rust
+pub struct VerificationLimits {
+    pub max_validators: u32,        // 100
+    pub min_credentials_len: u32,   // 1
+    pub max_credentials_len: u32,   // 256
+    pub max_description_len: u32,   // 512
+    pub max_specializations: u32,   // 10
+    pub max_dispute_rounds: u32,    // 3
+}
+```
+
+**Client-side validation:** call `get_limits()` once at startup (and cache it
+per contract ID / version) and validate credentials, descriptions, and
+specialization lists against these values before submitting a transaction.
+Hard-coded constants will drift from the contract and produce avoidable
+`InvalidInput` (code 9) failures.
+
+See `bindings/verification/examples/getLimits.ts` for a worked example.
+
+---
+
+## Function Signatures — progress
+
+```rust
+// Called cross-contract by verification (approve_milestone) and scout_access (confirm_trial_offer).
+// Only the whitelisted verification and scout_access contract addresses may call this.
+pub fn advance_level(
+    env: Env,
+    caller: Address,
+    player_id: u64,
+    milestone_ref: u32,
+) -> Result<ProgressLevel, ProgressError>
+
+pub fn reset_player_level(
+    env: Env,
+    player_id: u64,
+    target_level: ProgressLevel,
+) -> Result<(), ProgressError>
+
+// Queries
+pub fn get_level(env: Env, player_id: u64) -> ProgressLevel
+pub fn get_history_count(env: Env, player_id: u64) -> u32
+pub fn get_progress_history(env: Env, player_id: u64) -> Vec<ProgressEntry>
+pub fn get_progress_history_page(env: Env, player_id: u64, offset: u32, limit: u32) -> Vec<ProgressEntry>
+pub fn get_history_page_with_cursor(
+    env: Env,
+    player_id: u64,
+    cursor_snapshot: Option<u32>,
+    cursor_next_index: Option<u32>,
+    limit: u32,
+) -> (Vec<ProgressEntry>, u32, u32)
+// ⚠️ Superseded — prefer `get_history_since_v2`. This variant silently truncates
+// at the internal limit (and at the 10-page scan cap) with no signal that entries
+// were dropped. Kept for backwards compatibility only.
+pub fn get_history_since(env: Env, player_id: u64, since_timestamp: u64) -> Vec<ProgressEntry>
+
+// ✅ Preferred history getter. Returns every matching entry up to `limit` plus a
+// `truncated` flag telling you whether more matching entries exist beyond what
+// was returned (because of `limit` or the internal 10-page scan cap).
+pub fn get_history_since_v2(
+    env: Env,
+    player_id: u64,
+    since_timestamp: u64,
+    limit: u32,
+) -> HistorySince
+
+pub fn health(env: Env) -> ContractHealth
+pub fn version(env: Env) -> String
+
+// Admin only — wiring setters (call once after deployment)
+pub fn set_verification_contract(env: Env, addr: Address) -> Result<(), ProgressError>
+pub fn set_registration_contract(env: Env, addr: Address) -> Result<(), ProgressError>
+pub fn set_scout_access_contract(env: Env, addr: Address) -> Result<(), ProgressError>
+pub fn propose_admin(env: Env, new_admin: Address) -> Result<(), ProgressError>
+pub fn accept_admin(env: Env) -> Result<(), ProgressError>
+pub fn pause_contract(env: Env) -> Result<(), ProgressError>
+pub fn unpause_contract(env: Env) -> Result<(), ProgressError>
+pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), ProgressError>
+
+// GDPR erasure — page through a player's data. Loop until `more == false`.
+// See docs/PLAYER_ERASURE.md.
+pub fn purge_player_data(env: Env, player_id: u64, cursor: u32) -> Result<(u32, bool), ProgressError>
+```
+
+### Reading progress history — use `get_history_since_v2`
+
+```rust
+pub struct HistorySince {
+    pub entries: Vec<ProgressEntry>,
+    pub truncated: bool,
+}
+```
+
+`get_history_since_v2(player_id, since_timestamp, limit)` returns a `HistorySince`:
+
+- `entries` — up to `limit` progress entries with `timestamp >= since_timestamp`.
+- `truncated` — `true` when **more matching entries may exist** beyond those
+  returned. This happens when either `limit` was hit or the internal 10-page
+  scan cap was reached before the end of the history.
+
+**Why v2 exists:** `get_history_since` silently drops entries at the same
+limits and gives the caller no way to detect it. Client code that syncs history
+incrementally can therefore miss entries without any error. Use
+`get_history_since_v2` and check `truncated`.
+
+**Paging further when `truncated == true`:** advance `since_timestamp` to the
+timestamp of the last returned entry (or use `get_history_page_with_cursor`
+with the cursor returned by that call) and call again until `truncated` is
+`false`. `get_history_page_with_cursor(player_id, cursor_snapshot,
+cursor_next_index, limit)` returns `(Vec<ProgressEntry>, u32, u32)` — the page,
+the snapshot, and the next index — and is the recommended way to walk the full
+history deterministically.
+
+See `bindings/progress/examples/getPlayerHistory.ts` for a worked example.
+
+---
+
+## Function Signatures — scout_access
+
+```rust
+pub fn subscribe(
+    env: Env,
+    scout: Address,
+    tier: SubscriptionTier,   // Basic | Pro | Elite
+) -> Result<(), ScoutAccessError>
+
+pub fn pay_to_contact(
+    env: Env,
+    scout: Address,
+    player_id: u64,
+) -> Result<(), ScoutAccessError>
+
+// Trial offer is a two-step flow:
+// Step 1 — Elite scout logs the offer (scout must have previously contacted the player)
+pub fn log_trial_offer(
+    env: Env,
+    scout: Address,
+    player_id: u64,
+    details_hash: String,   // IPFS CID
+) -> Result<u32, ScoutAccessError>   // returns trial index
+
+// Step 2 — Player confirms; escrow released, player advances to Level 3
+pub fn confirm_trial_offer(
+    env: Env,
+    player_wallet: Address,
+    player_id: u64,
+    index: u32,
+    idempotency_nonce: Option<String>,
+) -> Result<(), ScoutAccessError>
+
+ // Queries
+pub fn get_subscription(env: Env, scout: Address) -> Result<Subscription, ScoutAccessError>
+pub fn get_fee_config(env: Env) -> FeeConfig
+pub fn has_contacted(env: Env, scout: Address, player_id: u64) -> bool
+pub fn get_trial_offer(env: Env, player_id: u64, index: u32) -> Result<TrialOffer, ScoutAccessError>
+pub fn get_trial_count(env: Env, player_id: u64) -> u32
+// Paginated trial-offer listing — prefer this over `get_all_trial_offers`.
+pub fn get_trial_offers_page(
+    env: Env,
+    player_id: u64,
+    offset: u32,
+    limit: u32,
+) -> Vec<TrialOffer>
+// Deprecated: silently returns only the 20 oldest offers for `player_id`.
+pub fn get_all_trial_offers(env: Env, player_id: u64) -> Vec<TrialOffer>
+pub fn has_evidence_access(env: Env, player_id: u64, scout: Address) -> bool
+pub fn get_evidence_access_grant(env: Env, player_id: u64, scout: Address) -> Option<EvidenceAccessGrant>
+pub fn get_player_access_grants(env: Env, player_id: u64, offset: u32, limit: u32) -> Vec<EvidenceAccessGrant>
+pub fn health(env: Env) -> ContractHealth
+pub fn version(env: Env) -> String
+
+// Admin only
+pub fn update_fee_config(env: Env, fee_config: FeeConfig) -> Result<(), ScoutAccessError>
+pub fn withdraw_fees(env: Env, to: Address) -> Result<i128, ScoutAccessError>
+pub fn set_progress_contract(env: Env, addr: Address) -> Result<(), ScoutAccessError>
+pub fn update_progress_contract(env: Env, addr: Address) -> Result<(), ScoutAccessError>
+pub fn set_registration_contract(env: Env, addr: Address) -> Result<(), ScoutAccessError>
+pub fn admin_revoke_evidence_access(env: Env, player_id: u64, scout: Address) -> Result<(), ScoutAccessError>
+// Admin safety valve: releases an outstanding `TrialEscrow` whose `TrialOffer`
+// record no longer exists (e.g. evicted/archived). Use `admin_refund_trial_escrow`
+// when the offer record is still present.
+pub fn admin_rescue_orphan_trial_escrow(
+    env: Env,
+    player_id: u64,
+    offer_index: u32,
+    to: Address,
+) -> Result<(), ScoutAccessError>
+pub fn propose_admin(env: Env, new_admin: Address) -> Result<(), ScoutAccessError>
+pub fn accept_admin(env: Env) -> Result<(), ScoutAccessError>
+pub fn pause_contract(env: Env) -> Result<(), ScoutAccessError>
+pub fn unpause_contract(env: Env) -> Result<(), ScoutAccessError>
+pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), ScoutAccessError>
+
+// GDPR erasure — page through a player's data. Loop until `more == false`.
+// See docs/PLAYER_ERASURE.md.
+pub fn purge_player_data(env: Env, player_id: u64, cursor: u32) -> Result<(u32, bool), ScoutAccessError>
+
+// Player-initiated (issue #1380)
+pub fn revoke_evidence_access(
+    env: Env,
+    player: Address,
+    player_id: u64,
+    scout: Address,
+) -> Result<(), ScoutAccessError>
 ```
 
 ---
 
 ## Cross-Contract Wiring
 
-`approve_milestone` (verification contract) cross-calls `advance_level` (progress contract) atomically — both state changes occur in the same Stellar transaction. This wiring must be established after every fresh deployment via `initialize.sh` or manually. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full wiring procedure.
+Eight peer-address links must be established after every fresh deployment. `initialize.sh` sets all eight automatically. Run the diagnostic script to check which links are present:
 
-`log_trial_offer` (scout_access contract) also cross-calls `advance_level` on the progress contract to advance a player to Level 3.
+```bash
+./scripts/verify-cross-contract-wiring.sh testnet
+```
+
+### The eight wiring links
+
+| # | Command | What it does |
+|---|---------|-------------|
+| 1 | `verification.set_progress_contract` | Allows `approve_milestone` to call `advance_level` |
+| 2 | `verification.set_registration_contract` | Allows the dispute-milestone wallet-to-`player_id` binding check |
+| 3 | `registration.set_progress_contract` | Lets `filter_players` resolve player levels at query time |
+| 4 | `progress.set_verification_contract` | Whitelists verification as authorized caller of `advance_level` |
+| 5 | `progress.set_registration_contract` | Allows progress to call `set_player_level` on registration |
+| 6 | `progress.set_scout_access_contract` | Whitelists scout_access as authorized caller of `advance_level` |
+| 7 | `scout_access.set_progress_contract` | Allows `confirm_trial_offer` to call `advance_level` for Level 3 |
+| 8 | `scout_access.set_registration_contract` | Pro-tier scout verification / Sybil gating lookups |
+
+This list matches what `scripts/verify-cross-contract-wiring.sh` checks and the "Full Picture" table in [`docs/WIRING_REGISTRY_DESIGN.md`](docs/WIRING_REGISTRY_DESIGN.md).
+
+### The `contract_kind()` handshake
+
+Every contract exposes a read-only `contract_kind() -> Symbol` query that identifies what kind of contract it is:
+
+| Contract | `contract_kind()` returns |
+|----------|---------------------------|
+| `registration` | `"registration"` |
+| `verification` | `"verification"` |
+| `progress` | `"progress"` |
+| `scout_access` | `"scout_access"` |
+
+Each of the eight wiring setters above performs a **handshake** before storing the peer address: it calls `contract_kind()` on the address it was given and compares the returned symbol against the kind it expects. Only if the kinds match is the address written to storage. This catches the most common deployment mistake — pasting the wrong contract ID into a setter — at wiring time instead of at the first cross-contract call.
+
+### Troubleshooting the handshake
+
+- **Wrong contract ID passed to a setter.** If you pass, for example, the progress contract ID to `registration.set_progress_contract` (or any other setter), the handshake fails and the setter returns `InvalidPeerContract` instead of storing the address. Re-run the setter with the correct contract ID; nothing was written, so no cleanup is needed.
+- **`verification.set_progress_contract` is first-call-only.** It returns `AlreadyConfigured` (code 11) on any subsequent call, even with the same address. Use `verification.update_progress_contract` to re-wire after a redeployment. All other wiring setters can be called repeatedly.
+- **Check the kind directly** if a setter is rejected and you are unsure which contract an ID refers to:
+  ```bash
+  stellar contract invoke --id $SOME_CONTRACT_ID \
+    --source $ADMIN_ADDRESS --network testnet \
+    -- contract_kind
+  ```
+
+### Manual wiring commands
+
+```bash
+# 1. Verification → Progress
+stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
+  --source $ADMIN_ADDRESS --network testnet \
+  -- set_progress_contract --progress_contract $PROGRESS_CONTRACT_ID
+
+# 2. Verification → Registration
+stellar contract invoke --id $VERIFICATION_CONTRACT_ID \
+  --source $ADMIN_ADDRESS --network testnet \
+  -- set_registration_contract --reg_contract $REGISTRATION_CONTRACT_ID
+
+# 3. Registration → Progress
+stellar contract invoke --id $REGISTRATION_CONTRACT_ID \
+  --source $ADMIN_ADDRESS --network testnet \
+  -- set_progress_contract --addr $PROGRESS_CONTRACT_ID
+
+# 4. Progress → Verification
+stellar contract invoke --id $PROGRESS_CONTRACT_ID \
+  --source $ADMIN_ADDRESS --network testnet \
+  -- set_verification_contract --addr $VERIFICATION_CONTRACT_ID
+
+# 5. Progress → Registration
+stellar contract invoke --id $PROGRESS_CONTRACT_ID \
+  --source $ADMIN_ADDRESS --network testnet \
+  -- set_registration_contract --addr $REGISTRATION_CONTRACT_ID
+
+# 6. Progress → Scout Access
+stellar contract invoke --id $PROGRESS_CONTRACT_ID \
+  --source $ADMIN_ADDRESS --network testnet \
+  -- set_scout_access_contract --addr $SCOUT_ACCESS_CONTRACT_ID
+
+# 7. Scout Access → Progress
+stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
+  --source $ADMIN_ADDRESS --network testnet \
+  -- set_progress_contract --addr $PROGRESS_CONTRACT_ID
+
+# 8. Scout Access → Registration
+stellar contract invoke --id $SCOUT_ACCESS_CONTRACT_ID \
+  --source $ADMIN_ADDRESS --network testnet \
+  -- set_registration_contract --addr $REGISTRATION_CONTRACT_ID
+```
+
+> **Note:** `verification.set_progress_contract` is first-call-only and returns
+> `AlreadyConfigured` (code 11) on subsequent calls. Use
+> `update_progress_contract` to re-wire after redeployment.
+> All other wiring setters can be called repeatedly.
 
 ---
 
@@ -64,11 +573,156 @@ See `bindings/README.md` for full usage details.
 
 ---
 
-## Error Handling
+## Error Codes
 
-### `ProgressCallFailed`
+Error codes are **per-contract**. The same numeric code can mean different things in different contracts. Always check which contract returned the error.
 
-#### What it is
+### `ScoutChainError` (registration)
+
+| Code | Variant | Cause |
+|------|---------|-------|
+| 1 | `AlreadyInitialized` | `initialize` called more than once |
+| 2 | `NotInitialized` | Operation before `initialize` |
+| 3 | `PlayerNotFound` | Invalid `player_id` |
+| 4 | `ValidatorNotAuthorized` | Unregistered account approving milestone |
+| 5 | `InvalidProgressTransition` | Skipping or reversing a level |
+| 6 | `ScoutNotSubscribed` | Scout has no subscription |
+| 7 | `InsufficientFee` | Underpaying contact fee |
+| 8 | `AlreadyRegistered` | Wallet already has a profile for this role |
+| 9 | `ContractPaused` | Circuit breaker is active |
+| 10 | `Unauthorized` | Wrong account for a privileged operation |
+| 11 | `Overflow` | Counter or fee arithmetic overflowed |
+| 12 | `ScoutNotFound` | Invalid `scout_id` |
+| 13 | `InvalidInput` | Field too long, bad hash count, or empty value |
+| 14 | `PendingAdminNotSet` | `accept_admin` called without a prior `propose_admin` |
+| 15 | `PlayerCapReached` | Player registration cap reached |
+| 16 | `RegistrationCooldown` | Caller attempted to register again before cooldown |
+
+> **Note:** `RegistrationCooldown` (code 16) differs from the same-named code in the verification contract (code 25, see below). Always check which contract returned the error.
+
+| 17 | `PlayerRecordEvicted` | Archival grace period fully elapsed, unrecoverable |
+| 18 | `ScoutRecordEvicted` | Scout record fully evicted, unrecoverable |
+
+### `VerificationError` (verification)
+
+| Code | Variant | Cause |
+|------|---------|-------|
+| 1 | `AlreadyInitialized` | `initialize` called more than once |
+| 2 | `NotInitialized` | Operation before `initialize` |
+| 3 | `ContractPaused` | Circuit breaker is active |
+| 4 | `Unauthorized` | Wrong account for a privileged operation |
+| 5 | `ValidatorNotFound` | Wallet not in validator registry |
+| 6 | `ValidatorInactive` | Validator has been revoked |
+| 7 | `ValidatorAlreadyRegistered` | Wallet already registered as validator |
+| 8 | `PlayerNotFound` | Invalid `player_id` |
+| 9 | `InvalidInput` | Bad evidence hash or credentials too long/short |
+| 10 | `ReasonTooLong` | Revocation reason exceeds 128 bytes |
+| 11 | `AlreadyConfigured` | `set_progress_contract` called twice; use `update_progress_contract` |
+| 12 | `ProgressCallFailed` | Cross-contract `advance_level` failed |
+| 13 | `Overflow` | Milestone counter overflowed |
+| 14 | `MilestoneNotFound` | Index out of range |
+| 15 | `ValidatorCapReached` | 100-validator platform limit reached |
+| 16 | `DuplicateEvidence` | Evidence hash already used in a prior approval |
+| 17 | `MilestoneLimitExceeded` | Validator has already approved 5 milestones for this player |
+| 18 | `DisputeAlreadyResolved` | Dispute was already resolved |
+| 19 | `PendingAdminNotSet` | `accept_admin` called without a prior `propose_admin` |
+| 20 | `ApproveMilestonePaused` | `approve_milestone` function is paused independently |
+| 21 | `SpecializationMismatch` | Validator not tagged for requested milestone category |
+| 22 | `InvalidAttestation` | ed25519 signature verification failed |
+| 23 | `AttestationKeyNotFound` | No attestation public key registered |
+| 24 | `InvalidNonce` | Attestation nonce already consumed or outside the bounded 256-nonce window |
+| 45 | `AttestationExpired` | Attestation `expires_at` is in the past |
+| 46 | `AttestationWindowTooLarge` | Attestation `expires_at` exceeds the max-future tolerance |
+| 25 | `RegistrationCooldown` | Validator registration before cooldown window elapsed |
+| 26 | `DuplicateAttestation` | Same validator already attested to this claim in current round |
+| 27 | `TooManyPendingVotes` | Validator has MAX_PENDING_VOTES_PER_VALIDATOR outstanding votes |
+| 28 | `ThresholdModeRequiresAttestation` | threshold >= 2, must use attest_milestone bypass |
+| 29 | `RegistrationCallFailed` | Cross-contract call to the registration contract failed |
+| 30 | `MigrationNotActive` | Migration window not currently active |
+| 31 | `MilestoneAlreadyExists` | Milestone already exists at (player_id, milestone_index) with different content |
+| 32 | `DisputeAlreadyExists` | Dispute already exists at (player_id, milestone_index) with different content |
+| 33 | `ValidatorRecordEvicted` | Validator record fully evicted, unrecoverable |
+| 34 | `MilestoneRecordEvicted` | Milestone record fully evicted, unrecoverable |
+| 35 | `NotEligibleToReReview` | Caller is not a currently-active validator |
+| 36 | `MilestoneNotFlagged` | Milestone not currently flagged as pending re-review |
+| 37 | `DisputeRequiresJury` | resolve_dispute called on a dispute requiring jury resolution — use tally_dispute instead |
+| 38 | `NotJuryDispute` | cast_dispute_vote/tally_dispute called on non-jury dispute |
+| 39 | `VotingWindowClosed` | cast_dispute_vote called after voting window closed |
+| 40 | `ConflictOfInterest` | cast_dispute_vote called by the validator who approved the disputed milestone |
+| 41 | `AlreadyVoted` | cast_dispute_vote called by a validator who already voted on this dispute |
+| 42 | `VotingWindowOpen` | tally_dispute called before voting window closes, vote count is tied |
+| 43 | `QuorumNotReached` | tally_dispute called before quorum of votes has been reached |
+
+### `ProgressError` (progress)
+
+| Code | Variant | Cause |
+|------|---------|-------|
+| 1 | `AlreadyInitialized` | `initialize` called more than once |
+| 2 | `NotInitialized` | Operation before `initialize` |
+| 3 | `ContractPaused` | Circuit breaker is active |
+| 4 | `Unauthorized` | Caller is not the whitelisted verification or scout_access contract |
+| 5 | `InvalidProgressTransition` | Level skip or reversal attempted |
+| 6 | `AlreadyAtMaxLevel` | Player is already at `EliteTier` |
+| 7 | `PlayerNotFound` | History index out of range |
+| 8 | `Overflow` | History counter overflowed the maximum u32 value |
+| 9 | `RegistrationCallFailed` | Cross-contract call to registration contract failed |
+| 10 | `PendingAdminNotSet` | `accept_admin` called without a prior `propose_admin` |
+| 11 | `MigrationNotActive` | Migration window not currently active |
+| 12 | `HistoryAlreadyExists` | HistoryEntry already exists at (player_id, history_index) with different content |
+| 13 | `MerkleRootMismatch` | Independently recomputed Merkle root doesn't match expected root |
+| 14 | `InvalidHistoryIndex` | Supplied history_index is zero, non-contiguous, or would overwrite existing entry |
+| 15 | `PlayerLevelRecordEvicted` | Player-level record fully evicted, unrecoverable |
+
+### `ScoutAccessError` (scout_access)
+
+| Code | Variant | Cause |
+|------|---------|-------|
+| 1 | `AlreadyInitialized` | `initialize` called more than once |
+| 2 | `NotInitialized` | Operation before `initialize` |
+| 3 | `ContractPaused` | Circuit breaker is active |
+| 4 | `Unauthorized` | Caller not authorized; or non-Elite tier for `log_trial_offer` |
+| 5 | `InsufficientFee` | Scout underpaid a subscription or contact fee |
+| 6 | `ScoutNotSubscribed` | No subscription record found |
+| 7 | `SubscriptionExpired` | Subscription past `expires_at` |
+| 8 | `AlreadyContacted` | Duplicate `pay_to_contact` for same player |
+| 9 | `InvalidTier` | Unknown subscription tier |
+| 10 | `Overflow` | Fee accumulation arithmetic overflowed |
+| 11 | `TrialOfferNotFound` | Trial offer index out of range |
+| 12 | `SubscriptionDowngradeNotAllowed` | Downgrade attempted while subscription is active |
+| 13 | **Reserved** | Code 13 is intentionally reserved and must not be assigned; it is held open to prevent future contributors from accidentally colliding with any external consumers that may already treat 13 as an expected (if undocumented) gap. See docs/VERSIONING.md — error-code compatibility. |
+| 14 | `ProgressCallFailed` | Cross-contract `advance_level` failed in `confirm_trial_offer` |
+| 15 | `InvalidInput` | Zero/negative fee field in `FeeConfig`, or bad token address in `initialize` |
+| 16 | `NoFeesToWithdraw` | No accumulated fees to withdraw |
+| 17 | `UpgradeTooSoon` | `subscribe` called before 1-hour minimum interval elapsed |
+| 18 | `ContactQuotaExceeded` | Platform-wide contact quota for current period hit |
+| 19 | `TrialOfferRateLimited` | Trial offer to same player within cooldown window |
+| 20 | `ProContactLimitReached` | Pro-tier scout hit per-period contact limit |
+| 21 | `PendingAdminNotSet` | `accept_admin` called without a prior `propose_admin` |
+| 22 | `TrialOfferAlreadyConfirmed` | `confirm_trial_offer` called twice for same offer |
+| 23 | `TrialOfferExpired` | Legacy compatibility code; expiry confirmation now commits the refund and returns success |
+| 24 | `NoPendingFeeConfig` | No pending fee config proposal exists for `activate_fee_config` |
+| 25 | `FeeConfigProposalNotReady` | Pending fee config proposal activation delay has not yet elapsed |
+| 26 | `PendingFeeConfigAlreadyExists` | A fee config proposal already exists; must activate or replace it |
+| 27 | `ScoutNotVerified` | Scout is not verified; cannot subscribe to Pro tier |
+| 28 | `AutoRenewNotEnabled` | `renew_if_due` called but auto-renewal is not enabled |
+| 29 | `MigrationNotActive` | Migration window not currently active |
+| 30 | `SubscriptionAlreadyExists` | Subscription already exists for this scout address with different content |
+| 31 | `ContactAlreadyExists` | ContactRecord already exists for (player_id, scout) with different content |
+| 32 | `TrialOfferAlreadyExists` | TrialOffer already exists at (player_id, trial_index) with different content |
+| 33 | `AutoRenewAlreadyExists` | AutoRenew flag already exists for this scout with a different value |
+| 34 | `FeeConfigHistoryAlreadyExists` | Fee-config history replay conflicts with history already stored |
+| 35 | `SubscriptionRecordEvicted` | Subscription record fully evicted, unrecoverable |
+| 36 | `PayToContactPaused` | `pay_to_contact` function is paused independently of whole-contract pause |
+| 37 | `TrialEscrowNotOutstanding` | `admin_refund_trial_escrow` targeted pair with no outstanding `TrialEscrow` entry |
+| 38 | `GrantNotFound` | `admin_revoke_evidence_access` or `revoke_evidence_access` targeted (player_id, scout) pair with no `EvidenceAccessGrant` record |
+| 42 | `GrantAlreadyRevoked` | `revoke_evidence_access` (player-initiated) targeted a grant that was already revoked |
+| 43 | `PlayerNotVerified` | `revoke_evidence_access` caller's wallet does not own the `player_id` passed, or the registration contract is not wired |
+
+---
+
+## Error Handling — ProgressCallFailed
+
+### What it is
 
 `ProgressCallFailed` is returned by two contracts when the cross-contract call to `progress.advance_level` fails at runtime:
 
@@ -77,72 +731,134 @@ See `bindings/README.md` for full usage details.
 | `verification` | `VerificationError::ProgressCallFailed` | 12 |
 | `scout_access` | `ScoutAccessError::ProgressCallFailed` | 14 |
 
-#### When it is returned
+### When it is returned
 
-- **`verification` contract** — inside `approve_milestone`, after the milestone record is written to storage, the contract calls `progress.advance_level`. If that call fails for any reason (contract not deployed, not wired, panics, or returns an unexpected error), `ProgressCallFailed` is returned.
-- **`scout_access` contract** — inside `log_trial_offer`, after the trial offer is recorded, the contract calls `progress.advance_level` to advance the player to Level 3. A failure in that call returns `ProgressCallFailed`.
+- **`verification.approve_milestone`** — after writing the milestone to storage, calls `progress.advance_level`. Any failure other than `AlreadyAtMaxLevel` returns `ProgressCallFailed` and reverts the entire transaction.
+- **`scout_access.confirm_trial_offer`** — after verifying the offer record, calls `progress.advance_level` to advance the player to Level 3. Any failure returns `ProgressCallFailed` and reverts the transaction.
 
-#### Cause and effect
+### Diagnostic events (new)
 
-> **Key invariant:** The milestone or trial offer record is **already committed** to storage before the cross-contract call. If `ProgressCallFailed` is returned, the on-chain record exists but the player's progress level was **not** advanced.
+Before returning `ProgressCallFailed`, both contracts now emit a `progress_call_failed` diagnostic event with the raw error discriminant so indexers can detect failures by scanning receipts without parsing error codes.
 
-This split state occurs because Soroban does not automatically roll back storage writes on a sub-call failure unless the entire transaction is reverted. The milestone write and the cross-contract call are in the same transaction, so a `ProgressCallFailed` error aborts the entire transaction — no partial state is committed. The player's level is not advanced and the milestone is not recorded.
+When `AlreadyAtMaxLevel` is silently skipped in `approve_milestone`, a `level_advancement_skipped` event is emitted with `reason = "AlreadyAtMaxLevel"`.
 
-In short: `ProgressCallFailed` means the entire `approve_milestone` or `log_trial_offer` transaction was reverted.
+When the progress contract is not wired, a `progress_contract_not_set` event is emitted (committed to the ledger) before returning.
 
-#### Recommended recovery steps for SDK consumers
+### Recovery steps
 
-1. **Re-query the player level** immediately after receiving `ProgressCallFailed`:
-   ```typescript
-   const player = await progressClient.getPlayer({ player_id });
-   console.log("Current level:", player.level);
-   ```
-   If the level did not advance, the root cause is a wiring problem, not a data issue.
-
-2. **Check if the progress contract is wired** — `ProgressCallFailed` almost always means the verification or scout_access contract does not have the progress contract address registered. Confirm by calling:
+1. Run the wiring diagnostic:
    ```bash
-   stellar contract invoke --id $VERIFICATION_CONTRACT_ID -- get_progress_contract
+   ./scripts/verify-cross-contract-wiring.sh testnet
    ```
-   An empty or missing result confirms the wiring is absent.
-
-3. **Re-wire the contracts** — run `initialize.sh` again or apply the manual wiring commands documented in [docs/DEPLOYMENT.md — Cross-Contract Wiring](docs/DEPLOYMENT.md#common-mistakes):
+   It checks all eight documented wiring links: `verification.set_progress_contract`, `verification.set_registration_contract`, `registration.set_progress_contract`, `progress.set_verification_contract`, `progress.set_registration_contract`, `progress.set_scout_access_contract`, `scout_access.set_progress_contract`, and `scout_access.set_registration_contract`.
+2. Re-wire if any link shows ❌:
    ```bash
    ./scripts/initialize.sh testnet
    ```
+3. Retry the original transaction — because `ProgressCallFailed` aborts the whole transaction, there is no partial state to clean up.
 
-4. **Alert the admin** if the error is systematic (every `approve_milestone` call fails) — this indicates the progress contract was never wired or was re-deployed without re-running `initialize.sh`.
+> **Retry only the original entry point, never `advance_level` directly (Issue #811 follow-up).**
+> `progress.advance_level` is **not** internally idempotent. It is a monotonic state-machine step: it reads the current level, computes `next()`, and appends a history entry. It does **not** key off `milestone_ref`, so calling it twice with the *same* `milestone_ref` advances two tiers and writes two history entries that are indistinguishable from a legitimate double advance.
+>
+> Retry is safe **only** because each production caller holds its own dedup key and the whole transaction reverts on failure:
+> - `verification.approve_milestone` → `DataKey::EvidenceUsed(evidence_hash)` (returns `DuplicateEvidence`, code 16)
+> - `scout_access.confirm_trial_offer` → `DataKey::ConfirmationNonce(...)` / absent `TrialEscrow` (returns `TrialOfferAlreadyConfirmed`, code 22)
+>
+> Because the failed attempt reverts, its dedup key is rolled back too, so the retry proceeds exactly once. An operator or new contract that calls `progress.advance_level` directly gets **no such protection** and must supply its own dedup key. Any new whitelisted caller of `advance_level` must do the same.
+>
+> Bounded blast radius: a replay can over-advance by at most three tiers; once at `EliteTier` further calls fail closed with `AlreadyAtMaxLevel` and write nothing. On the secondary (`scout_access`) path, a `milestone_ref` of `0` or one beyond the verification contract's real milestone count is rejected with `InvalidProgressTransition` (#457). Both are verified in `contracts/progress/tests/issue_811_idempotency.rs`.
 
-5. **Retry the transaction** — once wiring is confirmed, the original `approve_milestone` or `log_trial_offer` call can be retried safely. Because the full transaction was reverted, there is no duplicate-write risk.
-
-#### Summary
-
-| Symptom | Likely cause | Fix |
-|---------|-------------|-----|
-| Every `approve_milestone` returns `ProgressCallFailed` | Progress contract not wired after deployment | Run `./scripts/initialize.sh` |
-| Intermittent `ProgressCallFailed` | Progress contract re-deployed without re-wiring | Re-wire with `set_progress_contract` |
-| `ProgressCallFailed` on `log_trial_offer` | Scout_access → progress link missing | Re-run `initialize.sh` or wire manually |
-
-For the full wiring procedure, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+> **Tested guarantee (Issue #811):** This all-or-nothing claim is backed by adversarial tests, not just this prose explanation. See:
+> - `contracts/verification/tests/adversarial_atomicity.rs` — proves `approve_milestone` behavior on bad-wired progress contract and validates the `DuplicateEvidence` idempotency token as defense-in-depth.
+> - `contracts/scout_access/tests/adversarial_atomicity.rs` — equivalent tests for `confirm_trial_offer`, including the `TrialOfferAlreadyConfirmed` double-confirm guard.
+> - `contracts/progress/tests/issue_811_idempotency.rs` — audits the shared `advance_level` call target itself: pins the non-idempotent double-apply behaviour, proves rejected calls leave no partial state, and proves the `AlreadyAtMaxLevel` / `InvalidProgressTransition` fail-closed paths.
+>
+> **Idempotency defense-in-depth:** The `DuplicateEvidence` check (code 16) on `approve_milestone` acts as an explicit idempotency token: if a future refactor altered write ordering and partial state were committed, a retried call with the same evidence hash would return `DuplicateEvidence` rather than silently double-counting. For `confirm_trial_offer`, the absence of the `TrialEscrow` record (removed on first confirmation) serves the same purpose — a second call returns `TrialOfferAlreadyConfirmed` (code 22).
 
 ---
 
 ## Events Reference
 
-| Event topic | Emitting contract | Payload fields |
-|-------------|------------------|---------------|
-| `player_registered` | registration | `player_id`, `wallet` |
-| `milestone_approved` | verification | `player_id`, `milestone`, `validator` |
-| `progress_updated` | progress | `player_id`, `old_level`, `new_level` |
-| `scout_subscribed` | scout_access | `scout`, `tier`, `expires_at` |
-| `player_contacted` | scout_access | `scout`, `player_id` |
-| `trial_offer_logged` | scout_access | `scout`, `player_id`, `details_hash` |
-| `fees_withdrawn` | scout_access | `to`, `amount` |
+### verification
+
+| Event | Topics | Data | Committed? |
+|-------|--------|------|-----------|
+| `contract_initialized` | event_name | admin (Address) | ✅ |
+| `milestone_approved` | event_name, validator (Address), milestone_index (u32) | player_id (u64), description (String), evidence_hash (String) | ✅ |
+| `validator_registered` | event_name, wallet (Address) | wallet (Address), credentials (String) | ✅ |
+| `validator_revoked` | event_name | wallet (Address), reason (String) | ✅ |
+| `validator_votes_invalidated` | event_name | wallet (Address) | ✅ |
+| `validator_restored` | event_name | wallet (Address) | ✅ |
+| `validator_transferred` | event_name | old_wallet (Address), new_wallet (Address) | ✅ |
+| `milestone_flagged` | event_name, player_id (u64), milestone_index (u32) | () | ✅ |
+| `milestone_disputed` | event_name, player_id (u64), milestone_index (u32) | reason (String) | ✅ |
+| `dispute_resolved` | event_name, player_id (u64), milestone_index (u32) | upheld (bool) | ✅ |
+| `progress_contract_updated` | event_name | new_address (Address) | ✅ |
+| `contract_paused` | event_name | admin (Address) | ✅ |
+| `contract_unpaused` | event_name | admin (Address) | ✅ |
+| `admin_transfer_proposed` | event_name | old_admin (Address), new_admin (Address) | ✅ |
+| `admin_transferred` | event_name | old_admin (Address), new_admin (Address) | ✅ |
+| `level_advancement_skipped` | event_name, player_id (u64) | reason (String) | ✅ |
+| `progress_contract_not_set` | event_name, player_id (u64) | `()` | ✅ |
+| `progress_call_failed` | event_name, player_id (u64) | error_code (u32) | ⚠️ diagnostic only |
+
+### progress
+
+| Event | Topics | Data | Committed? |
+|-------|--------|------|-----------|
+| `progress_updated` | event_name, updated_by (Address) | player_id (u64), old_level, new_level | ✅ |
+| `player_level_reset` | event_name | player_id (u64), old_level, new_level | ✅ |
+| `contract_paused` | event_name | admin (Address) | ✅ |
+| `contract_unpaused` | event_name | admin (Address) | ✅ |
+| `admin_transfer_proposed` | event_name | old_admin (Address), new_admin (Address) | ✅ |
+| `admin_transferred` | event_name | old_admin (Address), new_admin (Address) | ✅ |
+
+### scout_access
+
+| Event | Topics | Data | Committed? |
+|-------|--------|------|-----------|
+| `contract_initialized` | event_name, admin (Address) | admin (Address) | ✅ |
+| `scout_subscribed` | event_name, scout (Address) | tier (SubscriptionTier), fee_paid (i128) | ✅ |
+| `subscription_created` | event_name, scout (Address) | tier (SubscriptionTier), subscribed_at (u64), expires_at (u64) | ✅ |
+| `subscription_renewed` | event_name, scout (Address) | tier (SubscriptionTier), subscribed_at (u64), expires_at (u64) | ✅ |
+| `player_contacted` | event_name, scout (Address) | player_id (u64), fee_paid (i128) | ✅ |
+| `trial_offer_logged` | event_name, scout (Address) | player_id (u64) | ✅ |
+| `trial_offer_confirmed` | event_name, scout (Address) | player_id (u64), index (u32) | ✅ |
+| `trial_offer_expired` | event_name, scout (Address) | player_id (u64), index (u32) | ✅ |
+| `fees_withdrawn` | event_name | to (Address), amount (i128) | ✅ |
+| `fee_config_updated` | event_name | old_config (FeeConfig), new_config (FeeConfig) | ✅ |
+| `subscription_refunded` | event_name, scout (Address) | amount (i128) | ✅ |
+| `contract_paused` | event_name | admin (Address) | ✅ |
+| `contract_unpaused` | event_name | admin (Address) | ✅ |
+| `admin_transfer_proposed` | event_name | old_admin (Address), new_admin (Address) | ✅ |
+| `admin_transferred` | event_name | old_admin (Address), new_admin (Address) | ✅ |
+| `progress_contract_not_set` | event_name, player_id (u64) | `()` | ✅ |
+| `progress_call_failed` | event_name, player_id (u64) | error_code (u32) | ⚠️ diagnostic only |
+
+> **Diagnostic-only events** appear in the transaction receipt's diagnostic stream but are not committed to the ledger. Indexers must scan receipts rather than the standard Horizon event stream to capture them.
 
 ---
 
 ## Common Integration Pitfalls
 
-- **Wiring must be re-run after every fresh deployment.** Contract IDs change on each deploy; the old wiring references stale IDs.
+- **Wiring must be re-run after every fresh deployment.** Contract IDs change on each deploy; old wiring references stale IDs.
 - **`initialize` is one-time per contract.** Calling it twice returns `AlreadyInitialized` (code 1). This is not an error — the contract is already ready.
-- **Error codes are per-contract, not global.** Code `4` means `Unauthorized` in the verification contract but `Unauthorized` (different context) in scout_access. Always check which contract returned the error.
-- **Subscription tier check is enforced on-chain.** Basic scouts cannot call `pay_to_contact` without an active subscription. Elite is required for `log_trial_offer`.
+- **`revoke_validator` now takes an explicit `RevocationSeverity` as the second parameter.** Pass `RevocationSeverity::Routine` for a routine deactivation (no cascade) or `RevocationSeverity::ForCause` for a misconduct revocation that flags all prior milestone approvals as pending re-review. Pass `None` for reason if no reason is needed. The old single-`reason` signature no longer exists — update all callers. For validators with more than 50 prior approvals, call `continue_revocation_cascade(wallet)` (admin only) one or more times until the `revocation_cascade_complete` event is emitted.
+- **`log_trial_offer` does NOT immediately advance the player's level.** It records the offer and escrows a fee. Level advancement happens in `confirm_trial_offer`, which must be called by the player wallet.
+- **Trial offer two-step flow:** `log_trial_offer` (scout) → `confirm_trial_offer` (player). Missing the confirmation step means the player stays at Level 2.
+- **Prefer `get_trial_offers_page(player_id, offset, limit)` over `get_all_trial_offers(player_id)`.** `get_all_trial_offers` silently returns only the 20 oldest offers for a player — it does not error and does not indicate truncation, so clients that rely on it will miss newer offers. `get_trial_offers_page` returns a bounded slice starting at `offset` (page size capped server-side); iterate with increasing `offset` until a short page is returned. Use `get_trial_count` to size the iteration.
+- **Refund vs. rescue for stuck trial escrows.** `admin_refund_trial_escrow(player_id, offer_index, to)` is the normal admin path and requires the `TrialOffer` record to still exist (it returns `TrialEscrowNotOutstanding`, code 37, if no escrow is outstanding). If the `TrialOffer` record has been evicted or is otherwise missing while the escrow remains, use `admin_rescue_orphan_trial_escrow(player_id, offer_index, to)` — the admin safety valve that releases the orphaned escrow to `to` without needing the offer record. Both are admin-only. Follow the procedure in [`docs/TRIAL_ESCROW_IMPACT.md`](docs/TRIAL_ESCROW_IMPACT.md) and [`docs/RUNBOOK.md`](docs/RUNBOOK.md) before invoking either; do not call them speculatively.
+- **Admin rotation is two-step.** Current admin calls `propose_admin`, then the pending address calls `accept_admin`. The old admin remains active until acceptance.
+- **Error codes are per-contract, not global.** Code `4` means `Unauthorized` in verification but also `Unauthorized` (different context) in scout_access. Code `9` means `ContractPaused` in registration but `RegistrationCallFailed` in progress. Always check which contract returned the error.
+- **Subscription tier check is enforced on-chain.** Basic scouts cannot call `pay_to_contact`. Elite is required for `log_trial_offer`.
+- **`filter_players` requires `offset` and `limit`.** The limit is capped at 50 server-side.
+- **A scout's verified status can change.** `registration.unverify_scout` (admin only) revokes verification, and `registration.deregister_scout` (admin only) erases the scout record entirely. `scout_access` re-checks verification for Pro/Elite gating, so a previously verified scout may start receiving `ScoutNotVerified` (code 27) on `subscribe`. Do not cache verification status indefinitely.
+- **`purge_player_data(player_id, cursor) -> (u32, bool)` is paged.** It exists on `scout_access`, `verification` and `progress` (see `docs/PLAYER_ERASURE.md`). Loop until `more == false`, passing the returned `next_cursor` back as `cursor`. Never start from a non-zero cursor — the first call must use `cursor = 0`. Erasure order is scout_access → verification → progress → registration.
+- **Use `progress.get_history_since_v2`, not `get_history_since`.** The old getter silently truncates at its internal limit / 10-page scan cap. v2 returns `HistorySince { entries, truncated }`; when `truncated` is `true`, more matching entries exist — page further with `get_history_page_with_cursor` (or advance `since_timestamp`) until it is `false`.
+- **Don't hard-code verification limits.** Call `verification.get_limits()` and validate credentials length, description length, and specialization count client-side against the returned `VerificationLimits` before submitting.
+- **`set_progress_contract` on verification is first-call-only.** Returns `AlreadyConfigured` (code 11) if called again. Use `update_progress_contract` to re-wire.
+- **Wiring setters reject the wrong contract kind.** Each of the eight wiring setters calls `contract_kind()` on the supplied address and returns `InvalidPeerContract` if it does not match the expected kind (e.g. passing the progress contract ID to `set_registration_contract`). The address is not stored, so simply retry with the correct ID. Call `contract_kind()` on an ID to confirm what it is before wiring.
+- **`approve_milestone` stops working once k-of-n threshold mode is enabled.** Once an admin calls `set_milestone_threshold(n)` with `n >= 2`, both `approve_milestone` and `submit_attested_milestone` return `ThresholdModeRequiresAttestation` (code 28) for every subsequent call — all milestone submissions must go through `attest_milestone` instead. Call `get_milestone_threshold()` to check the current mode before integrating; a return value of `1` (the default) means single-signature mode is still active and `approve_milestone` works as normal. A return value of `2` or higher means every validator must call `attest_milestone` independently, and the milestone commits automatically once the threshold number of distinct active validators have voted for the same `(player_id, evidence_hash)` claim within the configured voting window.
+
+> **⚠️ Verify `log_trial_offer` behavior against the live contract before integrating.**
+> The documented two-step flow (`log_trial_offer` → `confirm_trial_offer`) and level-advancement mechanics in this file reflect the contract's *intended* behavior at the time of writing. However, on-chain behavior is the ultimate source of truth. Before building any integration that depends on trial offers, **call `log_trial_offer` on the target network (testnet/mainnet) with a test scout account and inspect the resulting transaction: confirm the offer is recorded, the fee is escrowed, and no level advancement occurs until `confirm_trial_offer` is called by the player.** Cross-reference the emitted `trial_offer_logged` event and the progress contract's state against this document. If the live contract diverges from the docs, the live contract wins — file an issue to update the docs, but code to the live behavior.

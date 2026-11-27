@@ -5,7 +5,28 @@
 # Requires .env.contracts to exist (written by deploy.sh).
 set -euo pipefail
 
-NETWORK="${1:-testnet}"
+NETWORK="testnet"
+STRICT=0
+for arg in "$@"; do
+  case "$arg" in
+    --strict) STRICT=1 ;;
+    testnet|mainnet|local) NETWORK="$arg" ;;
+    *)
+      echo "ERROR: unknown argument: $arg" >&2
+      echo "Usage: $0 [testnet|mainnet|local] [--strict]" >&2
+      exit 1
+      ;;
+  esac
+done
+# `stellar contract invoke` requires a --source-account even for read-only
+# calls. Any funded account works for a simulation-only read; callers set
+# STELLAR_SOURCE_ACCOUNT (an identity name or secret key), falling back to
+# DEPLOYER_SECRET.
+SOURCE_ACCOUNT="${STELLAR_SOURCE_ACCOUNT:-${DEPLOYER_SECRET:-}}"
+if [[ -z "$SOURCE_ACCOUNT" ]]; then
+  echo "ERROR: set STELLAR_SOURCE_ACCOUNT (or DEPLOYER_SECRET) to a Stellar identity or secret key." >&2
+  exit 1
+fi
 # shellcheck source=/dev/null
 source .env.contracts
 
@@ -22,34 +43,78 @@ FAILED=0
 
 for name in "${CONTRACTS[@]}"; do
   id="${IDS[$name]}"
-  echo "==> Checking health() on $name ($id)..."
+  if [[ -z "$id" ]]; then
+    echo "ERROR: Contract ID for $name is not set in .env.contracts." >&2
+    exit 1
+  fi
 
-  response=$(stellar contract invoke \
-    --id "$id" \
+  echo "Checking health of $name ($id) on $NETWORK..."
+  result=$(stellar contract invoke \
     --network "$NETWORK" \
-    -- health 2>&1)
+    --source-account "$SOURCE_ACCOUNT" \
+    --id "$id" \
+    -- health)
 
-  echo "    Response: $response"
+  # Parse JSON result or check fields using python
+  health_status=$(python3 -c '
+import sys, json
+try:
+    raw = sys.stdin.read().strip()
+    # Handle soroban json output formats
+    if raw.startswith("{"):
+        d = json.loads(raw)
+    else:
+        # Evaluate soroban scval or string representation if needed
+        # Or parse standard json output from stellar-cli
+        d = json.loads(raw)
+    
+    init = d.get("initialized", False)
+    paused = d.get("paused", False)
+    # Field is absent on older deployments; treat absence as not paused.
+    pay_paused = bool(d.get("pay_to_contact_paused", False))
+    mig_open = d.get("migration_window_open", False)
+    
+    if not init:
+        print("NOT_INITIALIZED")
+    elif paused:
+        print("PAUSED")
+    elif sys.argv[1] == "mainnet" and mig_open:
+        print("MIGRATION_WINDOW_OPEN_MAINNET")
+    elif pay_paused:
+        print("PAY_TO_CONTACT_PAUSED")
+    else:
+        print("OK")
+except Exception as e:
+    print(f"ERROR: {e}")
+' "$NETWORK" <<< "$result")
 
-  if echo "$response" | grep -q '"initialized":false'; then
-    echo "    FAIL: $name returned initialized: false"
+  if [[ "$health_status" == "OK" ]]; then
+    echo "    OK: $name is healthy."
+  elif [[ "$health_status" == "NOT_INITIALIZED" ]]; then
+    echo "    FAIL: $name is NOT initialized!" >&2
     FAILED=1
-  elif echo "$response" | grep -q '"paused":true'; then
-    echo "    FAIL: $name returned paused: true"
+  elif [[ "$health_status" == "PAUSED" ]]; then
+    echo "    FAIL: $name is PAUSED!" >&2
     FAILED=1
-  elif echo "$response" | grep -q '"initialized":true'; then
-    echo "    OK: $name is healthy"
+  elif [[ "$health_status" == "MIGRATION_WINDOW_OPEN_MAINNET" ]]; then
+    echo "    FAIL: $name has migration window OPEN on mainnet!" >&2
+    FAILED=1
+  elif [[ "$health_status" == "PAY_TO_CONTACT_PAUSED" ]]; then
+    if [[ $STRICT -ne 0 ]]; then
+      echo "    FAIL: $name has pay_to_contact PAUSED (strict mode)!" >&2
+      FAILED=1
+    else
+      echo "    WARN: $name has pay_to_contact PAUSED — scouts cannot pay to contact players." >&2
+    fi
   else
-    echo "    FAIL: $name returned unexpected health response"
+    echo "    FAIL: $name health check failed output: $result ($health_status)" >&2
     FAILED=1
   fi
 done
 
-if [[ "$FAILED" -ne 0 ]]; then
-  echo ""
-  echo "ERROR: One or more contracts failed the health check. See output above for details."
+if [[ $FAILED -ne 0 ]]; then
+  echo "ERROR: One or more health checks failed." >&2
   exit 1
 fi
 
-echo ""
-echo "==> All contracts are healthy."
+echo "All health checks passed successfully."
