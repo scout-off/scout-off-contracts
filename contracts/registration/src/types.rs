@@ -210,6 +210,12 @@ pub enum DataKey {
     /// Re-wiring epoch for `DataKey::ProgressContract`, bumped by every
     /// `set_progress_contract` call.
     ProgressContractEpoch,
+    /// Address of the verification contract that receives erasure tombstones
+    /// from `deregister_player` (issue #1622). Set by `set_verification_contract`.
+    VerificationContract,
+    /// Address of the scout_access contract that receives erasure tombstones
+    /// from `deregister_player` (issue #1622). Set by `set_scout_access_contract`.
+    ScoutAccessContract,
     /// Explicit player level override used for admin-seeded players or
     /// progress updates that should be visible to reads even before a progress
     /// contract is wired.

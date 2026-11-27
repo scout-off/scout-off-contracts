@@ -457,6 +457,34 @@ impl RegistrationContract {
         Ok(())
     }
 
+    /// Store the verification contract address that `deregister_player`
+    /// pushes erasure tombstones to (admin only, issue #1622). Re-settable.
+    pub fn set_verification_contract(env: Env, addr: Address) -> Result<(), ScoutChainError> {
+        let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        if !scoutchain_shared_types::verify_peer(&env, &addr, "verification", 0) {
+            return Err(ScoutChainError::InvalidPeerContract);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::VerificationContract, &addr);
+        events::wiring_updated(&env, &admin, "verification_contract", &addr, 0);
+        Ok(())
+    }
+
+    /// Store the scout_access contract address that `deregister_player`
+    /// pushes erasure tombstones to (admin only, issue #1622). Re-settable.
+    pub fn set_scout_access_contract(env: Env, addr: Address) -> Result<(), ScoutChainError> {
+        let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        if !scoutchain_shared_types::verify_peer(&env, &addr, "scout_access", 0) {
+            return Err(ScoutChainError::InvalidPeerContract);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::ScoutAccessContract, &addr);
+        events::wiring_updated(&env, &admin, "scout_access_contract", &addr, 0);
+        Ok(())
+    }
+
     /// Return the configured progress contract address, or `None` if the
     /// link has not been configured. Read-only and requires no auth.
     pub fn get_progress_contract(env: Env) -> Option<Address> {
@@ -1773,7 +1801,7 @@ impl RegistrationContract {
 
         profile.verification = ScoutVerificationRecord {
             verified: true,
-            verified_by: Some(admin),
+            verified_by: Some(admin.clone()),
             verified_at: Some(env.ledger().timestamp()),
             evidence_ref: None,
             method: Some(String::from_str(&env, "admin_manual")),
