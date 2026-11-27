@@ -53,16 +53,6 @@ export interface JwtPayload {
   aud?: string | string[];
 }
 
-export interface JwtPayload {
-  sub: string;
-  role: string;
-  iat?: number;
-  exp?: number;
-  jti?: string;
-  iss?: string;
-  aud?: string | string[];
-}
-
 const MIN_JWT_SECRET_BYTES = 32;
 
 const DEFAULT_UNKNOWN_REFRESH_TOKEN_TTL_SECONDS = 60 * 60; // 1 hour
@@ -283,17 +273,3 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 }
 
 export const config = loadConfig();
-
-/**
- * Single verification path for backend-issued JWTs.
- *
- * Enforces the HS256 algorithm plus the configured `iss` and `aud` claims so
- * tokens minted by any other service sharing JWT_SECRET are rejected.
- */
-export function verifyJwt(token: string): JwtPayload {
-  return jwt.verify(token, config.jwtSecret, {
-    algorithms: ["HS256"],
-    issuer: config.jwtIssuer,
-    audience: config.jwtAudience,
-  }) as JwtPayload;
-}
