@@ -196,3 +196,38 @@ fn cost_revoke_validator_cascade_50_limit_at_500_milestones() {
         REVOKE_VALIDATOR_CASCADE_50_CPU_BUDGET,
     );
 }
+
+/// `get_validator_activity_report` reads a counter, so its cost must not
+/// scale with the validator's distinct-player count (issue #1806).
+const ACTIVITY_REPORT_CPU_BUDGET: u64 = 15_000_000;
+
+#[test]
+fn cost_validator_activity_report_with_100_players() {
+    let (env, client) = setup();
+    let validator = Address::generate(&env);
+    client.register_validator(
+        &validator,
+        &String::from_str(&env, "UEFA-A-License-2026"),
+        &String::from_str(&env, ""),
+        &Vec::new(&env),
+    );
+    for i in 0u32..100 {
+        client.approve_milestone(
+            &validator,
+            &(30_000u64 + i as u64),
+            &String::from_str(&env, "verified achievement"),
+            &cid_for_budget(&env, 30_000 + i),
+            &None,
+        );
+    }
+
+    env.cost_estimate().budget().reset_default();
+    let report = client.get_validator_activity_report(&validator);
+    assert_eq!(report.distinct_player_count, 100);
+    assert_eq!(report.milestone_count, 100);
+    assert_cpu_budget(
+        &env,
+        "get_validator_activity_report(100 players)",
+        ACTIVITY_REPORT_CPU_BUDGET,
+    );
+}

@@ -20,7 +20,7 @@
  *       SubscriptionDowngradeNotAllowed (12) — downgrade while active
  *       UpgradeTooSoon (17)                  — < 1 hour since last subscribe
  *       InvalidInput (15)                    — bad tier value
- *       ContractPaused (code varies)         — circuit breaker active
+ *       ContractPaused (3)                   — circuit breaker active
  *
  *   Step 2 — pay_to_contact(scout, player_id)
  *     Unlocks a player's contact details. Scout must have an active
@@ -28,11 +28,11 @@
  *     Auth: the scout's wallet must sign.
  *     Errors:
  *       ScoutNotSubscribed (6)           — no active subscription
- *       SubscriptionExpired (varies)     — subscription has lapsed
- *       InsufficientTier (varies)        — Basic scout attempting contact
- *       ProContactLimitReached (20)      — Pro scout hit monthly cap
- *       AlreadyContacted (varies)        — scout already contacted this player
- *       PlayerNotFound (varies)          — invalid player_id
+ *       SubscriptionExpired (7)          — subscription has lapsed
+ *       InsufficientTier (8)             — Basic scout attempting contact
+ *       ProContactLimitReached (20)      — Pro scout hit per-subscription-period cap (`pro_contact_limit`)
+ *       AlreadyContacted (21)            — scout already contacted this player
+ *       PlayerNotFound (22)              — invalid player_id
  *
  * See `contracts/scout_access/src/lib.rs` and `docs/CONTRACT_REFERENCE.md`
  * for the on-chain contract this wraps.
@@ -56,7 +56,7 @@ export interface SubscribeParams {
   /**
    * Subscription tier to purchase.
    * - Basic  — browse verified players (Level 1+); cannot call pay_to_contact
-   * - Pro    — browse all levels + contact up to `pro_contact_limit` players/month
+   * - Pro    — browse all levels + contact up to `pro_contact_limit` players per subscription period
    * - Elite  — unlimited contacts + can log trial offers
    */
   tier: "Basic" | "Pro" | "Elite";
