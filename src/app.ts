@@ -7,8 +7,6 @@ import {
   verifyChallengeTx,
   issueSession,
   refreshSession,
-  checkChallengeLimit,
-  decodeTokenExpiry,
 } from "./services/sep10";
 import { AuthError } from "./services/errors";
 import { requireAuth, requireRole } from "./middleware/auth";
