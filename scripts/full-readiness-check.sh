@@ -9,8 +9,13 @@
 # correctly wired before routing traffic.
 #
 # Usage:
-#   ./scripts/full-readiness-check.sh [testnet|mainnet|local]
+#   ./scripts/full-readiness-check.sh [testnet|mainnet|local] [--strict]
 #   RELEASE_TAG=v1.2.3 ./scripts/full-readiness-check.sh mainnet   # also verify deployed WASM hashes
+#
+# Options:
+#   --strict   Treat a function-scoped pause (pay_to_contact_paused) as a
+#              failure instead of a warning. Useful post-incident to confirm
+#              that scouts can pay to contact players again.
 #
 # Prerequisites:
 #   • .env.contracts must exist (written by deploy.sh)
@@ -27,7 +32,23 @@
 
 set -euo pipefail
 
-NETWORK="${1:-testnet}"
+STRICT=0
+NETWORK=""
+for arg in "$@"; do
+    case "$arg" in
+        --strict) STRICT=1 ;;
+        --*) echo "ERROR: unknown option: $arg" >&2; exit 1 ;;
+        *)
+            if [[ -z "$NETWORK" ]]; then
+                NETWORK="$arg"
+            else
+                echo "ERROR: unexpected argument: $arg" >&2
+                exit 1
+            fi
+            ;;
+    esac
+done
+NETWORK="${NETWORK:-testnet}"
 
 # `stellar contract invoke` requires a --source-account even for the
 # read-only health()/get_wiring_state() probes below. Any funded account
@@ -137,9 +158,16 @@ try:
     d = json.load(sys.stdin)
 except Exception:
     print("UNPARSEABLE"); sys.exit()
-print("NOT_INITIALIZED" if not d.get("initialized")
-      else "PAUSED" if d.get("paused")
-      else "OK")
+# pay_to_contact_paused is absent on older deployments; default to False.
+pay_paused = bool(d.get("pay_to_contact_paused", False))
+if not d.get("initialized"):
+    print("NOT_INITIALIZED")
+elif d.get("paused"):
+    print("PAUSED")
+elif pay_paused:
+    print("PAY_TO_CONTACT_PAUSED")
+else:
+    print("OK")
 ' 2>/dev/null || echo "UNPARSEABLE")
 
         case "$hstatus" in
@@ -152,6 +180,14 @@ print("NOT_INITIALIZED" if not d.get("initialized")
             PAUSED)
                 echo "    ❌ FAIL: ${name} returned paused: true"
                 record_fail "$check_label" "paused: true — call unpause_contract to resume" ;;
+            PAY_TO_CONTACT_PAUSED)
+                if [[ "$STRICT" -eq 1 ]]; then
+                    echo "    ❌ FAIL: ${name} returned pay_to_contact_paused: true (--strict)"
+                    record_fail "$check_label" "pay_to_contact_paused: true — call unpause_pay_to_contact to resume"
+                else
+                    echo "    ⚠️  WARN: ${name} returned pay_to_contact_paused: true"
+                    record_warn "$check_label" "pay_to_contact_paused: true — scouts cannot pay to contact players; call unpause_pay_to_contact (use --strict to fail)"
+                fi ;;
             *)
                 echo "    ❌ FAIL: ${name} returned unexpected health response"
                 record_fail "$check_label" "unexpected health response: ${response}" ;;
@@ -373,5 +409,5 @@ fi
 echo ""
 echo "  RESULT: ✅ ALL CHECKS PASSED"
 if [[ "$WARN" -gt 0 ]]; then
-    echo "  (${WARN} warning(s) — pending Step 2 wiring upgrades; see docs/WIRING_REGISTRY_DESIGN.md)"
+    echo "  (${WARN} warning(s) — see summary table above; re-run with --strict to fail on function-scoped pauses)"
 fi

@@ -66,7 +66,7 @@ for how to verify the event after running `scripts/upgrade.sh`.
 | Field  | Value |
 |--------|-------|
 | Topics | `("scout_verified", wallet: Address)` |
-| Data   | `scout_id: u64` |
+| Data   | `(scout_id: u64, admin: Address)` |
 
 ### `player_deregistered`
 | Field  | Value |
@@ -139,6 +139,19 @@ for how to verify the event after running `scripts/upgrade.sh`.
 |--------|-------|
 | Topics | `("dispute_resolved", admin: Address)` |
 | Data   | `(player_id: u64, milestone_index: u32, upheld: bool)` |
+
+### `player_data_purged`
+| Field  | Value |
+|--------|-------|
+| Topics | `("player_data_purged", admin: Address)` |
+| Data   | `(player_id: u64, entries_removed: u32, more: bool)` |
+
+Emitted by `purge_player_data` in the **verification** contract, once per page
+of keys removed. `entries_removed` counts the keys removed in that call;
+`more == true` means further pages remain for this contract, and
+`more == false` marks the final page for the verification contract.
+
+See [PLAYER_ERASURE.md](PLAYER_ERASURE.md) for the full erasure flow.
 
 ### Configuration events
 
@@ -270,10 +283,6 @@ Indexers should record the key so that vote signatures can be audited.
 > metadata. See issue #1600.
 
 ---
-=======
-<<<<<<< SEARCH
-*Last updated: 2026-09-27 — added `contract_upgraded` event (issue #1434).*
-=======
 *Last updated: 2026-09-27 — added `contract_upgraded` event (issue #1434);
 added verification configuration and diagnostic events (issues #1833, #1834).*
 
@@ -294,6 +303,19 @@ added verification configuration and diagnostic events (issues #1833, #1834).*
 |--------|-------|
 | Topics | `("player_level_reset", admin: Address)` |
 | Data   | `(player_id: u64, old_level: ProgressLevel, target_level: ProgressLevel)` |
+
+### `player_data_purged`
+| Field  | Value |
+|--------|-------|
+| Topics | `("player_data_purged", admin: Address)` |
+| Data   | `(player_id: u64, entries_removed: u32, more: bool)` |
+
+Emitted by `purge_player_data` in the **progress** contract, once per page of
+keys removed. `entries_removed` counts the keys removed in that call;
+`more == true` means further pages remain for this contract, and
+`more == false` marks the final page for the progress contract.
+
+See [PLAYER_ERASURE.md](PLAYER_ERASURE.md) for the full erasure flow.
 
 ---
 
@@ -345,6 +367,63 @@ when `renew_if_due` renews.
 | Topics | `("fees_withdrawn", admin: Address)` |
 | Data   | `(to: Address, amount: i128, timestamp: u64)` |
 
+### `player_data_purged`
+| Field  | Value |
+|--------|-------|
+| Topics | `("player_data_purged", admin: Address)` |
+| Data   | `(player_id: u64, entries_removed: u32, more: bool)` |
+
+Emitted by `purge_player_data` in the **scout_access** contract, once per page
+of keys removed. `entries_removed` counts the keys removed in that call;
+`more == true` means further pages remain for this contract, and
+`more == false` marks the final page for the scout_access contract.
+
+See [PLAYER_ERASURE.md](PLAYER_ERASURE.md) for the full erasure flow.
+
+### `evidence_access_renewed`
+| Field  | Value |
+|--------|-------|
+| Topics | `("evidence_access_renewed", scout: Address)` |
+| Data   | `(player_id: u64, expires_at: u64, fee_stroops: i128)` |
+
+Emitted by `renew_evidence_access`. **Triggered by the scout** (the scout pays
+the renewal fee). Extends an expired, non-revoked evidence grant by 90 days and
+leaves `has_evidence_access` true. See
+[EVIDENCE_PRIVACY.md](EVIDENCE_PRIVACY.md) for how the off-chain key-wrapping
+service consumes this event.
+
+### `evidence_access_reinstated`
+| Field  | Value |
+|--------|-------|
+| Topics | `("evidence_access_reinstated", scout: Address)` |
+| Data   | `(player_id: u64, player: Address, expires_at: u64)` |
+
+Emitted by `reinstate_evidence_access`. **Triggered by the player** (the player
+opts back in). Sets a fresh 90-day expiry and flips `has_evidence_access` back
+to true.
+
+### `evidence_revoked_by_player`
+| Field  | Value |
+|--------|-------|
+| Topics | `("evidence_revoked_by_player", scout: Address)` |
+| Data   | `(player_id: u64, player: Address)` |
+
+Emitted by `revoke_evidence_access`. **Triggered by the player.** Sets
+`revoked = true` and makes `has_evidence_access` false for all future key-wrap
+requests. See [EVIDENCE_PRIVACY.md](EVIDENCE_PRIVACY.md) for the privacy
+implications.
+
+### `fee_config_proposal_cancelled`
+| Field  | Value |
+|--------|-------|
+| Topics | `("fee_config_proposal_cancelled", admin: Address)` |
+| Data   | `(proposal_id: u64)` |
+
+Emitted by `cancel_fee_config_proposal`. **Triggered by the admin.** Clears the
+pending fee-config proposal so it can never activate. See
+[FEE_CONFIG_PROPOSAL_DESIGN.md](FEE_CONFIG_PROPOSAL_DESIGN.md) for the proposal
+lifecycle.
+
 ---
 
 ## Diagnostic-only events (not committed to ledger)
@@ -361,4 +440,8 @@ committed ledger state. Indexers can detect them in raw transaction metadata.
 
 ---
 
-*Last updated: 2026-09-27 — added `contract_upgraded` event (issue #1434).*
+*Last updated: 2026-10-04 — added `evidence_access_renewed`,
+`evidence_access_reinstated`, `evidence_revoked_by_player` and
+`fee_config_proposal_cancelled` events (issue #1835); added
+`player_data_purged` events for progress, verification and scout_access
+(issue #1830).*
