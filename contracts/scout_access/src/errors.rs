@@ -229,6 +229,13 @@ pub enum ScoutAccessError {
     /// player. The escrow must be refunded or allowed to expire before the
     /// player's data can be erased.
     TrialEscrowOutstanding = 59,
+    /// `purge_player_data` was called with a cursor other than the next
+    /// expected cursor for this player.
+    InvalidPurgeCursor = 60,
+    // ── Player erasure tombstone ──
+    /// The player has been erased via `registration.deregister_player`; all
+    /// player-scoped writes are permanently blocked for this player_id.
+    PlayerErased = 61,
 }
 
 impl AdminError for ScoutAccessError {
