@@ -724,6 +724,10 @@ pub fn contract_upgraded(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>)
 }
 
 /// topics: (event_name, admin)  data: ()
+///
+/// Emitted by `open_migration_window`. While the window is open the
+/// `admin_seed_*` entrypoints are enabled, so production monitoring should
+/// alert on this event (see docs/EVENT_REFERENCE.md and docs/RUNBOOK.md).
 pub fn migration_window_opened(env: &Env, admin: &Address) {
     env.events().publish(
         (Symbol::new(env, MIGRATION_WINDOW_OPENED), admin.clone()),
@@ -732,6 +736,9 @@ pub fn migration_window_opened(env: &Env, admin: &Address) {
 }
 
 /// topics: (event_name, admin)  data: ()
+///
+/// Emitted by `close_migration_window`, which disables the `admin_seed_*`
+/// entrypoints again.
 pub fn migration_window_closed(env: &Env, admin: &Address) {
     env.events().publish(
         (Symbol::new(env, MIGRATION_WINDOW_CLOSED), admin.clone()),

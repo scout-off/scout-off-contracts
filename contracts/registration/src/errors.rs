@@ -70,6 +70,11 @@ pub enum ScoutChainError {
     ScoutCapReached = 20,
     /// Wiring target failed the `contract_kind`/`version` handshake (#1610).
     InvalidPeerContract = 21,
+
+    // ── Player erasure tombstone ──
+    /// The player has been erased via `deregister_player`; all player-scoped
+    /// writes are permanently blocked for this player_id.
+    PlayerErased = 22,
 }
 
 impl AdminError for ScoutChainError {
@@ -104,6 +109,7 @@ mod tests {
         ("InvalidCooldown", 19),
         ("ScoutCapReached", 20),
         ("InvalidPeerContract", 21),
+        ("PlayerErased", 22),
     ];
 
     #[test]
@@ -128,6 +134,7 @@ mod tests {
         assert_eq!(ScoutChainError::ScoutRecordEvicted as u32, 18);
         assert_eq!(ScoutChainError::ScoutCapReached as u32, 20);
         assert_eq!(ScoutChainError::InvalidPeerContract as u32, 21);
+        assert_eq!(ScoutChainError::PlayerErased as u32, 22);
     }
 
     /// The two variants this file previously conflated.
