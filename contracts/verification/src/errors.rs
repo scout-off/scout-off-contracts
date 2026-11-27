@@ -233,6 +233,10 @@ pub enum VerificationError {
     /// The player has been erased via `registration.deregister_player`; all
     /// player-scoped writes are permanently blocked for this player_id.
     PlayerErased = 66,
+    // ── Erasure interlock (issue #1807) ──
+    /// `purge_player_data` was called for a player whose erasure has not been
+    /// started via `registration.begin_erasure` (or registration is unwired).
+    ErasureNotAuthorized = 67,
 }
 
 impl AdminError for VerificationError {
