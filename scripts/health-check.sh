@@ -1,12 +1,25 @@
 #!/usr/bin/env bash
 # ScoutChain — post-deploy health check
 # Calls health() on every deployed contract and asserts initialized: true, paused: false.
-# Usage: ./scripts/health-check.sh [testnet|mainnet|local]
+# Usage: ./scripts/health-check.sh [testnet|mainnet|local] [--strict]
 # Requires .env.contracts to exist (written by deploy.sh).
 set -euo pipefail
 
+NETWORK="testnet"
+STRICT=0
+for arg in "$@"; do
+  case "$arg" in
+    --strict) STRICT=1 ;;
+    testnet|mainnet|local) NETWORK="$arg" ;;
+    *)
+      echo "ERROR: unknown argument: $arg" >&2
+      echo "Usage: $0 [testnet|mainnet|local] [--strict]" >&2
+      exit 1
+      ;;
+  esac
+done
 # shellcheck source=network.sh
-source "$(dirname "$0")/network.sh" "${1:-}"
+source "$(dirname "$0")/network.sh" "$NETWORK"
 # `stellar contract invoke` requires a --source-account even for read-only
 # calls. Any funded account works for a simulation-only read; callers set
 # STELLAR_SOURCE_ACCOUNT (an identity name or secret key), falling back to
@@ -59,7 +72,8 @@ try:
     
     init = d.get("initialized", False)
     paused = d.get("paused", False)
-    pay_paused = d.get("pay_to_contact_paused", False)
+    # Field is absent on older deployments; treat absence as not paused.
+    pay_paused = bool(d.get("pay_to_contact_paused", False))
     mig_open = d.get("migration_window_open", False)
     
     if not init:
@@ -68,6 +82,8 @@ try:
         print("PAUSED")
     elif sys.argv[1] == "mainnet" and mig_open:
         print("MIGRATION_WINDOW_OPEN_MAINNET")
+    elif pay_paused:
+        print("PAY_TO_CONTACT_PAUSED")
     else:
         print("OK")
 except Exception as e:
@@ -85,6 +101,13 @@ except Exception as e:
   elif [[ "$health_status" == "MIGRATION_WINDOW_OPEN_MAINNET" ]]; then
     echo "    FAIL: $name has migration window OPEN on mainnet!" >&2
     FAILED=1
+  elif [[ "$health_status" == "PAY_TO_CONTACT_PAUSED" ]]; then
+    if [[ $STRICT -ne 0 ]]; then
+      echo "    FAIL: $name has pay_to_contact PAUSED (strict mode)!" >&2
+      FAILED=1
+    else
+      echo "    WARN: $name has pay_to_contact PAUSED — scouts cannot pay to contact players." >&2
+    fi
   else
     echo "    FAIL: $name health check failed output: $result ($health_status)" >&2
     FAILED=1

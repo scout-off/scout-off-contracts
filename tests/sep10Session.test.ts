@@ -133,6 +133,24 @@ describe("session tokens", () => {
     expect(res.body.refreshToken).toBeDefined();
   });
 
+  it("reports the refresh token's lifetime alongside the access token", async () => {
+    const res = await login(sign(await getChallenge())).expect(200);
+
+    expect(typeof res.body.refreshExpiresIn).toBe("number");
+    expect(res.body.refreshExpiresIn).toBeGreaterThan(0);
+    expect(res.body.refreshExpiresIn).toBe(604800);
+  });
+
+  it("reflects a configured refresh-token lifetime", async () => {
+    process.env.REFRESH_TOKEN_TTL_SECONDS = "120";
+    try {
+      const res = await login(sign(await getChallenge())).expect(200);
+      expect(res.body.refreshExpiresIn).toBe(120);
+    } finally {
+      delete process.env.REFRESH_TOKEN_TTL_SECONDS;
+    }
+  });
+
   it("honours a shorter configured access-token lifetime", async () => {
     process.env.ACCESS_TOKEN_TTL_SECONDS = "60";
     const res = await login(sign(await getChallenge())).expect(200);
@@ -155,6 +173,7 @@ describe("session tokens", () => {
       .expect(200);
     expect((jwt.decode(refreshed.body.token) as any).role).toBe("unknown");
     expect(refreshed.body.refreshToken).not.toBe(first.body.refreshToken);
+    expect(refreshed.body.refreshExpiresIn).toBe(604800);
 
     // The rotated-out token cannot be used again.
     await request(app)
