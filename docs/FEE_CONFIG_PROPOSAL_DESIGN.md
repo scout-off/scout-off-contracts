@@ -1,12 +1,14 @@
 # Fee Configuration Propose-Then-Activate Mechanism (Issue #807)
 
-> **Status: Implemented.** `propose_fee_config` and `activate_fee_config` ship
-> in the `scout_access` contract with error codes 24–26
-> (`NoPendingFeeConfig`, `FeeConfigProposalNotReady`,
-> `PendingFeeConfigAlreadyExists`) and the `fee_config_proposed` event. See
+> **Status: Implemented.** `propose_fee_config`, `activate_fee_config` and
+> `cancel_fee_config_proposal` ship in the `scout_access` contract with error
+> codes 24–26 (`NoPendingFeeConfig`, `FeeConfigProposalNotReady`,
+> `PendingFeeConfigAlreadyExists`) and the `fee_config_proposed` and
+> `fee_config_proposal_cancelled` events. See
 > [CONTRACT_REFERENCE.md](CONTRACT_REFERENCE.md#scout_access) for the live
-> function reference. The one remaining gap is the proposal-cancellation event
-> (see [Rollback and Edge Cases](#rollback-and-edge-cases)), tracked separately.
+> function reference and
+> [EVENT_REFERENCE.md](EVENT_REFERENCE.md#scout-access-contract-events) for the
+> event reference.
 
 ## Overview
 
@@ -311,14 +313,24 @@ Attempting to call `propose_fee_config` when a pending proposal already exists r
 
 Admin must either:
 1. Call `activate_fee_config` to finalize the pending proposal, then propose a new one.
-2. Manually clear the pending state (not exposed; requires contract upgrade).
+2. Call `cancel_fee_config_proposal` to discard the pending proposal, then propose a new one.
 
 This prevents confusion about which proposal will be active when.
 
-> **Remaining item:** a proposal-*cancellation* path and its event are not
-> implemented. Today a pending proposal can only be cleared by activating it
-> or by a contract upgrade. This is the sole open gap for this feature and is
-> tracked separately.
+### What if a pending proposal should never activate?
+
+`cancel_fee_config_proposal` lets the admin discard a pending proposal before
+the delay elapses. It is **admin-only** (the current admin must sign) and
+clears both `DataKey::PendingFeeConfig` and
+`DataKey::PendingFeeConfigProposedAt`, so the proposed fees never take effect
+and the active `FeeConfig` is left untouched. It returns `NoPendingFeeConfig`
+if there is nothing pending.
+
+On success it emits `fee_config_proposal_cancelled` with the discarded
+proposal, so indexers and scouts can see that a previously announced fee change
+will never activate. See
+[EVENT_REFERENCE.md](EVENT_REFERENCE.md#scout-access-contract-events) for the
+event's topics and data.
 
 ---
 

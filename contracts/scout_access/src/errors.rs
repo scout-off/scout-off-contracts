@@ -223,9 +223,19 @@ pub enum ScoutAccessError {
     /// exactly `TrialCounter + 1` for the target player. Mirrors progress's
     /// `InvalidHistoryIndex` for the same contiguity violation.
     InvalidTrialIndex = 58,
+
+    // ── Player erasure (issue #1824) ──
+    /// `purge_player_data` found an unexpired, non-zero `TrialEscrow` for the
+    /// player. The escrow must be refunded or allowed to expire before the
+    /// player's data can be erased.
+    TrialEscrowOutstanding = 59,
     /// `purge_player_data` was called with a cursor other than the next
     /// expected cursor for this player.
-    InvalidPurgeCursor = 59,
+    InvalidPurgeCursor = 60,
+    // ── Player erasure tombstone ──
+    /// The player has been erased via `registration.deregister_player`; all
+    /// player-scoped writes are permanently blocked for this player_id.
+    PlayerErased = 61,
 }
 
 impl AdminError for ScoutAccessError {
@@ -305,5 +315,10 @@ mod tests {
     #[test]
     fn scout_deactivated_is_code_39() {
         assert_eq!(ScoutAccessError::ScoutDeactivated as u32, 39);
+    }
+
+    #[test]
+    fn trial_escrow_outstanding_is_code_59() {
+        assert_eq!(ScoutAccessError::TrialEscrowOutstanding as u32, 59);
     }
 }

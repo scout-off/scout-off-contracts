@@ -53,6 +53,20 @@ and carry over the SQL types with `@db.*` (`@db.VarChar(n)`, `@db.SmallInt`,
    `prisma migrate diff` against the schema, failing on any difference for a
    modeled table. CI runs it as the `prisma-drift` job.
 
+## Running migrations
+
+Use the runner instead of manual `psql -f` commands:
+
+```bash
+DATABASE_URL=postgres://... ./scripts/migrate-db.sh
+```
+
+It creates `schema_migrations(version, checksum, applied_at)`, applies each
+pending `NNN_*.sql` in order inside a transaction, and fails if an already
+applied file's checksum changed. The backend CI job uses it (via
+`scripts/test-migrate-db.sh`, which also checks idempotency) instead of
+`prisma db push`.
+
 ## Naming and numbering convention
 
 Files must be named `NNN_description.sql` where `NNN` is a zero-padded
@@ -92,10 +106,14 @@ CREATE INDEX IF NOT EXISTS idx_my_table_name ON my_table (name);
 indexes missing and causes silent indexer errors at runtime.
 
 ```bash
-for f in migrations/*.sql; do
-    echo "Applying $f..."
-    psql "$DATABASE_URL" -f "$f"
-done
+psql $DATABASE_URL -f migrations/001_initial_schema.sql
+psql $DATABASE_URL -f migrations/002_cursor_upsert_helper.sql
+psql $DATABASE_URL -f migrations/003_diagnostic_events.sql
+psql $DATABASE_URL -f migrations/004_scout_subscriptions_auto_renew.sql
+psql $DATABASE_URL -f migrations/005_evidence_access_grants.sql
+psql $DATABASE_URL -f migrations/006_dispute_jury.sql
+psql $DATABASE_URL -f migrations/007_milestone_flags.sql
+psql $DATABASE_URL -f migrations/008_evidence_key_wrapping.sql
 ```
 
 The backend service applies all migrations automatically on startup in the
@@ -113,14 +131,11 @@ deployment guide.
 | `005_evidence_access_grants.sql` | `evidence_access_grants` table (off-chain mirror of `scout_access.EvidenceAccessGrant`) |
 | `006_dispute_jury.sql` | Jury-escalation columns on `milestone_disputes`; `dispute_votes` table |
 | `007_milestone_flags.sql` | `milestone_flags` and `revocation_records` tables |
-| `008_align_player_column_limits.sql` | Aligns `players` column sizes with the registration contract's string limits |
-| `009_revoked_tokens.sql` | `revoked_tokens` table for explicit JWT revocation on sign-out and credential rotation |
-| `010_deactivated_scout.sql` | `deactivated` column on `scouts` |
-| `011_admins.sql` | `admins` table of addresses authorised for admin operations |
-| `012_dispute_rounds.sql` | Dispute rounds (#1396): `round` / `resolved_at_unix` on `milestone_disputes` and `round` on `dispute_votes`, with round-aware unique keys |
-| `014_sep10_sessions.sql` | SEP-10 session model (#1606): `sep10_challenges` (single-use challenge store) and `refresh_tokens` (rotating refresh tokens) |
+| `008_evidence_key_wrapping.sql` | Encrypted evidence-key storage, key-release audit log, and JWT revocations |
 
 ## Related documentation
 
 - [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md) — full deployment guide including the migration step
+- [docs/AUTH_SESSIONS.md](../docs/AUTH_SESSIONS.md) — session lifecycle and auth endpoint semantics
+- `npm run check:auth-schema` — compare the live auth tables and foreign key with the session model
 - [README.md — Database Schema](../README.md#database-schema) — table-level overview

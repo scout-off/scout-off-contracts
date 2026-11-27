@@ -59,6 +59,7 @@ mod registration_contract {
             player_id: u64,
             level: ProgressLevel,
         ) -> Result<(), RegClientError>;
+        fn is_erasure_authorized(env: Env, player_id: u64) -> bool;
     }
 }
 
@@ -313,6 +314,7 @@ impl ProgressContract {
         Self::bump_instance_ttl(&env);
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
+        Self::require_player_not_erased(&env, player_id)?;
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
 
         // Require a wired registration contract to validate player existence.
@@ -378,6 +380,7 @@ impl ProgressContract {
         Self::bump_instance_ttl(&env);
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
+        Self::require_player_not_erased(&env, player_id)?;
 
         // Only the configured VerificationContract (or the optional secondary
         // ScoutAccessContract for trial-offer Level-3 advances) may call this
@@ -431,6 +434,7 @@ impl ProgressContract {
         Self::bump_instance_ttl(&env);
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
+        Self::require_player_not_erased(&env, player_id)?;
 
         let secondary: Address = env
             .storage()
@@ -586,6 +590,7 @@ impl ProgressContract {
     /// Admin-only. Returns `PlayerLevelRecordEvicted` if the entry has already
     /// been fully evicted (key absent) and is unrecoverable.
     pub fn restore_player_level_record(env: Env, player_id: u64) -> Result<(), ProgressError> {
+        Self::require_player_not_erased(&env, player_id)?;
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         let _level: ProgressLevel = env
             .storage()
@@ -1128,6 +1133,7 @@ impl ProgressContract {
         require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         Self::require_initialized(&env)?;
         Self::require_migration_active(&env)?;
+        Self::require_player_not_erased(&env, player_id)?;
 
         // history_index is 1-based; 0 is never a valid index.
         if history_index == 0 {
@@ -1268,11 +1274,14 @@ impl ProgressContract {
 
     /// Paged erasure of a player's progress state (admin only).
     ///
-    /// Removes `PlayerLevel`, `HistoryCounter`, `HistoryRoot`, and up to
-    /// 50 `HistoryEntry` records per call. Start with `cursor=0` and pass the
-    /// returned cursor to the next call; any other cursor is rejected.
-    /// Scalar keys are removed on the final page. When `more` is `false`,
-    /// all data managed by this purge has been removed.
+    /// Removes `PlayerLevel`, `HistoryRoot`, `HistoryVec`, and up to
+    /// `PAGE_SIZE` `HistoryEntry` / `HistoryPage` records per call. Start with
+    /// `cursor=0` and pass the returned cursor to the next call; any other
+    /// cursor is rejected with `InvalidPurgeCursor`. On the final page it also
+    /// removes `HistoryCounter`, `HistoryFrontier` and `MigrationCursor`.
+    /// When `more` is `false` in the returned tuple all data has been removed.
+    /// `HistoryFrontier` is only present for players whose history was written
+    /// after #1368, so its absence is tolerated.
     ///
     /// # Safety invariants
     /// - Ledger history (the transaction record itself) is immutable and cannot
@@ -1287,7 +1296,19 @@ impl ProgressContract {
         cursor: u32,
     ) -> Result<(u32, bool), ProgressError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        Self::require_initialized(&env)?;
         Self::bump_instance_ttl(&env);
+
+        // #1807: refuse unless registration says erasure is pending (fails closed).
+        let reg: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::RegistrationContract)
+            .ok_or(ProgressError::ErasureNotAuthorized)?;
+        match registration_contract::Client::new(&env, &reg).try_is_erasure_authorized(&player_id) {
+            Ok(Ok(true)) => {}
+            _ => return Err(ProgressError::ErasureNotAuthorized),
+        }
 
         const PAGE_SIZE: u32 = 50;
         let mut removed: u32 = 0;
@@ -1347,6 +1368,60 @@ impl ProgressContract {
             env.storage()
                 .persistent()
                 .remove(&DataKey::PurgeCursor(player_id));
+        }
+
+        // On the final page, also drop the per-player commitment state: the
+        // Merkle frontier accumulator (#1368) and the migration cursor. The
+        // frontier only exists for players whose history postdates #1368, so
+        // its absence is expected and skipped silently.
+        if !more {
+            if env
+                .storage()
+                .persistent()
+                .has(&DataKey::HistoryFrontier(player_id))
+            {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::HistoryFrontier(player_id));
+                removed += 1;
+            }
+            if env
+                .storage()
+                .persistent()
+                .has(&DataKey::MigrationCursor(player_id))
+            {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::MigrationCursor(player_id));
+                removed += 1;
+            }
+        }
+
+        // On the final page, also drop the per-player commitment state: the
+        // Merkle frontier accumulator (#1368) and the migration cursor. The
+        // frontier only exists for players whose history postdates #1368, so
+        // its absence is expected and skipped silently.
+        if !more {
+            if env
+                .storage()
+                .persistent()
+                .has(&DataKey::HistoryFrontier(player_id))
+            {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::HistoryFrontier(player_id));
+                removed += 1;
+            }
+            if env
+                .storage()
+                .persistent()
+                .has(&DataKey::MigrationCursor(player_id))
+            {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::MigrationCursor(player_id));
+                removed += 1;
+            }
         }
 
         events::player_data_purged(&env, &admin, player_id, removed, more);
@@ -2120,6 +2195,47 @@ impl ProgressContract {
         {
             return Err(ProgressError::ContractPaused);
         }
+        Ok(())
+    }
+
+    /// Require that the player has not been erased via `registration.deregister_player`.
+    /// This is the push-model erasure guard — registration pushes a tombstone to each
+    /// contract rather than each contract pulling from registration on every write.
+    fn require_player_not_erased(env: &Env, player_id: u64) -> Result<(), ProgressError> {
+        if env
+            .storage()
+            .persistent()
+            .get::<DataKey, bool>(&DataKey::Erased(player_id))
+            .unwrap_or(false)
+        {
+            return Err(ProgressError::PlayerErased);
+        }
+        Ok(())
+    }
+
+    /// Mark a player as erased. Called by `registration.deregister_player` after
+    /// purging the player's data from all contracts. Once set, all player-scoped
+    /// writes are permanently blocked for this player_id.
+    ///
+    /// Only the registration contract may call this function (enforced via auth).
+    pub fn mark_player_erased(env: Env, player_id: u64) -> Result<(), ProgressError> {
+        // Verify the caller is the registration contract
+        let registration_addr = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::RegistrationContract);
+        let registration_addr = registration_addr.ok_or(ProgressError::RegistrationNotConfigured)?;
+
+        registration_addr.require_auth();
+
+        // Write the tombstone flag with long TTL (same as core identity data)
+        env.storage()
+            .persistent()
+            .set(&DataKey::Erased(player_id), &true);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Erased(player_id), PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+
         Ok(())
     }
 }
@@ -3800,6 +3916,64 @@ mod tests {
         }));
     }
 
+    /// A complete purge must also erase the per-player commitment state:
+    /// `HistoryFrontier` (written on every append since #1368) and
+    /// `MigrationCursor`. Otherwise per-player commitment state would survive
+    /// erasure (issue #1826).
+    #[test]
+    fn purge_player_data_removes_frontier_and_migration_cursor() {
+        let (env, client, id) = setup_for_storage_tests();
+        let player = 77u64;
+        for _ in 0..5 {
+            append_reset(&client, player);
+        }
+
+        // Precondition: the frontier exists because history was appended.
+        assert!(env.as_contract(&id, || {
+            env.storage()
+                .persistent()
+                .has(&DataKey::HistoryFrontier(player))
+        }));
+
+        // Simulate a migration cursor for this player.
+        env.as_contract(&id, || {
+            env.storage()
+                .persistent()
+                .set(&DataKey::MigrationCursor(player), &player);
+        });
+
+        // Purge to completion.
+        let mut cursor = 0u32;
+        loop {
+            let (next, more) = client.purge_player_data(&player, &cursor);
+            cursor = next;
+            if !more {
+                break;
+            }
+        }
+
+        env.as_contract(&id, || {
+            assert!(
+                !env.storage()
+                    .persistent()
+                    .has(&DataKey::HistoryFrontier(player)),
+                "HistoryFrontier must be removed by a complete purge"
+            );
+            assert!(
+                !env.storage()
+                    .persistent()
+                    .has(&DataKey::MigrationCursor(player)),
+                "MigrationCursor must be removed by a complete purge"
+            );
+            assert!(
+                !env.storage()
+                    .persistent()
+                    .has(&DataKey::HistoryCounter(player)),
+                "HistoryCounter must be removed by a complete purge"
+            );
+        });
+    }
+
     /// After a lazy rebuild, a second append must be incremental from the
     /// persisted frontier and still agree with the reference.
     #[test]
@@ -3968,6 +4142,87 @@ mod tests {
             result,
             Err(Ok(ProgressError::HistoryEntryNotFound)),
             "expected HistoryEntryNotFound for missing history index"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // #1823 — purge_player_data guard semantics
+    // -----------------------------------------------------------------------
+
+    /// Erasure is a compliance operation, not user activity: it must remain
+    /// available while the contract is paused (an incident pause is exactly
+    /// when an operator may be told to stop processing personal data).
+    #[test]
+    fn test_purge_player_data_succeeds_while_paused() {
+        let (env, client, validator) = setup();
+        let player_id = 77u64;
+
+        client.advance_level(&validator, &player_id, &1u32);
+        assert_eq!(client.get_history_count(&player_id), 1);
+
+        client.pause_contract();
+
+        // Paused must not block erasure.
+        client.purge_player_data(&player_id, &0u32);
+
+        assert_eq!(client.get_level(&player_id), ProgressLevel::Unverified);
+        assert_eq!(client.get_history_count(&player_id), 0);
+
+        // The contract is still paused afterwards — purge does not unpause.
+        let err = client
+            .try_advance_level(&validator, &player_id, &1u32)
+            .expect_err("expected an error while paused");
+        assert_eq!(err.unwrap(), ProgressError::ContractPaused);
+        let _ = env;
+    }
+
+    /// Erasure still requires initialisation: a contract with no admin/state
+    /// must reject the call with a typed error rather than trap.
+    #[test]
+    fn test_purge_player_data_before_initialization_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let id = env.register(ProgressContract, (admin,));
+        let client = ProgressContractClient::new(&env, &id);
+
+        // Simulate a contract that never ran its constructor/initialize.
+        env.as_contract(&id, || {
+            env.storage().instance().remove(&DataKey::Initialized);
+            env.storage().persistent().remove(&DataKey::Admin);
+        });
+
+        let result = client.try_purge_player_data(&1u64, &0u32);
+        assert_eq!(
+            result,
+            Err(Ok(ProgressError::NotInitialized)),
+            "purge must require initialisation"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // #1825 — purge_player_data cursor arithmetic must not trap
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_purge_player_data_u32_max_cursor_returns_typed_error() {
+        let (_env, client, validator) = setup();
+        let player_id = 88u64;
+
+        client.advance_level(&validator, &player_id, &1u32);
+
+        // A cursor at u32::MAX must be rejected with a typed error, not a
+        // host panic from overflow-checked arithmetic.
+        let result = client.try_purge_player_data(&player_id, &0u32);
+        assert!(result.is_ok(), "in-range purge must succeed");
+
+        // Re-seed history and drive the paged path with an out-of-range cursor.
+        client.advance_level(&validator, &player_id, &1u32);
+        let result = client.try_purge_player_data(&player_id, &u32::MAX);
+        assert_eq!(
+            result,
+            Err(Ok(ProgressError::InvalidPurgeCursor)),
+            "out-of-range cursor must return InvalidPurgeCursor"
         );
     }
 }

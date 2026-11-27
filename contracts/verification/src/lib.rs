@@ -331,6 +331,51 @@ impl VerificationContract {
         config
     }
 
+    /// Erase all personal data for `player_id` (admin only).
+    ///
+    /// Erasure is a compliance operation, not user activity, so it is
+    /// intentionally **allowed while the contract is paused** (see
+    /// `docs/PLAYER_ERASURE.md` and `docs/RUNBOOK.md`). It still requires the
+    /// contract to be initialised. Guard order matches the project convention
+    /// (`require_admin` → `require_initialized` → `bump_instance_ttl`).
+    ///
+    /// `cursor` is the number of already-purged milestones; it must be
+    /// `<= total` for the player. Out-of-range cursors return
+    /// `VerificationError::InvalidInput` rather than trapping on overflow.
+    pub fn purge_player_data(
+        env: Env,
+        player_id: u64,
+        cursor: u32,
+    ) -> Result<u32, VerificationError> {
+        require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        Self::require_initialized(&env)?;
+        env.storage()
+            .instance()
+            .extend_ttl(PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+
+        let total: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalMilestoneCount)
+            .unwrap_or(0u32);
+        if cursor > total {
+            return Err(VerificationError::InvalidInput);
+        }
+        let start = cursor;
+        let end = start.saturating_add(MILESTONE_FLAG_PAGE_SIZE).min(total);
+        let mut purged: u32 = 0;
+        let mut i = start;
+        while i < end {
+            let key = DataKey::Milestone(player_id, i);
+            if env.storage().persistent().has(&key) {
+                env.storage().persistent().remove(&key);
+                purged = purged.saturating_add(1);
+            }
+            i = i.saturating_add(1);
+        }
+        Ok(purged)
+    }
+
     pub fn get_player_affiliation_count(env: Env, player_id: u64) -> u32 {
         env.storage()
             .persistent()
@@ -1454,6 +1499,7 @@ impl VerificationContract {
         player_id: u64,
         index: u32,
     ) -> Result<(), VerificationError> {
+        Self::require_player_not_erased(&env, player_id)?;
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         let _milestone: Milestone = env
             .storage()
@@ -1721,6 +1767,7 @@ impl VerificationContract {
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
         Self::require_approve_milestone_not_paused(&env)?;
+        Self::require_player_not_erased(&env, player_id)?;
         validator_wallet.require_auth();
 
         // Once an operator has opted into k-of-n threshold mode there is no
@@ -1741,6 +1788,9 @@ impl VerificationContract {
             }
         }
 
+        // Execution order is intentional: auth -> format -> state -> write.
+        // Reject malformed evidence before paying for persistent validator storage,
+        // then reuse the loaded Validator throughout the shared commit path.
         validate_cid(&evidence_hash).map_err(|_| VerificationError::InvalidInput)?;
 
         // Verify the caller is an active validator
@@ -1773,6 +1823,7 @@ impl VerificationContract {
         Self::commit_approved_milestone(
             &env,
             &validator_wallet,
+            &validator,
             player_id,
             description,
             evidence_hash,
@@ -1809,6 +1860,7 @@ impl VerificationContract {
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
         Self::require_approve_milestone_not_paused(&env)?;
+        Self::require_player_not_erased(&env, player_id)?;
         validator_wallet.require_auth();
 
         if description.len() < MIN_DESCRIPTION_LEN || description.len() > MAX_DESCRIPTION_LEN {
@@ -1958,6 +2010,7 @@ impl VerificationContract {
             let index = Self::commit_approved_milestone(
                 &env,
                 &validator_wallet,
+                &validator,
                 player_id,
                 claim.description.clone(),
                 evidence_hash.clone(),
@@ -2211,6 +2264,7 @@ impl VerificationContract {
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
         Self::require_approve_milestone_not_paused(&env)?;
+        Self::require_player_not_erased(&env, attestation.player_id)?;
         // Relayer authorizes fee payment only — holds no special privilege.
         relayer.require_auth();
 
@@ -2335,6 +2389,7 @@ impl VerificationContract {
         let index = Self::commit_approved_milestone(
             &env,
             &validator_wallet,
+            &validator,
             attestation.player_id,
             attestation.description.clone(),
             attestation.evidence_hash.clone(),
@@ -2927,7 +2982,8 @@ impl VerificationContract {
     /// 1. `get_validator(wallet)`          → credentials, registered_at, active
     /// 2. `get_validator_status(wallet)`   → ValidatorStatus
     /// 3. `get_validator_milestone_count(wallet)` → milestone_count
-    /// 4. `get_validator_players(wallet)`  → distinct_players list
+    /// 4. `ValidatorPlayerCount(wallet)`   → distinct_player_count (bounded; use
+    ///    `get_validator_players_page` for the list)
     ///
     /// Returns `ValidatorNotFound` if the wallet has never been registered.
     /// This is a pure read-only aggregation — no new storage or business logic.
@@ -2958,14 +3014,22 @@ impl VerificationContract {
             .get(&DataKey::ValidatorMilestoneCount(wallet.clone()))
             .unwrap_or(0u32);
 
-        // 4. Distinct players (same logic as get_validator_players)
-        let distinct_players: Vec<u64> = env
+        // 4. Distinct player count: read the O(1) counter. Legacy validators
+        //    (pre-counter) fall back to the stored index length. The list itself
+        //    is not returned; use `get_validator_players_page`.
+        let distinct_player_count: u32 = match env
             .storage()
             .persistent()
-            .get(&DataKey::ValidatorPlayers(wallet.clone()))
-            .unwrap_or_else(|| Vec::new(&env));
-
-        let distinct_player_count = distinct_players.len();
+            .get::<DataKey, u32>(&DataKey::ValidatorPlayerCount(wallet.clone()))
+        {
+            Some(c) => c,
+            None => env
+                .storage()
+                .persistent()
+                .get::<DataKey, Vec<u64>>(&DataKey::ValidatorPlayers(wallet.clone()))
+                .map(|v| v.len())
+                .unwrap_or(0),
+        };
 
         Ok(ValidatorActivityReport {
             wallet,
@@ -2975,7 +3039,6 @@ impl VerificationContract {
             status,
             milestone_count,
             distinct_player_count,
-            distinct_players,
         })
     }
 
@@ -3075,6 +3138,7 @@ impl VerificationContract {
         require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         Self::require_initialized(&env)?;
         Self::require_migration_active(&env)?;
+        Self::require_player_not_erased(&env, player_id)?;
 
         let ms_key = DataKey::Milestone(player_id, milestone_index);
 
@@ -3200,6 +3264,7 @@ impl VerificationContract {
         if !vp.iter().any(|id| id == player_id) {
             vp.push_back(player_id);
             env.storage().persistent().set(&vp_key, &vp);
+            Self::set_validator_player_count(&env, &validator, vp.len());
             env.storage()
                 .persistent()
                 .extend_ttl(&vp_key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
@@ -3232,6 +3297,7 @@ impl VerificationContract {
         require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
         Self::require_initialized(&env)?;
         Self::require_migration_active(&env)?;
+        Self::require_player_not_erased(&env, player_id)?;
 
         let round = dispute.round;
         let dispute_key = DataKey::MilestoneDispute(player_id, milestone_index, round);
@@ -3341,6 +3407,25 @@ impl VerificationContract {
         cursor: u32,
     ) -> Result<(u32, bool), VerificationError> {
         let admin = require_admin(&env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+        // Erasure is a compliance operation and stays available while paused (#1823).
+        Self::require_initialized(&env)?;
+        Self::bump_instance_ttl(&env);
+
+        // #1807: refuse unless registration says erasure is pending (fails closed).
+        let reg_addr: Address = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::RegistrationContract)
+            .ok_or(VerificationError::ErasureNotAuthorized)?;
+        let args: Vec<Val> = (player_id,).into_val(&env);
+        match env.try_invoke_contract::<bool, soroban_sdk::Error>(
+            &reg_addr,
+            &Symbol::new(&env, "is_erasure_authorized"),
+            args,
+        ) {
+            Ok(Ok(true)) => {}
+            _ => return Err(VerificationError::ErasureNotAuthorized),
+        }
 
         const PAGE_SIZE: u32 = 50;
         let mut removed: u32 = 0;
@@ -3407,8 +3492,282 @@ impl VerificationContract {
                 .remove(&DataKey::PurgeCursor(player_id));
         }
 
+        // On final page, clean up remaining per-player keys that aren't
+        // enumerated by the milestone loop:
+        // - ValidatorPlayers(validator): remove player from each validator's list
+        // - MilestoneAttestors(player, idx): remove attestation data
+        // - MilestonePendingReReview(player, idx): remove re-review flags
+        // - PlayerDeactivated(player): remove deactivation flag
+        if !more {
+            // Remove PlayerDeactivated flag if present
+            if env
+                .storage()
+                .persistent()
+                .has(&DataKey::PlayerDeactivated(player_id))
+            {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::PlayerDeactivated(player_id));
+                removed += 1;
+            }
+
+            // Collect all validators who approved this player's milestones
+            // by scanning MilestoneAttestors entries, then remove player from ValidatorPlayers
+            let mut validators_to_update: Vec<Address> = Vec::new(&env);
+            let att_prefix_bytes = DataKey::MilestoneAttestors(player_id, 0)
+                .to_xdr(&env)
+                .ok()
+                .map(|b| b.to_vec());
+
+            if let Some(prefix) = att_prefix_bytes {
+                let iter = env.storage().persistent().entries();
+                while let Some(entry) = iter.next() {
+                    let key_bytes = entry.key().to_xdr(&env).ok().map(|b| b.to_vec());
+                    if let Some(key) = key_bytes {
+                        if key.starts_with(&prefix) {
+                            // Extract milestone_index from the key
+                            // The key is DataKey::MilestoneAttestors(player_id, milestone_index)
+                            // We need to parse the XDR to get the milestone_index
+                            if let Ok(data_key) = entry.key().try_to_val::<DataKey>(&env) {
+                                if let DataKey::MilestoneAttestors(pid, milestone_index) = data_key
+                                {
+                                    if pid == player_id {
+                                        // Get the milestone to find the approver validator
+                                        if let Some(milestone) =
+                                            env.storage().persistent().get::<DataKey, Milestone>(
+                                                &DataKey::Milestone(player_id, milestone_index),
+                                            )
+                                        {
+                                            let validator = milestone.validator;
+                                            if !validators_to_update.iter().any(|v| v == &validator)
+                                            {
+                                                validators_to_update.push_back(validator);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Remove player from each validator's ValidatorPlayers list
+            for validator in validators_to_update.iter() {
+                let vp_key = DataKey::ValidatorPlayers(validator.clone());
+                if let Some(mut players) =
+                    env.storage().persistent().get::<DataKey, Vec<u64>>(&vp_key)
+                {
+                    if let Some(pos) = players.iter().position(|p| p == &player_id) {
+                        players.remove(pos as u32);
+                        env.storage().persistent().set(&vp_key, &players);
+                        env.storage().persistent().extend_ttl(
+                            &vp_key,
+                            PERSISTENT_TTL_MIN,
+                            PERSISTENT_TTL_MAX,
+                        );
+                        removed += 1;
+                    }
+                }
+            }
+
+            // Remove MilestoneAttestors entries for this player
+            let att_prefix_bytes = DataKey::MilestoneAttestors(player_id, 0)
+                .to_xdr(&env)
+                .ok()
+                .map(|b| b.to_vec());
+            if let Some(prefix) = att_prefix_bytes {
+                let iter = env.storage().persistent().entries();
+                while let Some(entry) = iter.next() {
+                    let key_bytes = entry.key().to_xdr(&env).ok().map(|b| b.to_vec());
+                    if let Some(key) = key_bytes {
+                        if key.starts_with(&prefix) {
+                            env.storage().persistent().remove(&entry.key());
+                            removed += 1;
+                        }
+                    }
+                }
+            }
+
+            // Remove MilestonePendingReReview entries for this player
+            let rr_prefix_bytes = DataKey::MilestonePendingReReview(player_id, 0)
+                .to_xdr(&env)
+                .ok()
+                .map(|b| b.to_vec());
+            if let Some(prefix) = rr_prefix_bytes {
+                let iter = env.storage().persistent().entries();
+                while let Some(entry) = iter.next() {
+                    let key_bytes = entry.key().to_xdr(&env).ok().map(|b| b.to_vec());
+                    if let Some(key) = key_bytes {
+                        if key.starts_with(&prefix) {
+                            env.storage().persistent().remove(&entry.key());
+                            removed += 1;
+                        }
+                    }
+                }
+            }
+        }
+
         events::player_data_purged(&env, &admin, player_id, removed, more);
         Ok((next_cursor, more))
+    }
+
+    /// Close out all open disputes for a player, updating indexes and removing
+    /// vote keys. Reuses the dispute close-out logic from resolve_dispute /
+    /// tally_dispute. Returns the number of disputes closed.
+    fn close_open_disputes_for_player(env: &Env, player_id: u64) -> Result<u32, VerificationError> {
+        let mut closed: u32 = 0;
+        let now = env.ledger().timestamp();
+        let admin = require_admin(env, &DataKey::Admin, ADMIN_BUMP_LEDGERS)?;
+
+        // Get the player's list of disputed milestone indices
+        let pd_key = DataKey::PlayerDisputes(player_id);
+        let player_disputes: Vec<u32> = env
+            .storage()
+            .persistent()
+            .get(&pd_key)
+            .unwrap_or_else(|| Vec::new(env));
+
+        for milestone_index in player_disputes.iter() {
+            let milestone_index = *milestone_index;
+            let round_key = DataKey::DisputeRound(player_id, milestone_index);
+            let last_round: u32 = env.storage().persistent().get(&round_key).unwrap_or(0);
+
+            for round in 1..=last_round {
+                let dispute_key = DataKey::MilestoneDispute(player_id, milestone_index, round);
+                if let Some(mut dispute) = env
+                    .storage()
+                    .persistent()
+                    .get::<DataKey, MilestoneDispute>(&dispute_key)
+                {
+                    // Skip already resolved disputes
+                    if dispute.resolved {
+                        continue;
+                    }
+
+                    // Mark as resolved
+                    dispute.resolved = true;
+                    dispute.resolved_at = now;
+                    dispute.upheld = false; // Purged disputes are not upheld
+                    env.storage().persistent().set(&dispute_key, &dispute);
+
+                    // Close out the dispute (update indexes, remove from OpenDisputeIndex)
+                    Self::close_dispute_internal(env, player_id, milestone_index, round, now)?;
+
+                    // Remove dispute vote keys (validator votes and vote count)
+                    Self::remove_dispute_votes(env, player_id, milestone_index, round)?;
+
+                    // Emit dispute_resolved event for indexers
+                    events::dispute_resolved(env, &admin, player_id, milestone_index, false);
+                    closed += 1;
+                }
+            }
+        }
+
+        Ok(closed)
+    }
+
+    /// Internal close-dispute logic shared by resolve_dispute, tally_dispute,
+    /// and close_open_disputes_for_player. Updates ActiveDisputesCount,
+    /// PlayerOpenDisputeCount, and OpenDisputeIndex without marking the
+    /// dispute as resolved (caller does that).
+    fn close_dispute_internal(
+        env: &Env,
+        player_id: u64,
+        milestone_index: u32,
+        round: u32,
+        now: u64,
+    ) -> Result<(), VerificationError> {
+        // Decrement ActiveDisputesCount (saturating)
+        let count: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ActiveDisputesCount)
+            .unwrap_or(0u32);
+        env.storage().instance().set(
+            &DataKey::ActiveDisputesCount,
+            &safe_sub_u32(count, 1).map_err(|_| VerificationError::Overflow)?,
+        );
+
+        // Decrement PlayerOpenDisputeCount (saturating to 0)
+        let poc_key = DataKey::PlayerOpenDisputeCount(player_id);
+        let poc: u32 = env.storage().persistent().get(&poc_key).unwrap_or(0u32);
+        if poc > 0 {
+            env.storage().persistent().set(
+                &poc_key,
+                &safe_sub_u32(poc, 1).map_err(|_| VerificationError::Overflow)?,
+            );
+        }
+
+        // Remove entry from OpenDisputeIndex
+        let open_index_key = DataKey::OpenDisputeIndex;
+        let open_index: Vec<(u64, u32, u32)> = env
+            .storage()
+            .persistent()
+            .get(&open_index_key)
+            .unwrap_or_else(|| Vec::new(env));
+        let mut new_index: Vec<(u64, u32, u32)> = Vec::new(env);
+        for i in 0..open_index.len() {
+            let entry = open_index.get(i).unwrap();
+            if entry != (player_id, milestone_index, round) {
+                new_index.push_back(entry);
+            }
+        }
+        env.storage().persistent().set(&open_index_key, &new_index);
+        if !new_index.is_empty() {
+            env.storage().persistent().extend_ttl(
+                &open_index_key,
+                PERSISTENT_TTL_MIN,
+                PERSISTENT_TTL_MAX,
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Remove all DisputeVote and DisputeVoteCount entries for a specific dispute.
+    /// Since we don't have a reverse index of voters, we scan storage for entries
+    /// with the dispute prefix. This is a one-time admin operation so efficiency
+    /// is acceptable.
+    fn remove_dispute_votes(
+        env: &Env,
+        player_id: u64,
+        milestone_index: u32,
+        round: u32,
+    ) -> Result<(), VerificationError> {
+        let count_key = DataKey::DisputeVoteCount(player_id, milestone_index, round);
+
+        // Remove the vote count entry
+        if env.storage().persistent().has(&count_key) {
+            env.storage().persistent().remove(&count_key);
+        }
+
+        // Remove individual validator votes by scanning storage for entries
+        // matching the dispute prefix (player_id, milestone_index, round).
+        // We need to iterate through all persistent storage entries since
+        // Soroban doesn't provide prefix-based iteration.
+        let dispute_prefix =
+            DataKey::DisputeVote(player_id, milestone_index, round, Address::default(env));
+        let prefix_bytes = dispute_prefix.to_xdr(env).ok().map(|bytes| bytes.to_vec());
+
+        if let Some(prefix) = prefix_bytes {
+            let mut keys_to_remove: Vec<DataKey> = Vec::new(env);
+            let iter = env.storage().persistent().entries();
+            while let Some(entry) = iter.next() {
+                let key_bytes = entry.key().to_xdr(env).ok().map(|b| b.to_vec());
+                if let Some(key) = key_bytes {
+                    if key.starts_with(&prefix) {
+                        keys_to_remove.push_back(entry.key());
+                    }
+                }
+            }
+
+            for key in keys_to_remove.iter() {
+                env.storage().persistent().remove(key);
+            }
+        }
+
+        Ok(())
     }
 
     pub fn health(env: Env) -> ContractHealth {
@@ -3492,6 +3851,7 @@ impl VerificationContract {
         Self::bump_instance_ttl(&env);
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
+        Self::require_player_not_erased(&env, player_id)?;
 
         player_wallet.require_auth();
 
@@ -4451,6 +4811,15 @@ impl VerificationContract {
             })
     }
 
+    /// Persist the O(1) distinct-player counter used by the activity report.
+    fn set_validator_player_count(env: &Env, validator: &Address, count: u32) {
+        let key = DataKey::ValidatorPlayerCount(validator.clone());
+        env.storage().persistent().set(&key, &count);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+    }
+
     /// Increment both milestone totals. Neither can fail: the u64 count cannot
     /// realistically overflow and the legacy u32 count saturates, so a full
     /// counter can never brick approvals (#1454).
@@ -4539,6 +4908,47 @@ impl VerificationContract {
         {
             return Err(VerificationError::ContractPaused);
         }
+        Ok(())
+    }
+
+    /// Require that the player has not been erased via `registration.deregister_player`.
+    /// This is the push-model erasure guard — registration pushes a tombstone to each
+    /// contract rather than each contract pulling from registration on every write.
+    fn require_player_not_erased(env: &Env, player_id: u64) -> Result<(), VerificationError> {
+        if env
+            .storage()
+            .persistent()
+            .get::<DataKey, bool>(&DataKey::Erased(player_id))
+            .unwrap_or(false)
+        {
+            return Err(VerificationError::PlayerErased);
+        }
+        Ok(())
+    }
+
+    /// Mark a player as erased. Called by `registration.deregister_player` after
+    /// purging the player's data from all contracts. Once set, all player-scoped
+    /// writes are permanently blocked for this player_id.
+    ///
+    /// Only the registration contract may call this function (enforced via auth).
+    pub fn mark_player_erased(env: Env, player_id: u64) -> Result<(), VerificationError> {
+        // Verify the caller is the registration contract
+        let registration_addr = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::RegistrationContract);
+        let registration_addr = registration_addr.ok_or(VerificationError::RegistrationNotConfigured)?;
+
+        registration_addr.require_auth();
+
+        // Write the tombstone flag with long TTL (same as core identity data)
+        env.storage()
+            .persistent()
+            .set(&DataKey::Erased(player_id), &true);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Erased(player_id), PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+
         Ok(())
     }
 
@@ -4998,6 +5408,7 @@ impl VerificationContract {
     fn commit_approved_milestone(
         env: &Env,
         validator_wallet: &Address,
+        validator: &Validator,
         player_id: u64,
         description: String,
         evidence_hash: String,
@@ -5118,6 +5529,7 @@ impl VerificationContract {
         if !vp_players.contains(player_id) {
             vp_players.push_back(player_id);
             env.storage().persistent().set(&vp_index_key, &vp_players);
+            Self::set_validator_player_count(env, validator_wallet, vp_players.len());
             env.storage().persistent().extend_ttl(
                 &vp_index_key,
                 PERSISTENT_TTL_MAX,
@@ -5163,12 +5575,6 @@ impl VerificationContract {
 
         // Diversity check uses the primary validator (the one whose vote
         // crossed the threshold) — this preserves the existing behaviour.
-        let validator: Validator = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Validator(validator_wallet.clone()))
-            .unwrap();
-
         let mut player_affiliations: Vec<String> = env
             .storage()
             .persistent()
@@ -8723,10 +9129,6 @@ mod tests {
             individual_players.len(),
             "distinct_player_count mismatch"
         );
-        assert_eq!(
-            report.distinct_players, individual_players,
-            "distinct_players mismatch"
-        );
 
         // Sanity-check expected values
         assert_eq!(report.milestone_count, 2);
@@ -8764,7 +9166,6 @@ mod tests {
         let report = client.get_validator_activity_report(&validator);
         assert_eq!(report.milestone_count, 0);
         assert_eq!(report.distinct_player_count, 0);
-        assert_eq!(report.distinct_players.len(), 0);
         assert_eq!(report.status, types::ValidatorStatus::Active);
     }
 
@@ -9163,6 +9564,32 @@ mod tests {
                 ),
                 _ => None,
             })
+    }
+
+    // -------------------------------------------------------------------------
+    // Erasure: purge_player_data guard semantics and cursor safety (#1823, #1825)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn purge_player_data_succeeds_while_paused() {
+        let env = setup_env();
+        let admin = Address::generate(&env);
+        let client = deploy(&env, &admin);
+        client.pause_contract();
+        // Erasure is a compliance operation and must remain available while
+        // the contract is paused.
+        assert_eq!(client.purge_player_data(&1u64, &0u32), (0u32, false));
+    }
+
+    #[test]
+    fn purge_player_data_rejects_out_of_range_cursor() {
+        let env = setup_env();
+        let admin = Address::generate(&env);
+        let client = deploy(&env, &admin);
+        assert_eq!(
+            client.try_purge_player_data(&1u64, &u32::MAX),
+            Err(Ok(VerificationError::InvalidPurgeCursor))
+        );
     }
 
     #[test]
